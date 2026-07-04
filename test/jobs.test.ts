@@ -440,3 +440,19 @@ test("test_opts_mode_overrides_adapter_mode_for_guard", () => {
   expect(store.get(first)!.mode).toBe("write");
   expect(() => store.dispatch(readAdapter, "w2", { cwd, mode: "write" })).toThrow(/write-write conflict/);
 });
+
+test("test_stderr_chunks_are_streamed_into_the_per_job_log_file", async () => {
+  const store = newStore();
+  const adapter = stubAdapter({
+    name: "stderr-writer",
+    buildArgs: () => [BUN, "-e", "process.stderr.write('oops: something went sideways')"],
+  });
+
+  const id = store.dispatch(adapter, "x", {});
+  const res = await store.wait([id], 5000);
+  expect(res.done).toEqual([id]);
+
+  const job = store.get(id)!;
+  const logContents = readFileSync(job.logPath, "utf8");
+  expect(logContents).toContain("oops: something went sideways");
+});

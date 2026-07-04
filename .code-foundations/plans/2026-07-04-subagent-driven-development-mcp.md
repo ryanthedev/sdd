@@ -1,9 +1,10 @@
 # Plan: SDD — Subagent-Driven Development MCP
 
 **Created:** 2026-07-04
-**Status:** in-progress
+**Status:** complete
 **Started:** 2026-07-04 16:47
-**Current Phase:** 1
+**Completed:** 2026-07-04 18:45
+**Duration:** 16:47 → 18:45 (~2h)
 **Complexity:** medium
 ---
 ## Context
@@ -276,5 +277,5 @@ Summary: agy (review/implement, --print flag-order guard, last-match-wins marker
 - [x] BUILD: Implemented directly from plan (minimal gate — no discovery)
 - [x] REVIEW: SKIPPED — Minimal gate (tests are the gate). validate_skill passed clean; 85 tests still green, tsc clean.
 - [x] Committed
-Commit: (see final)
+Commit: 043b138
 Summary: skills/subagent-driven-development/SKILL.md authored — orchestration doctrine (fan out reads / serialize writes, poll-by-default wait with long-block escape, per-harness gotchas for codex/agy/agy-image), honest value-prop framing (structured collection + live job-state, not "async Bash can't do"), 968/1536 char frontmatter. README.md (install, 6 tools, 3 adapters, add-an-adapter). plugin.json verified (mcpServers.sdd, version 0.1.0). Runtime frozen — no src/ changes.
