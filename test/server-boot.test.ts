@@ -1,6 +1,10 @@
 /**
- * DW-1.1: `bun run src/server.ts` starts, connects stdio, logs "0 tools" to
- * stderr, and exits cleanly (code 0) on SIGINT.
+ * DW-1.1: `bun run src/server.ts` starts, connects stdio, logs the registered
+ * tool count to stderr, and exits cleanly (code 0) on SIGINT.
+ *
+ * Updated in Phase 3: the banner now reports 6 tools (dispatch/status/result/
+ * wait/cancel/list_adapters), not the Phase-1 scaffold's 0 — the boot/clean-
+ * exit invariant this test protects is unchanged.
  *
  * The child is spawned with an open stdin pipe (the real MCP scenario: the
  * client keeps stdin open), so it stays alive until we deliver SIGINT. A hard
@@ -45,7 +49,7 @@ async function waitForStderr(
 }
 
 test(
-  "test_DW_1_1_boots_logs_zero_tools_and_exits_clean_on_sigint",
+  "test_DW_1_1_boots_logs_tool_count_and_exits_clean_on_sigint",
   async () => {
     const proc = Bun.spawn(["bun", "run", SERVER_PATH], {
       stdin: "pipe", // keep stdin open so the server does not exit on its own
@@ -54,8 +58,8 @@ test(
     });
 
     try {
-      const banner = await waitForStderr(proc.stderr, "0 tools", 20_000);
-      expect(banner).toContain("connected (0 tools)");
+      const banner = await waitForStderr(proc.stderr, "6 tools", 20_000);
+      expect(banner).toContain("connected (6 tools)");
 
       proc.kill("SIGINT");
       const exitCode = await proc.exited;
