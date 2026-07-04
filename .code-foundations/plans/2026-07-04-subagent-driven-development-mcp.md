@@ -1,7 +1,9 @@
 # Plan: SDD — Subagent-Driven Development MCP
 
 **Created:** 2026-07-04
-**Status:** ready
+**Status:** in-progress
+**Started:** 2026-07-04 16:47
+**Current Phase:** 1
 **Complexity:** medium
 ---
 ## Context
@@ -158,7 +160,7 @@ Seeded from confirmed research: `/Users/r/.code-foundations/research/2026-07-03-
 
 ### Phase 5: Skills layer + plugin manifest + README
 **Model:** sonnet
-**Skills:** skill-craft
+**Skills:** oberskills:skill-craft
 **Gate:** Minimal
 **Depends on:** Phase 3, Phase 4
 **File scope:** `skills/**, .claude-plugin/plugin.json, README.md`

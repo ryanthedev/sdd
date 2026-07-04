@@ -1,0 +1,16 @@
+{
+  "name": "sdd",
+  "version": "0.1.0",
+  "description": "Subagent-Driven Development — delegate scoped work units to CLI agent harnesses (codex, agy) as fresh-context subagents, fan out, and collect structured results",
+  "author": {
+    "name": "r"
+  },
+  "license": "MIT",
+  "keywords": ["mcp", "subagent", "orchestration", "codex", "agy", "delegation"],
+  "mcpServers": {
+    "sdd": {
+      "command": "bun",
+      "args": ["run", "${CLAUDE_PLUGIN_ROOT}/src/server.ts"]
+    }
+  }
+}
