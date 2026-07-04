@@ -243,4 +243,10 @@ Seeded from confirmed research: `/Users/r/.code-foundations/research/2026-07-03-
 
 ---
 ## Execution Log
-_To be filled during /code-foundations:build_
+
+### Phase 1: Scaffold + Adapter port + core types (Gate: Full)
+- [x] BUILD: Discovery + design + implementation (stub → implement → validate) complete
+- [x] REVIEW: Verification passed (sonnet, PASS). Note: register.ts-import-failure path verified manually, no automated regression test — follow-up.
+- [x] Committed
+Commit: 3110680
+Summary: Repo scaffolded at ~/repos/sdd (Bun+TS, MCP SDK ^1.29, zod ^4). Adapter port + core types (Job/JobState/DispatchOpts/AdapterResult) and directory-scan discoverAdapters() are defined and tested (11 tests, tsc clean). server.ts/register.ts boot with 0 tools and exit clean on SIGINT. Phase 2 consumes the Adapter port and Job types.
