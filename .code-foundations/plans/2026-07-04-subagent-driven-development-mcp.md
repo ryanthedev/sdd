@@ -250,3 +250,31 @@ Seeded from confirmed research: `/Users/r/.code-foundations/research/2026-07-03-
 - [x] Committed
 Commit: 3110680
 Summary: Repo scaffolded at ~/repos/sdd (Bun+TS, MCP SDK ^1.29, zod ^4). Adapter port + core types (Job/JobState/DispatchOpts/AdapterResult) and directory-scan discoverAdapters() are defined and tested (11 tests, tsc clean). server.ts/register.ts boot with 0 tools and exit clean on SIGINT. Phase 2 consumes the Adapter port and Job types.
+
+### Phase 2: JobStore — spawn, lifecycle, logging, mode guard, reaping (Gate: Full)
+- [x] BUILD: Discovery + design + implementation complete
+- [x] REVIEW: Verification passed — 3-sample fable security review, unanimous 3/3 PASS. Non-blocking follow-ups: stderr-handler coverage ~95%, no mid-run WriteStream 'error' listener, documented SIGKILL-orphan residual.
+- [x] Committed
+Commit: 3ba87dd
+Summary: JobStore (src/lib/jobs.ts) is the runtime core — dispatch(adapter, prompt, opts)→jobId spawns a child (argv array, shell:false, detached group), streams to a per-job log, and on exit runs parseResult so state reflects exit code + marker validation. get/wait/cancel/shutdown, write-write cwd guard, SIGINT/SIGTERM child reaping. 34 tests total, tsc clean. Phase 3 wraps this API in the 6 MCP tools + codex adapter; Phase 4 adds agy adapters against the same JobStore.
+
+### Phase 3: Tool surface (6 MCP tools) + codex adapter (Gate: Standard) [wave with Phase 4]
+- [x] BUILD: Discovery + design + implementation complete (own worktree, wip 87e29d8)
+- [x] REVIEW: Verification passed (sonnet, PASS). Note: DW-3.1 round-trip uses a stub adapter (deterministic); DW-3.3 separately proves real codex discovery.
+- [x] Committed (cherry-pick integration in plan order)
+Commit: 37d889b
+Summary: Six MCP tools (dispatch/status/result/wait/list_adapters/cancel) wired over JobStore via a shared Runtime; thin handlers, no spawn logic. codex adapter (codex exec --sandbox, stdout answer / stderr progress split, VERDICT markers). 56 tests. Phase 5 documents this surface.
+
+### Phase 4: agy + agy-image adapters (Gate: Standard) [wave with Phase 3]
+- [x] BUILD: Discovery + design + implementation complete (own worktree)
+- [x] REVIEW: FAIL on first pass (2 defects: first-match marker parsing defeated the misparse backstop; agy-image path-traversal). Both fixed with regression tests → re-review PASS (sonnet). Combined 85-test suite green.
+- [x] Committed (cherry-pick integration, wip 87baad6)
+Commit: 84abb47
+Summary: agy (review/implement, --print flag-order guard, last-match-wins marker validation) and agy-image (Nano Banana, absolute --out path, path-traversal containment) adapters. Both directory-discovered, no registry edit. 100% coverage on both. Phase 5 skill documents all three adapters' gotchas.
+
+### Phase 5: Skills layer + plugin manifest + README (Gate: Minimal)
+- [x] BUILD: Implemented directly from plan (minimal gate — no discovery)
+- [x] REVIEW: SKIPPED — Minimal gate (tests are the gate). validate_skill passed clean; 85 tests still green, tsc clean.
+- [x] Committed
+Commit: (see final)
+Summary: skills/subagent-driven-development/SKILL.md authored — orchestration doctrine (fan out reads / serialize writes, poll-by-default wait with long-block escape, per-harness gotchas for codex/agy/agy-image), honest value-prop framing (structured collection + live job-state, not "async Bash can't do"), 968/1536 char frontmatter. README.md (install, 6 tools, 3 adapters, add-an-adapter). plugin.json verified (mcpServers.sdd, version 0.1.0). Runtime frozen — no src/ changes.
