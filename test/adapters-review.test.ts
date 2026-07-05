@@ -46,6 +46,13 @@ for (const { mod, name, binary } of REVIEW_ADAPTERS) {
     expect(good.artifacts).toEqual([]);
     expect(good.raw).toContain("VERDICT:");
   });
+
+  test(`${name}: parseResult tolerates markdown-formatted markers (real grok output shape)`, () => {
+    // Regression for live grok output: it emitted `**VERDICT:**` and `## Findings`,
+    // which a strict `^VERDICT:` regex missed. Markers may carry markdown emphasis.
+    const md = "**Review Summary**\n\n**VERDICT:** Incorrect implementation\n\n## Findings\n- Function subtracts.";
+    expect(mod.parseResult(md, "", 0).status).toBe("done");
+  });
 }
 
 test("name≠binary: only mistral overrides binary (to vibe); others omit it", () => {

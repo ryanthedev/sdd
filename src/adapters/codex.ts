@@ -30,8 +30,12 @@ const CONTRACT_SUFFIX =
   '\n\nWhen you are done, end your final answer with a line starting exactly with "VERDICT:" followed by a ' +
   'one-line verdict, then a "## Findings" section (write "## Findings\nNone." if there are none).';
 
-const VERDICT_RE = /^VERDICT:/m;
-const FINDINGS_RE = /^## Findings/m;
+// Tolerant of leading markdown the model may add despite the "exactly"
+// instruction — bold (`**VERDICT:**`), headings, blockquote/list, whitespace —
+// mirroring src/lib/review-contract.ts (verified needed against real grok output).
+const MARKDOWN_PREFIX = "[ \\t]*(?:[*_#>-]+[ \\t]*)*";
+const VERDICT_RE = new RegExp(`^${MARKDOWN_PREFIX}VERDICT:`, "im");
+const FINDINGS_RE = new RegExp(`^${MARKDOWN_PREFIX}Findings\\b`, "im");
 
 /** Wrap the caller's prompt with codex's output-contract markers. */
 export function injectContract(prompt: string): string {

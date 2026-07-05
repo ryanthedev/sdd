@@ -16,8 +16,13 @@ const CONTRACT_SUFFIX =
   '\n\nWhen you are done, end your final answer with a line starting exactly with "VERDICT:" followed by a ' +
   'one-line verdict, then a "## Findings" section (write "## Findings\nNone." if there are none).';
 
-const VERDICT_RE = /^VERDICT:/m;
-const FINDINGS_RE = /^## Findings/m;
+// Tolerant of leading markdown the model adds despite the "exactly" instruction:
+// bold/italic (`**VERDICT:**`), headings (`### VERDICT:`), blockquote/list
+// prefixes, and leading whitespace. Verified against real grok output, which
+// emitted `**VERDICT:**` and would otherwise fail a strict `^VERDICT:` match.
+const MARKDOWN_PREFIX = "[ \\t]*(?:[*_#>-]+[ \\t]*)*";
+const VERDICT_RE = new RegExp(`^${MARKDOWN_PREFIX}VERDICT:`, "im");
+const FINDINGS_RE = new RegExp(`^${MARKDOWN_PREFIX}Findings\\b`, "im");
 
 /** Append the review output-contract markers to a caller's prompt. */
 export function injectReviewContract(prompt: string): string {
