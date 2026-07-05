@@ -56,6 +56,9 @@ import type { Adapter } from "./types.ts";
 import type { AdapterMode, AdapterResult, DispatchOpts } from "../types.ts";
 
 export const name = "agy-image";
+/** CLI binary is `agy` (same as the agy adapter); the "-image" is the adapter's
+ *  own contract, not a separate binary — so list_adapters probes `agy` on PATH. */
+export const binary = "agy";
 export const mode: AdapterMode = "read";
 
 /**
@@ -189,5 +192,5 @@ function assertContained(resolved: string, base: string, raw: string): void {
   }
 }
 
-const _check: Adapter = { name, mode, buildArgs, injectContract, parseResult };
+const _check: Adapter = { name, binary, mode, buildArgs, injectContract, parseResult };
 void _check;

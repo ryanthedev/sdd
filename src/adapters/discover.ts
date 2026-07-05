@@ -56,12 +56,18 @@ function toAdapter(mod: Record<string, unknown>): Adapter | { missing: string[] 
   if (typeof mod.injectContract !== "function") missing.push("injectContract");
   if (typeof mod.parseResult !== "function") missing.push("parseResult");
 
+  // `binary` is optional, but if a module exports it, it must be a non-empty
+  // string — a malformed override is a bug worth rejecting, not silently ignoring.
+  const binary = mod.binary;
+  if (binary !== undefined && (typeof binary !== "string" || binary.length === 0)) missing.push("binary");
+
   if (missing.length > 0) return { missing };
 
   // Assemble a cohesive Adapter object rather than leaking the raw module
   // namespace, so downstream (Phase 2 JobStore) holds a single well-typed value.
   return {
     name: name as string,
+    binary: typeof binary === "string" ? binary : undefined,
     mode: mode as Adapter["mode"],
     buildArgs: mod.buildArgs as Adapter["buildArgs"],
     injectContract: mod.injectContract as Adapter["injectContract"],

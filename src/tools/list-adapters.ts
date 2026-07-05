@@ -3,10 +3,10 @@
  * presence check for each adapter's underlying CLI. No JobStore involvement:
  * this is pure discovery + a synchronous `Bun.which` lookup, no subprocess.
  *
- * Assumption (documented, not solved generically): the adapter's `name`
- * doubles as its CLI binary name. True for `codex` (this phase's only
- * adapter); the frozen Adapter port (Phase 1, read-only here) has no separate
- * binary-name field.
+ * The PATH probe targets the adapter's `binary` field when set, falling back to
+ * `name` (they match for codex/agy/grok/qwen/kimi; the "mistral" adapter's CLI
+ * is `vibe`, so it sets `binary: "vibe"`). The Adapter port carries the optional
+ * `binary` field for exactly this name≠binary case.
  */
 import { z } from "zod";
 import { listAdapters, type Runtime } from "./runtime.ts";
@@ -31,7 +31,7 @@ export function createListAdaptersTool(rt: Runtime): ToolModule<typeof inputShap
       const adapters = listAdapters(rt).map((a) => ({
         name: a.name,
         mode: a.mode,
-        binaryPresent: Bun.which(a.name) !== null,
+        binaryPresent: Bun.which(a.binary ?? a.name) !== null,
       }));
       const lines = adapters.map((a) => `${a.name} (${a.mode}) — binary ${a.binaryPresent ? "present" : "MISSING"} on PATH`);
       return ok(lines.length > 0 ? lines.join("\n") : "no adapters discovered", { adapters });

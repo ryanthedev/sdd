@@ -16,6 +16,14 @@ export interface Adapter {
   /** Unique adapter name — also the on-disk filename stem and the dispatch key. */
   name: string;
 
+  /**
+   * CLI binary name to probe on PATH for `list_adapters`' binaryPresent check,
+   * when it differs from `name` (e.g. the "mistral" adapter's binary is `vibe`).
+   * Optional — defaults to `name` when omitted. This is ONLY the presence probe;
+   * it does not affect dispatch, where `buildArgs` still controls argv[0].
+   */
+  binary?: string;
+
   /** Whether this adapter reads or writes the working tree (drives the write-write guard). */
   mode: AdapterMode;
 
