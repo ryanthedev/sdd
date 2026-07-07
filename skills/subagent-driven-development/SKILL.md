@@ -50,6 +50,34 @@ Don't oversell it as "async that Bash can't do" — that claim doesn't survive s
 ## 3. Per-harness gotchas
 
 ### codex — review / second opinion (`mode: read`)
+
+**Roster (effort levels):**
+- `codex` — default, `medium` reasoning effort. Balanced for most reviews and second opinions.
+- `codex-high` — default model, `high` reasoning effort. Deep analysis, complex codebases, subtle correctness issues, security-sensitive code.
+- `codex-low` — default model, `low` reasoning effort. Fast spot-checks, lightweight reads, edge cases on known patterns.
+
+**Per-call model and effort selection:**
+- Use the base `codex` adapter with `dispatch(adapter:"codex", model:"<name>", effort:"low|medium|high", ...)` to select model and effort at call time.
+- Example: `dispatch(adapter:"codex", model:"o3", effort:"high", prompt, cwd)` runs o3 with high reasoning effort.
+- Per-call `model` and `effort` are **allowlisted** — NOT arbitrary `-c key=value` config. Arbitrary config could override `--sandbox` (e.g. `-c sandbox_mode=danger-full-access`), subverting the sandbox barricade; allowlist is the backstop.
+- Pinned variants (`codex-high`, `codex-low`) ignore per-call `model`/`effort` (config is fixed at construction). To choose at call time, use the base `codex` adapter instead.
+
+**Extending the roster with new models:**
+- Add a model-specific variant anytime by dropping `${CLAUDE_PLUGIN_ROOT}/src/adapters/codex-<name>.ts` that calls `makeCodexVariant` from `${CLAUDE_PLUGIN_ROOT}/src/adapters/_codex-factory.ts`. No core plugin change needed — discovery auto-registers it on the next dispatch.
+- The factory accepts `{name, model?, profile?, configOverrides?, mode?}` and returns an object of the port members; re-export them as **named** exports (discovery validates named exports, not a default). Mirror `codex-high.ts`:
+  ```ts
+  import { makeCodexVariant } from "./_codex-factory.ts";
+  const variant = makeCodexVariant({ name: "codex-o3", model: "o3", configOverrides: { model_reasoning_effort: "high" } });
+  export const name = variant.name;
+  export const mode = variant.mode;
+  export const binary = variant.binary;
+  export const buildArgs = variant.buildArgs;
+  export const injectContract = variant.injectContract;
+  export const parseResult = variant.parseResult;
+  ```
+- `injectContract`/`parseResult` come straight from the base codex (single source of the output contract) — never re-implemented.
+
+**Output contract & gotchas:**
 - stdout carries the final answer; stderr carries progress. `summary`/`raw` are built from stdout only — never treat stderr text as the result.
 - Output contract: a `VERDICT:` line plus a `## Findings` section. Missing either, or a non-zero exit, is `failed` regardless of what else is in stdout.
 - codex does its own web verification when a review needs it — no extra step required from the caller.

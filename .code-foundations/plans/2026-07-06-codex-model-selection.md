@@ -158,3 +158,10 @@
 - [x] Committed
 Commit: 766898b
 Summary: Added `_codex-shared.ts` `buildCodexArgv(prompt, mode, cfg?)` (owns codex flag order + sandbox map, skipped by discovery via leading `_`); `codex.buildArgs` now delegates and reads allowlisted `opts.model`/`opts.effort`; dispatch tool `inputShape` gained `model` (string) + `effort` (low|medium|high enum), forwarded verbatim into DispatchOpts. Barricade intact (string[] + shell:false; no arbitrary `-c`). 126 tests pass, tsc clean.
+
+### Phase 2: Factory + effort-roster variants (Gate: Standard)
+- [x] BUILD: Discovery + design + implementation complete
+- [x] REVIEW: Verification passed (single-sample sonnet, PASS)
+- [x] Committed
+Commit: 14d9510
+Summary: Added `_codex-factory.ts` `makeCodexVariant(cfg)` (closure factory over `buildCodexArgv`, reuses codex's `injectContract`/`parseResult` by identity, ignores per-call opts to enforce pins) and shipped `codex-high`/`codex-low` variants (default model, high/low `model_reasoning_effort`), each exporting `binary:"codex"`. Discovery loads both and skips `_codex-factory`/`_codex-shared`; `list_adapters` probes the real `codex` binary. 140 tests pass, tsc clean.
