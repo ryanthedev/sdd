@@ -66,11 +66,22 @@ function lastMarkerMatch(re: RegExp, text: string): RegExpExecArray | undefined 
 export function buildArgs(prompt: string, opts: DispatchOpts): string[] {
   const flags: string[] = [];
   pushOptionalStringFlag(flags, opts, "model", "--model");
-  pushOptionalStringFlag(flags, opts, "sandbox", "--sandbox");
-  // Structural guard against the flag-order landmine: `--print` and the
-  // prompt are always pushed last, in that order — nothing can land after
-  // the prompt because nothing is pushed after this line.
-  return ["agy", ...flags, "--print", prompt];
+  // SECURITY / headless posture (mirrors agy-image, see that file's header):
+  // agy's `--print` is non-interactive, so an implement (write) job cannot be
+  // asked to confirm its edits at a TTY — without auto-approval it hangs until
+  // the print timeout. agy 1.0.16 has no scoped tool allowlist, so we use both
+  // blunt knobs as defense-in-depth: `--sandbox` restricts the terminal (an
+  // agent steered by an injected task cannot spawn a shell or reach the network)
+  // and `--dangerously-skip-permissions` auto-approves the edits INSIDE that
+  // sandbox. `--sandbox` is a BOOLEAN flag in agy 1.0.16 (takes no value) and is
+  // always on here. Unlike agy-image, the prompt is NOT fenced as untrusted data
+  // — for a review/implement harness the prompt legitimately IS the task the
+  // agent must follow; the injection risk is inherent to delegating a task and
+  // is the accepted v1 posture (same-cwd, real env).
+  //
+  // Structural guard against the flag-order landmine: `--print` and the prompt
+  // are always pushed last, in that order — nothing lands after the prompt.
+  return ["agy", "--sandbox", "--dangerously-skip-permissions", ...flags, "--print", prompt];
 }
 
 export function injectContract(prompt: string): string {

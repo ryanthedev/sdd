@@ -16,14 +16,22 @@ import * as agy from "../src/adapters/agy.ts";
 
 test("test_DW_4_1_no_extra_flags_prompt_immediately_after_print", () => {
   const argv = agy.buildArgs("review this diff", {});
-  expect(argv).toEqual(["agy", "--print", "review this diff"]);
+  expect(argv).toEqual(["agy", "--sandbox", "--dangerously-skip-permissions", "--print", "review this diff"]);
   expect(argv[argv.length - 1]).toBe("review this diff"); // prompt is the LAST element
   expect(argv[argv.length - 2]).toBe("--print"); // immediately preceded by --print
 });
 
 test("test_DW_4_1_flags_all_precede_print_prompt_is_last_element", () => {
-  const argv = agy.buildArgs("implement the feature", { model: "opus", sandbox: "workspace-write" });
-  expect(argv).toEqual(["agy", "--model", "opus", "--sandbox", "workspace-write", "--print", "implement the feature"]);
+  const argv = agy.buildArgs("implement the feature", { model: "opus" });
+  expect(argv).toEqual([
+    "agy",
+    "--sandbox",
+    "--dangerously-skip-permissions",
+    "--model",
+    "opus",
+    "--print",
+    "implement the feature",
+  ]);
   // Every flag/value pair sits strictly before "--print"; nothing after the prompt.
   const printIdx = argv.indexOf("--print");
   expect(printIdx).toBeGreaterThan(0);
@@ -31,12 +39,22 @@ test("test_DW_4_1_flags_all_precede_print_prompt_is_last_element", () => {
   expect(argv.length - 1).toBe(printIdx + 1);
 });
 
-test("buildArgs rejects a non-string opts.model rather than silently dropping it", () => {
-  expect(() => agy.buildArgs("p", { model: 42 as unknown as string })).toThrow(TypeError);
+test("runs headless under --sandbox with auto-approved writes (defense-in-depth)", () => {
+  // Security: --print is non-interactive, so a write/implement job must
+  // auto-approve edits (--dangerously-skip-permissions) or hang; --sandbox
+  // (terminal restrictions) contains that — an injected agent can't spawn a
+  // shell or reach the network. --sandbox is boolean in agy 1.0.16 (no value).
+  const argv = agy.buildArgs("implement the feature", {});
+  expect(argv).toContain("--sandbox");
+  expect(argv).toContain("--dangerously-skip-permissions");
+  // --sandbox must NOT carry a value (it's a boolean flag): the element after it
+  // is the next flag, never a sandbox-mode string.
+  const sandboxIdx = argv.indexOf("--sandbox");
+  expect(argv[sandboxIdx + 1]!.startsWith("--")).toBe(true);
 });
 
-test("buildArgs rejects an empty-string opts.sandbox", () => {
-  expect(() => agy.buildArgs("p", { sandbox: "" })).toThrow(TypeError);
+test("buildArgs rejects a non-string opts.model rather than silently dropping it", () => {
+  expect(() => agy.buildArgs("p", { model: 42 as unknown as string })).toThrow(TypeError);
 });
 
 // ── DW-4.2: exit-0 silent-misparse backstop — missing marker -> failed. ────
