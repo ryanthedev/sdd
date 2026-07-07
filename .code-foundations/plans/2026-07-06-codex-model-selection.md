@@ -151,4 +151,10 @@
 - Phases are strictly serial (1 → 2 → 3); no wave parallelism, so build effort = low.
 ---
 ## Execution Log
-_To be filled during /code-foundations:build_
+
+### Phase 1: Shared argv builder + allowlisted per-call params (Gate: Full)
+- [x] BUILD: Discovery + design + implementation complete
+- [x] REVIEW: Verification passed (3-sample, 3/3 PASS on fable)
+- [x] Committed
+Commit: 766898b
+Summary: Added `_codex-shared.ts` `buildCodexArgv(prompt, mode, cfg?)` (owns codex flag order + sandbox map, skipped by discovery via leading `_`); `codex.buildArgs` now delegates and reads allowlisted `opts.model`/`opts.effort`; dispatch tool `inputShape` gained `model` (string) + `effort` (low|medium|high enum), forwarded verbatim into DispatchOpts. Barricade intact (string[] + shell:false; no arbitrary `-c`). 126 tests pass, tsc clean.
