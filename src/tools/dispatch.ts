@@ -27,6 +27,14 @@ export const inputShape = {
     .optional()
     .describe("Override the adapter's default mode. write jobs are serialized per cwd; read jobs run concurrently."),
   timeoutMs: z.number().int().positive().optional().describe("Adapter-specific advisory timeout in ms."),
+  outputPath: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      'Adapter-specific: absolute or cwd-relative ".png" path for image-generating adapters (agy-image) to save to. ' +
+        "Required by those adapters; ignored by others.",
+    ),
 };
 
 type Input = z.output<z.ZodObject<typeof inputShape>>;
@@ -49,6 +57,7 @@ export function createDispatchTool(rt: Runtime): ToolModule<typeof inputShape> {
         ...(args.cwd !== undefined ? { cwd: args.cwd } : {}),
         ...(args.mode !== undefined ? { mode: args.mode } : {}),
         ...(args.timeoutMs !== undefined ? { timeoutMs: args.timeoutMs } : {}),
+        ...(args.outputPath !== undefined ? { outputPath: args.outputPath } : {}),
       };
 
       try {

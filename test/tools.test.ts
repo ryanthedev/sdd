@@ -193,6 +193,30 @@ test("test_edge_dispatch_unknown_adapter_returns_error_and_creates_no_job", asyn
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// dispatch threads adapter-specific outputPath into DispatchOpts (agy-image path).
+// ─────────────────────────────────────────────────────────────────────────────
+test("test_dispatch_forwards_outputPath_into_dispatch_opts", async () => {
+  const dir = freshDir("sdd-tools-adapters-");
+  writeAdapterFile(dir, "ok-adapter.ts", OK_ADAPTER);
+  const rt = newRuntime(dir);
+  const dispatchSpy = spyOn(rt.jobStore, "dispatch");
+  const dispatch = createDispatchTool(rt);
+
+  const res = await dispatch.handler({
+    adapter: "ok-adapter",
+    prompt: "make an image",
+    outputPath: "/tmp/out.png",
+  });
+
+  expect(res.isError).toBeUndefined();
+  expect(dispatchSpy).toHaveBeenCalledTimes(1);
+  const opts = dispatchSpy.mock.calls[0]![2];
+  expect(opts).toMatchObject({ outputPath: "/tmp/out.png" });
+
+  await rt.jobStore.wait([structured(res).jobId as string], 5000);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Edge: result on a still-running job -> running status, not a partial artifact.
 // ─────────────────────────────────────────────────────────────────────────────
 test("test_edge_result_on_running_job_returns_running_not_partial_artifact", async () => {
