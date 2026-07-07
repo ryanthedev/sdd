@@ -1,8 +1,8 @@
 # Plan: Selectable codex models/agents in the sdd MCP plugin
 **Created:** 2026-07-06
-**Status:** in-progress
+**Status:** complete
 **Started:** 2026-07-07
-**Current Phase:** 1
+**Completed:** 2026-07-07
 **Complexity:** medium
 ---
 ## Context
@@ -165,3 +165,10 @@ Summary: Added `_codex-shared.ts` `buildCodexArgv(prompt, mode, cfg?)` (owns cod
 - [x] Committed
 Commit: 14d9510
 Summary: Added `_codex-factory.ts` `makeCodexVariant(cfg)` (closure factory over `buildCodexArgv`, reuses codex's `injectContract`/`parseResult` by identity, ignores per-call opts to enforce pins) and shipped `codex-high`/`codex-low` variants (default model, high/low `model_reasoning_effort`), each exporting `binary:"codex"`. Discovery loads both and skips `_codex-factory`/`_codex-shared`; `list_adapters` probes the real `codex` binary. 140 tests pass, tsc clean.
+
+### Phase 3: Doctrine update (Gate: Minimal)
+- [x] BUILD: SKILL.md codex section extended (roster, per-call params, factory extension, security rationale)
+- [x] REVIEW: SKIPPED — Minimal gate (tests are gate)
+- [x] Committed
+Commit: f22001f
+Summary: Documented the codex roster, per-call `model`/`effort` (allowlist rationale), pinned-variant opt-ignore, and the `makeCodexVariant` extension path in `skills/subagent-driven-development/SKILL.md`. Orchestrator corrected the build agent's extension example (`export default` → named exports) to match how discovery validates and how `codex-high.ts` is actually written. No source changed; 140 tests pass, tsc clean.
