@@ -17,14 +17,18 @@
  * codex's own output contract.
  */
 import type { AdapterMode, AdapterResult, DispatchOpts } from "../types.ts";
+import { buildCodexArgv, type CodexArgvConfig } from "./_codex-shared.ts";
 
 export const name = "codex";
 export const mode: AdapterMode = "read";
 
-const SANDBOX_BY_MODE: Record<AdapterMode, "read-only" | "workspace-write"> = {
-  read: "read-only",
-  write: "workspace-write",
-};
+/**
+ * Per-call reasoning-effort allowlist. Mirrors the zod enum in
+ * src/tools/dispatch.ts, re-checked here because JobStore.dispatch is also
+ * callable programmatically (bypassing zod) and the sandbox barricade is
+ * security-critical — defense-in-depth, not redundancy.
+ */
+const EFFORT_LEVELS = new Set(["low", "medium", "high"]);
 
 const CONTRACT_SUFFIX =
   '\n\nWhen you are done, end your final answer with a line starting exactly with "VERDICT:" followed by a ' +
@@ -43,14 +47,41 @@ export function injectContract(prompt: string): string {
 }
 
 /**
- * `codex exec --sandbox <mode> <prompt>` as an argv array (argv[0] is the
- * `codex` binary itself — JobStore spawns argv[0] with the rest as args).
- * Resolves the effective mode itself (`opts.mode ?? mode`) because JobStore
- * calls buildArgs with the caller's original opts, not its own resolved mode.
+ * `codex exec [...flags] --sandbox <mode> <prompt>` as an argv array (argv[0]
+ * is the `codex` binary itself — JobStore spawns argv[0] with the rest as
+ * args). Resolves the effective mode itself (`opts.mode ?? mode`) because
+ * JobStore calls buildArgs with the caller's original opts, not its own
+ * resolved mode. Flag assembly is delegated to the shared buildCodexArgv so
+ * ordering and the sandbox barricade live in one place.
+ *
+ * SECURITY (per-call allowlist): this trust boundary reads ONLY `opts.model`
+ * and `opts.effort` — never arbitrary configOverrides from opts. An open
+ * `-c key=value` passthrough would let a caller emit
+ * `-c sandbox_mode=danger-full-access` and subvert the `--sandbox` barricade.
+ * `effort` maps to the single hardcoded key `model_reasoning_effort`, so a
+ * caller can never choose the config key. Invalid values throw (loud failure
+ * beats silently running at the wrong model/effort); the dispatch tool
+ * surfaces the throw as a clean MCP error.
  */
 export function buildArgs(prompt: string, opts: DispatchOpts): string[] {
   const effectiveMode: AdapterMode = opts.mode ?? mode;
-  return ["codex", "exec", "--sandbox", SANDBOX_BY_MODE[effectiveMode], prompt];
+
+  const cfg: CodexArgvConfig = {};
+  const { model, effort } = opts;
+  if (model !== undefined) {
+    if (typeof model !== "string" || model.length === 0) {
+      throw new TypeError(`codex: opts.model must be a non-empty string if provided, got ${typeof model}`);
+    }
+    cfg.model = model;
+  }
+  if (effort !== undefined) {
+    if (typeof effort !== "string" || !EFFORT_LEVELS.has(effort)) {
+      throw new TypeError('codex: opts.effort must be "low" | "medium" | "high" if provided');
+    }
+    cfg.configOverrides = { model_reasoning_effort: effort };
+  }
+
+  return buildCodexArgv(prompt, effectiveMode, cfg);
 }
 
 /** Extract + validate the contract markers from stdout; stderr never contributes to summary/raw. */

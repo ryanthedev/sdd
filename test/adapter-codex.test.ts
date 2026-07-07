@@ -6,7 +6,10 @@
  * the adapter contract must be verifiable without it).
  */
 import { expect, test } from "bun:test";
+import { join } from "node:path";
+import { buildCodexArgv } from "../src/adapters/_codex-shared.ts";
 import * as codex from "../src/adapters/codex.ts";
+import { discoverAdapters } from "../src/adapters/discover.ts";
 
 test("codex adapter exports the Adapter port shape", () => {
   expect(codex.name).toBe("codex");
@@ -42,6 +45,155 @@ test("buildArgs passes a shell-metacharacter prompt through as one literal argv 
   const dangerous = "review; rm -rf / && echo `whoami`";
   const argv = codex.buildArgs(dangerous, {});
   expect(argv[argv.length - 1]).toBe(dangerous); // literal, single element — never shell-joined
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 1 (codex model selection): shared buildCodexArgv — flag emission,
+// ordering (caller flags BEFORE --sandbox, prompt LAST), barricade.
+// ─────────────────────────────────────────────────────────────────────────────
+test("test_DW_1_1_buildCodexArgv_no_cfg_is_byte_identical_to_current_codex_argv", () => {
+  expect(buildCodexArgv("p", "read")).toEqual(["codex", "exec", "--sandbox", "read-only", "p"]);
+  // Regression guard: the shared builder and the adapter's no-param path agree.
+  expect(buildCodexArgv("p", "read")).toEqual(codex.buildArgs("p", {}));
+});
+
+test("test_DW_1_2_model_flag_precedes_sandbox_prompt_last", () => {
+  expect(buildCodexArgv("p", "read", { model: "o3" })).toEqual([
+    "codex",
+    "exec",
+    "-m",
+    "o3",
+    "--sandbox",
+    "read-only",
+    "p",
+  ]);
+});
+
+test("test_DW_1_2_configOverrides_emit_dash_c_before_sandbox", () => {
+  expect(buildCodexArgv("p", "read", { configOverrides: { model_reasoning_effort: "high" } })).toEqual([
+    "codex",
+    "exec",
+    "-c",
+    "model_reasoning_effort=high",
+    "--sandbox",
+    "read-only",
+    "p",
+  ]);
+});
+
+test("test_DW_1_7_profile_flag_precedes_sandbox", () => {
+  expect(buildCodexArgv("p", "read", { profile: "x" })).toEqual([
+    "codex",
+    "exec",
+    "-p",
+    "x",
+    "--sandbox",
+    "read-only",
+    "p",
+  ]);
+});
+
+test("buildCodexArgv combines model, profile, and overrides in fixed order, all before --sandbox", () => {
+  expect(
+    buildCodexArgv("p", "write", {
+      model: "o3",
+      profile: "x",
+      configOverrides: { model_reasoning_effort: "low", foo: "bar" },
+    }),
+  ).toEqual([
+    "codex",
+    "exec",
+    "-m",
+    "o3",
+    "-p",
+    "x",
+    "-c",
+    "model_reasoning_effort=low",
+    "-c",
+    "foo=bar",
+    "--sandbox",
+    "workspace-write",
+    "p",
+  ]);
+});
+
+test("buildCodexArgv skips empty-string model/profile instead of emitting a bare flag", () => {
+  expect(buildCodexArgv("p", "read", { model: "", profile: "" })).toEqual(buildCodexArgv("p", "read"));
+});
+
+test("buildCodexArgv never emits danger-full-access even with flags present", () => {
+  const argv = buildCodexArgv("p", "write", { model: "o3", configOverrides: { k: "v" } });
+  expect(argv).not.toContain("danger-full-access");
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 1: codex.buildArgs per-call allowlist (model + effort ONLY).
+// ─────────────────────────────────────────────────────────────────────────────
+test("test_DW_1_3_codex_buildArgs_emits_model_and_effort_flags", () => {
+  expect(codex.buildArgs("p", { model: "o3", effort: "high" })).toEqual([
+    "codex",
+    "exec",
+    "-m",
+    "o3",
+    "-c",
+    "model_reasoning_effort=high",
+    "--sandbox",
+    "read-only",
+    "p",
+  ]);
+});
+
+test("test_DW_1_4_no_params_argv_unchanged_from_today", () => {
+  expect(codex.buildArgs("p", {})).toEqual(["codex", "exec", "--sandbox", "read-only", "p"]);
+});
+
+test("test_DW_1_6_shell_metachar_model_stays_single_literal_argv_element", () => {
+  const dangerous = "o3; rm -rf / && echo `whoami` $(id)";
+  const argv = codex.buildArgs("review this", { model: dangerous });
+  const mIndex = argv.indexOf("-m");
+  expect(mIndex).toBeGreaterThan(-1);
+  expect(argv[mIndex + 1]).toBe(dangerous); // ONE literal element — never shell-joined or split
+  expect(argv[argv.length - 1]).toBe("review this"); // prompt still last
+});
+
+test("codex.buildArgs with effort only emits -c but no -m", () => {
+  const argv = codex.buildArgs("p", { effort: "low" });
+  expect(argv).toEqual(["codex", "exec", "-c", "model_reasoning_effort=low", "--sandbox", "read-only", "p"]);
+  expect(argv).not.toContain("-m");
+});
+
+test("codex.buildArgs honors mode write alongside per-call flags", () => {
+  expect(codex.buildArgs("p", { mode: "write", model: "o3" })).toEqual([
+    "codex",
+    "exec",
+    "-m",
+    "o3",
+    "--sandbox",
+    "workspace-write",
+    "p",
+  ]);
+});
+
+// Defense-in-depth: JobStore.dispatch is callable programmatically (bypassing
+// the dispatch tool's zod enum), so the adapter re-validates and fails LOUD.
+test("codex.buildArgs throws TypeError on an out-of-enum effort (programmatic path)", () => {
+  expect(() => codex.buildArgs("p", { effort: "max" })).toThrow(TypeError);
+  expect(() => codex.buildArgs("p", { effort: 3 })).toThrow(TypeError);
+});
+
+test("codex.buildArgs throws TypeError on a non-string or empty model (programmatic path)", () => {
+  expect(() => codex.buildArgs("p", { model: 42 })).toThrow(TypeError);
+  expect(() => codex.buildArgs("p", { model: "" })).toThrow(TypeError);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DW-1.8: the leading-underscore discovery exclusion holds for _codex-shared.ts
+// against the REAL adapters directory.
+// ─────────────────────────────────────────────────────────────────────────────
+test("test_DW_1_8_discovery_excludes_codex_shared_helper", () => {
+  const names = discoverAdapters(join(import.meta.dir, "../src/adapters")).map((a) => a.name);
+  expect(names).toContain("codex"); // sanity: the real dir was actually scanned
+  expect(names.some((n) => n.includes("codex-shared"))).toBe(false);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

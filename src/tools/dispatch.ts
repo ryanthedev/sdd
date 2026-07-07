@@ -27,6 +27,18 @@ export const inputShape = {
     .optional()
     .describe("Override the adapter's default mode. write jobs are serialized per cwd; read jobs run concurrently."),
   timeoutMs: z.number().int().positive().optional().describe("Adapter-specific advisory timeout in ms."),
+  model: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      'Adapter-specific: model to run for adapters that support model selection (codex, agy), e.g. "o3". ' +
+        "Ignored by adapters that don't read it.",
+    ),
+  effort: z
+    .enum(["low", "medium", "high"])
+    .optional()
+    .describe("Adapter-specific: codex reasoning-effort level. Ignored by adapters that don't read it."),
   outputPath: z
     .string()
     .min(1)
@@ -57,6 +69,8 @@ export function createDispatchTool(rt: Runtime): ToolModule<typeof inputShape> {
         ...(args.cwd !== undefined ? { cwd: args.cwd } : {}),
         ...(args.mode !== undefined ? { mode: args.mode } : {}),
         ...(args.timeoutMs !== undefined ? { timeoutMs: args.timeoutMs } : {}),
+        ...(args.model !== undefined ? { model: args.model } : {}),
+        ...(args.effort !== undefined ? { effort: args.effort } : {}),
         ...(args.outputPath !== undefined ? { outputPath: args.outputPath } : {}),
       };
 

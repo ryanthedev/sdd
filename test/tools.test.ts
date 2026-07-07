@@ -10,8 +10,11 @@ import { afterEach, expect, spyOn, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { z } from "zod";
+import * as agy from "../src/adapters/agy.ts";
+import * as grok from "../src/adapters/grok.ts";
 import { createCancelTool } from "../src/tools/cancel.ts";
-import { createDispatchTool } from "../src/tools/dispatch.ts";
+import { createDispatchTool, inputShape as dispatchInputShape } from "../src/tools/dispatch.ts";
 import { createListAdaptersTool } from "../src/tools/list-adapters.ts";
 import { createResultTool } from "../src/tools/result.ts";
 import { createRuntime, type Runtime } from "../src/tools/runtime.ts";
@@ -214,6 +217,59 @@ test("test_dispatch_forwards_outputPath_into_dispatch_opts", async () => {
   expect(opts).toMatchObject({ outputPath: "/tmp/out.png" });
 
   await rt.jobStore.wait([structured(res).jobId as string], 5000);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DW-1.5: dispatch accepts model/effort, forwards them verbatim into
+// DispatchOpts, and rejects an out-of-enum effort at the tool boundary.
+// ─────────────────────────────────────────────────────────────────────────────
+test("test_DW_1_5_dispatch_forwards_model_and_effort_into_dispatch_opts", async () => {
+  const dir = freshDir("sdd-tools-adapters-");
+  writeAdapterFile(dir, "ok-adapter.ts", OK_ADAPTER);
+  const rt = newRuntime(dir);
+  const dispatchSpy = spyOn(rt.jobStore, "dispatch");
+  const dispatch = createDispatchTool(rt);
+
+  const res = await dispatch.handler({
+    adapter: "ok-adapter",
+    prompt: "review this",
+    model: "o3",
+    effort: "high",
+  });
+
+  expect(res.isError).toBeUndefined();
+  expect(dispatchSpy).toHaveBeenCalledTimes(1);
+  const opts = dispatchSpy.mock.calls[0]![2];
+  expect(opts).toMatchObject({ model: "o3", effort: "high" }); // forwarded verbatim
+
+  await rt.jobStore.wait([structured(res).jobId as string], 5000);
+});
+
+test("test_DW_1_5_out_of_enum_effort_rejected_at_tool_boundary", () => {
+  // The MCP server validates arguments against inputShape's zod schema before
+  // the handler runs — exercise that exact schema.
+  const schema = z.object(dispatchInputShape);
+
+  const bad = schema.safeParse({ adapter: "codex", prompt: "p", effort: "max" });
+  expect(bad.success).toBe(false);
+
+  for (const effort of ["low", "medium", "high"]) {
+    expect(schema.safeParse({ adapter: "codex", prompt: "p", effort }).success).toBe(true);
+  }
+  // model is a free (non-empty) string — the codex adapter's allowlist, not
+  // the schema, is what constrains its use.
+  expect(schema.safeParse({ adapter: "codex", prompt: "p", model: "" }).success).toBe(false);
+  expect(schema.safeParse({ adapter: "codex", prompt: "p", model: "o3" }).success).toBe(true);
+});
+
+test("test_DW_1_5_forwarded_keys_inert_for_adapters_that_do_not_read_them", () => {
+  // `effort` is read by NO adapter other than codex; `model` does not affect
+  // an adapter that doesn't read it (grok reads no opts keys at all).
+  // NOTE (documented in the phase discovery file): agy DOES read `opts.model`
+  // by its own pre-existing design (agy.ts:68) — that is agy's model knob,
+  // not codex leakage — so agy is asserted inert for `effort` only.
+  expect(grok.buildArgs("p", { model: "o3", effort: "high" })).toEqual(grok.buildArgs("p", {}));
+  expect(agy.buildArgs("p", { effort: "high" })).toEqual(agy.buildArgs("p", {}));
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
