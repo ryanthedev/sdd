@@ -2,25 +2,28 @@
 name: subagent-driven-development
 description: >-
   Orchestration doctrine for delegating scoped work units to CLI agent
-  harnesses (codex, agy) through the sdd MCP server's six tools (dispatch,
-  status, result, wait, list_adapters, cancel). Documents which adapter fits
-  which job, the fan-out-reads/serialize-writes concurrency rule, the
-  poll-by-default wait policy, and each harness's parsing gotchas. Use when
+  harnesses (codex, agy) through the sdd MCP server's seven tools (dispatch,
+  status, result, wait, list_adapters, cancel, check_adapter). Documents which
+  adapter fits which job, the fan-out-reads/serialize-writes concurrency rule,
+  the poll-by-default wait policy, each harness's parsing gotchas, and how to
+  health-check a harness's auth/liveness before relying on it. Use when
   delegating a scoped task to a CLI subagent harness, getting a second
   opinion or independent review, generating an image, fanning out parallel
-  read-mode jobs, or deciding whether to poll or block on a dispatched job.
+  read-mode jobs, deciding whether to poll or block on a dispatched job, or
+  checking whether a harness is installed and logged in.
   Not for: in-process Agent-tool subagents (use oberskills:agent) or writing
   new MCP tools or adapters (runtime code, out of scope here).
 when_to_use: >-
   Trigger phrases: "get a second opinion", "review this with codex", "review
   this with agy", "generate an image", "delegate this to a subagent",
   "dispatch this to codex/agy", "fan this out", "run these reviews in
-  parallel". Use before calling any sdd MCP tool.
+  parallel", "is codex working", "is the harness logged in", "check an
+  adapter", "health-check an adapter". Use before calling any sdd MCP tool.
 ---
 
 # Subagent-driven development
 
-The `sdd` MCP server delegates a scoped, fresh-context work unit (review, second opinion, implementation, image generation) to a CLI harness — `codex` or `agy` — that runs as a child process in the current working tree. Six tools: `dispatch`, `status`, `result`, `wait`, `list_adapters`, `cancel`. Claude stays the brain and owns the diff; the harness does one bounded task and reports back.
+The `sdd` MCP server delegates a scoped, fresh-context work unit (review, second opinion, implementation, image generation) to a CLI harness — `codex` or `agy` — that runs as a child process in the current working tree. Seven tools: `dispatch`, `status`, `result`, `wait`, `list_adapters`, `cancel`, `check_adapter`. Claude stays the brain and owns the diff; the harness does one bounded task and reports back.
 
 ## The honest value proposition
 
@@ -99,12 +102,27 @@ Don't oversell it as "async that Bash can't do" — that claim doesn't survive s
 
 | Job | Adapter | mode |
 |---|---|---|
-| Code review, second opinion | `codex` or `agy` | `read` |
+| Code review, second opinion | `codex` or the read-review roster (`grok`, `kimi`, `qwen`, `mistral`) | `read` |
+| Ensemble review (multi-model, parallel) | fan out `codex` + `grok`/`kimi`/`qwen`/`mistral` | `read` |
 | Implement a change in the working tree | `agy` | `write` |
 | Generate an image | `agy-image` | `read` |
 
+The read-review roster (`codex`, `grok`, `kimi`, `qwen`, `mistral`) are interchangeable read-mode second-opinion harnesses sharing one output contract (`VERDICT:` + `## Findings`) — fan them out in parallel for an ensemble review. Full per-harness capability + auth detail: [`references/harnesses.md`](references/harnesses.md).
+
 Call `list_adapters` before dispatching to confirm the adapter's underlying CLI is actually on `PATH` (`binaryPresent`) — dispatching to an adapter whose binary is missing fails at spawn time, not at discovery time.
+
+### Presence ≠ usable: check before you rely
+
+`list_adapters`' `binaryPresent` is a `PATH` check only — it cannot see login or subscription state, so an installed-but-unauthenticated harness looks identical to a working one until dispatch fails. Before relying on a harness you have **not** already exercised this session, call `check_adapter(name)`. It runs a minimal live probe through the normal dispatch path and returns one of `ok | failed | timeout | present_unverified | missing`:
+
+- `ok` — installed **and** authenticated; the reliable green light.
+- `failed` — installed but the probe failed; `detail` carries the CLI's own auth/quota/subscription error text.
+- `timeout` — inconclusive (slow model, network, or hang); the probe job is cancelled — retry with a larger `timeoutMs`.
+- `present_unverified` — the adapter opts out of automatic probing. Only `agy-image` (`probeable: false`, because a probe would bill a real generation) — confirm it by dispatching a real job.
+- `missing` — binary not on `PATH`; not installed.
+
+Full per-harness capability + auth table: [`references/harnesses.md`](references/harnesses.md).
 
 ## 5. Tool surface
 
-`dispatch(adapter, prompt, cwd?, mode?, timeoutMs?) → jobId`, `status(jobId)`, `result(jobId)`, `wait(jobIds, timeoutMs?)`, `list_adapters()`, `cancel(jobId)`. Full parameter and return-shape reference: the project [README](../../README.md).
+`dispatch(adapter, prompt, cwd?, mode?, timeoutMs?) → jobId`, `status(jobId)`, `result(jobId)`, `wait(jobIds, timeoutMs?)`, `list_adapters()`, `cancel(jobId)`, `check_adapter(adapter, timeoutMs?, cwd?)`. Seven tools total. Full parameter and return-shape reference: the project [README](../../README.md).

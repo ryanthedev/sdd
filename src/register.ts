@@ -1,6 +1,6 @@
 /**
- * MCP server construction. Builds an McpServer, registers the six tools
- * (dispatch/status/result/wait/cancel/list_adapters) over one shared Runtime
+ * MCP server construction. Builds an McpServer, registers the seven tools
+ * (dispatch/status/result/wait/cancel/list_adapters/check_adapter) over one shared Runtime
  * (JobStore + adapters dir), and connects the stdio transport. Imported
  * dynamically by server.ts so a missing node_modules yields a clear startup
  * error instead of a cryptic module-resolution stack.
@@ -15,6 +15,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import type { z } from "zod";
 import { log } from "./lib/log.ts";
 import { createCancelTool } from "./tools/cancel.ts";
+import { createCheckTool } from "./tools/check.ts";
 import { createDispatchTool } from "./tools/dispatch.ts";
 import { createListAdaptersTool } from "./tools/list-adapters.ts";
 import { createResultTool } from "./tools/result.ts";
@@ -78,7 +79,7 @@ function defineTool<Shape extends z.ZodRawShape>(mod: ToolModule<Shape>): Regist
   };
 }
 
-/** Build the six registration records over one shared Runtime. */
+/** Build the seven registration records over one shared Runtime. */
 function buildTools(rt: Runtime): RegisteredTool[] {
   return [
     defineTool(createDispatchTool(rt)),
@@ -87,11 +88,12 @@ function buildTools(rt: Runtime): RegisteredTool[] {
     defineTool(createWaitTool(rt)),
     defineTool(createCancelTool(rt)),
     defineTool(createListAdaptersTool(rt)),
+    defineTool(createCheckTool(rt)),
   ];
 }
 
 /**
- * Build the server, register the six tools over a fresh Runtime, connect
+ * Build the server, register the seven tools over a fresh Runtime, connect
  * stdio, and install clean-shutdown handlers. Resolves once the transport is
  * connected.
  */

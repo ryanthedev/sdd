@@ -141,6 +141,36 @@ test("test_DW_1_4_import_throw_is_skipped_with_warning", () => {
   expect(warning).toContain("failed to load");
 });
 
+test("probeable=false is threaded through discovery onto the Adapter", () => {
+  const dir = freshDir();
+  writeAdapterFile(
+    dir,
+    "opts-out.ts",
+    VALID_ADAPTER.replace('name = "fixture"', 'name = "opts-out"') + "\nexport const probeable = false;\n",
+  );
+
+  const adapters = discoverAdapters(dir);
+  expect(adapters.length).toBe(1);
+  expect(adapters[0]!.probeable).toBe(false);
+});
+
+test("a malformed probeable export is rejected — the adapter is skipped with a warning", () => {
+  const dir = freshDir();
+  // probeable must be a boolean; a string is malformed and rejected (like binary).
+  writeAdapterFile(dir, "bad-probeable.ts", VALID_ADAPTER + '\nexport const probeable = "yes";\n');
+
+  let adapters: Adapter[] | undefined;
+  const logs = captureStderr(() => {
+    adapters = discoverAdapters(dir);
+  });
+
+  expect(adapters).toEqual([]);
+  const warning = logs.find((l) => l.includes("bad-probeable.ts"));
+  expect(warning).toBeDefined();
+  expect(warning).toContain("missing/invalid export");
+  expect(warning).toContain("probeable");
+});
+
 test("test_DW_1_4_duplicate_adapter_name_is_skipped_with_warning", () => {
   const dir = freshDir();
   writeAdapterFile(dir, "a-first.ts", VALID_ADAPTER);

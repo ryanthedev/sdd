@@ -24,6 +24,17 @@ export interface Adapter {
    */
   binary?: string;
 
+  /**
+   * Live-probe policy for the `check_adapter` health tool. Omit (the default) to
+   * let `check_adapter` run a generic liveness probe — a trivial work unit through
+   * the normal dispatch path whose contract marker, when it comes back, proves the
+   * harness actually ran and is authenticated. Set `false` to opt OUT of automatic
+   * probing for adapters where a probe would incur real cost or side effects
+   * (agy-image bills a real image generation and needs an output path a health
+   * check can't supply) — `check_adapter` then reports binary presence only.
+   */
+  probeable?: boolean;
+
   /** Whether this adapter reads or writes the working tree (drives the write-write guard). */
   mode: AdapterMode;
 

@@ -60,6 +60,9 @@ export const name = "agy-image";
  *  own contract, not a separate binary — so list_adapters probes `agy` on PATH. */
 export const binary = "agy";
 export const mode: AdapterMode = "read";
+/** Opt OUT of `check_adapter`'s automatic live probe: a probe would bill a real
+ *  image generation and needs an outputPath a health check can't supply. */
+export const probeable = false;
 
 /**
  * Marker line the harness must echo, containing the absolute save path. `g`
@@ -192,5 +195,5 @@ function assertContained(resolved: string, base: string, raw: string): void {
   }
 }
 
-const _check: Adapter = { name, binary, mode, buildArgs, injectContract, parseResult };
+const _check: Adapter = { name, binary, probeable, mode, buildArgs, injectContract, parseResult };
 void _check;

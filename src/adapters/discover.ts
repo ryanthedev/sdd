@@ -61,6 +61,11 @@ function toAdapter(mod: Record<string, unknown>): Adapter | { missing: string[] 
   const binary = mod.binary;
   if (binary !== undefined && (typeof binary !== "string" || binary.length === 0)) missing.push("binary");
 
+  // `probeable` is optional, but if a module exports it, it must be a boolean —
+  // a malformed live-probe policy is a bug worth rejecting, like `binary`.
+  const probeable = mod.probeable;
+  if (probeable !== undefined && typeof probeable !== "boolean") missing.push("probeable");
+
   if (missing.length > 0) return { missing };
 
   // Assemble a cohesive Adapter object rather than leaking the raw module
@@ -68,6 +73,7 @@ function toAdapter(mod: Record<string, unknown>): Adapter | { missing: string[] 
   return {
     name: name as string,
     binary: typeof binary === "string" ? binary : undefined,
+    probeable: typeof probeable === "boolean" ? probeable : undefined,
     mode: mode as Adapter["mode"],
     buildArgs: mod.buildArgs as Adapter["buildArgs"],
     injectContract: mod.injectContract as Adapter["injectContract"],
