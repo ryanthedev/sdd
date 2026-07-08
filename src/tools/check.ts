@@ -81,18 +81,28 @@ export function createCheckTool(rt: Runtime): ToolModule<typeof inputShape> {
 
       // Live probe: run PROBE_PROMPT through the normal dispatch path.
       //
-      // `mode:"read"` skips the write-write guard and, for adapters that HONOR
-      // opts.mode (e.g. codex, which selects a read-only sandbox), keeps the probe
-      // read-only. But write-capable harnesses like agy IGNORE opts.mode — agy's
-      // buildArgs always emits `--dangerously-skip-permissions`, so mode alone
-      // cannot stop it mutating the tree. Probe isolation therefore comes
-      // STRUCTURALLY from the cwd, not from mode: when the caller supplies no cwd,
-      // run the probe in a fresh throwaway temp dir so anything a write-capable
-      // harness might write during a health check lands in a disposable location,
-      // never the user's tree. A liveness/auth probe needs no repo context. If the
-      // caller DID pass a cwd, honor their explicit choice and leave it untouched.
-      const ownsTempCwd = args.cwd === undefined;
-      const probeCwd = args.cwd ?? mkdtempSync(join(tmpdir(), "sdd-check-"));
+      // We always dispatch with `mode:"read"` — it skips the write-write guard
+      // and, for adapters that HONOR opts.mode (e.g. codex, which selects a
+      // read-only sandbox), keeps the probe read-only.
+      //
+      // cwd isolation is applied ONLY for write-capable adapters. A write-mode
+      // harness like agy IGNORES opts.mode (its buildArgs always emits
+      // `--dangerously-skip-permissions`), so mode alone cannot stop it mutating
+      // the tree; isolation must be STRUCTURAL. For those, when the caller gives
+      // no cwd, run the probe in a fresh throwaway temp dir so any write lands
+      // off-tree, never in the user's working directory. (agy runs fine in a bare
+      // non-git temp dir — no git init needed.)
+      //
+      // READ-mode harnesses run in the server's REAL cwd: they cannot write during
+      // a probe (codex is read-only sandboxed; the API-key CLIs never touch the
+      // fs), and some REQUIRE a git/trusted working dir — codex refuses to run in a
+      // bare temp dir ("not inside a trusted directory"), which would be a false
+      // `failed`. The real cwd provides that context. A caller-supplied cwd is
+      // always honored for ANY adapter (their explicit choice); no temp dir is
+      // created or cleaned in that case.
+      const isolate = adapter.mode === "write";
+      const ownsTempCwd = isolate && args.cwd === undefined;
+      const probeCwd = args.cwd ?? (isolate ? mkdtempSync(join(tmpdir(), "sdd-check-")) : process.cwd());
       try {
         let jobId: string;
         try {

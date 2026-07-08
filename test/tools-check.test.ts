@@ -76,6 +76,13 @@ export function parseResult(stdout, stderr, exitCode) {
 }
 `;
 
+// A WRITE-mode adapter whose probe completes — used to prove that write-capable
+// adapters get isolated into a throwaway temp cwd (agy-shaped isolation).
+const PROBE_OK_WRITE_ADAPTER = PROBE_OK_ADAPTER.replace('name = "probe-ok"', 'name = "probe-write"').replace(
+  'mode = "read"',
+  'mode = "write"',
+);
+
 // Writes an auth-like error to STDERR (which lands in the job log, NOT result.raw)
 // and exits 1; parseResult classifies it failed with a generic summary. The detail
 // builder must surface the stderr text by tailing the log.
@@ -256,11 +263,31 @@ test("check_adapter returns a probe_dispatch_failed error when the probe dispatc
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// isolation: with no caller cwd, the probe runs in a throwaway temp dir under
-// tmpdir(), never the process cwd — a structural guard for write-capable harnesses
-// (agy ignores opts.mode), independent of prompt compliance.
+// isolation (WRITE adapter): with no caller cwd, a write-capable adapter's probe
+// runs in a throwaway temp dir under tmpdir(), never the process cwd — a
+// structural guard (agy ignores opts.mode) independent of prompt compliance.
 // ─────────────────────────────────────────────────────────────────────────────
-test("check_adapter runs the probe in a disposable temp cwd, not the process cwd, when no cwd is given", async () => {
+test("check_adapter isolates a write-mode probe in a disposable temp cwd, not the process cwd", async () => {
+  const dir = freshDir("sdd-check-adapters-");
+  writeAdapterFile(dir, "probe-write.ts", PROBE_OK_WRITE_ADAPTER);
+  const rt = newRuntime(dir);
+  const check = createCheckTool(rt);
+
+  const res = await check.handler({ adapter: "probe-write", timeoutMs: 5000 });
+
+  const jobId = structured(res).jobId as string;
+  const jobCwd = rt.jobStore.get(jobId)?.cwd;
+  expect(jobCwd).toBeDefined();
+  expect(jobCwd).not.toBe(process.cwd()); // NOT the user's tree
+  expect(jobCwd!.startsWith(tmpdir())).toBe(true); // a throwaway temp dir
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// isolation (READ adapter): read-mode adapters cannot write during a probe and
+// some (codex) REQUIRE a git/trusted cwd — so they run in the server's real cwd,
+// NOT a bare temp dir (which would make codex falsely report `failed`).
+// ─────────────────────────────────────────────────────────────────────────────
+test("check_adapter runs a read-mode probe in the process cwd, not a temp dir, when no cwd is given", async () => {
   const dir = freshDir("sdd-check-adapters-");
   writeAdapterFile(dir, "probe-ok.ts", PROBE_OK_ADAPTER);
   const rt = newRuntime(dir);
@@ -270,9 +297,7 @@ test("check_adapter runs the probe in a disposable temp cwd, not the process cwd
 
   const jobId = structured(res).jobId as string;
   const jobCwd = rt.jobStore.get(jobId)?.cwd;
-  expect(jobCwd).toBeDefined();
-  expect(jobCwd).not.toBe(process.cwd()); // NOT the user's tree
-  expect(jobCwd!.startsWith(tmpdir())).toBe(true); // a throwaway temp dir
+  expect(jobCwd).toBe(process.cwd()); // read adapters run in the real cwd
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
