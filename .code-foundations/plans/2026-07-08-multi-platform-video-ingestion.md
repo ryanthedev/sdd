@@ -314,6 +314,8 @@
 - Frame-budget and scene-threshold defaults (150 / 0.35) are research-backed starting points, not tuned on target content (open item from research doc).
 - Signal-killed jobs classify `failed` via `JobStore` (never trust a parser on a job we terminated) — a core invariant covered by `jobs.test.ts`, so `agy-vision` does not re-test it (dropped a redundant DW after CHECK).
 - CHECK also bumped Phases 2 & 3 to Full gate (they introduce new cross-phase seams: `_agy-shared` and the opts contract) and Phase 4 to Full + Security-sensitive + fable (arbitrary remote URL + credential-adjacent cookies path).
+- SSRF: the `yt-dlp` adapter fetches whatever URL it's given, including internal-network addresses — inherent to a fetch-a-URL capability, accepted for v1 (the skill's caller supplies hand-picked URLs). A future allowlist/deny-internal-ranges option is the mitigation if this ever faces untrusted URL sources.
+- Phase 3's opt set originally omitted `sleepRequests`; added during Phase 4 integration (Instagram throttling needs it). dispatch.ts + its tests updated then.
 
 ---
 ## Execution Log
@@ -337,4 +339,11 @@ Summary: Added `src/adapters/_agy-shared.ts` exporting `buildAgyArgv(subcommandF
 - [x] REVIEW: Verification passed (1st attempt)
 - [x] Committed
 Commit: (see git log)
-Summary: Extended `src/tools/dispatch.ts` zod `inputShape` with 6 optional opts — `outputDir`, `cookies`, `subLangs` (non-empty strings), `frameCount` (int ≥1), `sceneThreshold` (0..1), `addDir` — each both declared AND copied into the `opts` passed to `JobStore.dispatch` (verified no validated-but-dropped field). Out-of-range `frameCount`/`sceneThreshold` rejected at the zod boundary. `outputPath` description broadened off ".png-only" (type unchanged). Dispatch tests live in `test/tools.test.ts`. This is the opt contract Phases 4-6 consume. 176 tests pass, tsc clean.
+Summary: Extended `src/tools/dispatch.ts` zod `inputShape` with 6 optional opts — `outputDir`, `cookies`, `subLangs` (non-empty strings), `frameCount` (int ≥1), `sceneThreshold` (0..1), `addDir` — each both declared AND copied into the `opts` passed to `JobStore.dispatch` (verified no validated-but-dropped field). Out-of-range `frameCount`/`sceneThreshold` rejected at the zod boundary. `outputPath` description broadened off ".png-only" (type unchanged). Dispatch tests live in `test/tools.test.ts`. This is the opt contract Phases 4-6 consume. 176 tests pass, tsc clean. [Amended in Phase 4: added `sleepRequests` (int ≥1) opt — a seam I omitted here that Phase 4 needs for throttling.]
+
+### Phase 4: `yt-dlp` fetch adapter (Gate: Full, Security-sensitive)
+- [x] BUILD: Discovery + design + implementation complete (fable)
+- [x] REVIEW: 3-sample fable majority PASS (3/3)
+- [x] Committed
+Commit: (see git log)
+Summary: Added `src/adapters/yt-dlp.ts` — read-mode adapter fetching audio (+best-effort subs) from YouTube/Instagram/TikTok/X to an external dir; flags always before the positional URL (structural `--` end-of-options separator + http(s)-scheme validation block yt-dlp OPTION injection like `--exec=`); `resolveContained` traversal barricade on `outputDir`+`cookies`; identity `injectContract`; `parseResult` classifies on exit + real `existsSync` of the emitted `.wav` path (via yt-dlp's `--print after_move:filepath`). Also closed the `sleepRequests` dispatch-opt seam. 203 tests pass, tsc clean, 100% coverage on the adapter. Note: SSRF (internal-network URLs) is unrestricted — inherent to a fetch-a-URL tool, accepted for v1.

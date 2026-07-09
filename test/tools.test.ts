@@ -292,6 +292,7 @@ test("test_DW_3_1_dispatch_forwards_video_ingestion_opts_into_dispatch_opts", as
     frameCount: 5,
     sceneThreshold: 0.4,
     addDir: "/tmp/frames-dir",
+    sleepRequests: 3,
   });
 
   expect(res.isError).toBeUndefined();
@@ -304,6 +305,7 @@ test("test_DW_3_1_dispatch_forwards_video_ingestion_opts_into_dispatch_opts", as
     frameCount: 5,
     sceneThreshold: 0.4,
     addDir: "/tmp/frames-dir",
+    sleepRequests: 3,
   });
 
   await rt.jobStore.wait([structured(res).jobId as string], 5000);
@@ -326,6 +328,11 @@ test("test_DW_3_2_out_of_range_scene_threshold_and_frame_count_rejected_at_tool_
   expect(schema.safeParse({ adapter: "codex", prompt: "p", sceneThreshold: 0 }).success).toBe(true);
   expect(schema.safeParse({ adapter: "codex", prompt: "p", sceneThreshold: 1 }).success).toBe(true);
   expect(schema.safeParse({ adapter: "codex", prompt: "p", frameCount: 1 }).success).toBe(true);
+
+  // sleepRequests shares the positive-int contract
+  expect(schema.safeParse({ adapter: "codex", prompt: "p", sleepRequests: 0 }).success).toBe(false);
+  expect(schema.safeParse({ adapter: "codex", prompt: "p", sleepRequests: 2.5 }).success).toBe(false);
+  expect(schema.safeParse({ adapter: "codex", prompt: "p", sleepRequests: 2 }).success).toBe(true);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

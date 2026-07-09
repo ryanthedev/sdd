@@ -94,6 +94,15 @@ export const inputShape = {
       "Adapter-specific: directory to grant a sandboxed analysis adapter read access to (--add-dir). Ignored by " +
         "adapters that don't read it.",
     ),
+  sleepRequests: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe(
+      "Adapter-specific: --sleep-requests throttle (integer >= 1) for fetch adapters, to avoid platform rate-limits. " +
+        "Ignored by adapters that don't read it.",
+    ),
 };
 
 type Input = z.output<z.ZodObject<typeof inputShape>>;
@@ -125,6 +134,7 @@ export function createDispatchTool(rt: Runtime): ToolModule<typeof inputShape> {
         ...(args.frameCount !== undefined ? { frameCount: args.frameCount } : {}),
         ...(args.sceneThreshold !== undefined ? { sceneThreshold: args.sceneThreshold } : {}),
         ...(args.addDir !== undefined ? { addDir: args.addDir } : {}),
+        ...(args.sleepRequests !== undefined ? { sleepRequests: args.sleepRequests } : {}),
       };
 
       try {
