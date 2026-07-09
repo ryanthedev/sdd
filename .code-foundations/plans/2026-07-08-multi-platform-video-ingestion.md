@@ -331,3 +331,10 @@ Summary: Added `src/lib/preflight.ts` — `preflight()` probes yt-dlp/mlx-whispe
 - [x] Committed
 Commit: (see git log)
 Summary: Added `src/adapters/_agy-shared.ts` exporting `buildAgyArgv(subcommandFlags, prompt)` (prepends `agy`, appends `--print`, prompt last — flag-order landmine now structural in one place) and `lastMarkerMatch`; refactored `agy.ts` + `agy-image.ts` to import both (no more copy-paste). Behavior-preserving: existing agy/agy-image test files byte-identical, argv order unchanged. This is the shared seam Phase 6 (`agy-vision`) will consume. 174 tests pass, tsc clean.
+
+### Phase 3: Extend dispatch opts schema (Gate: Full)
+- [x] BUILD: Discovery + design + implementation complete
+- [x] REVIEW: Verification passed (1st attempt)
+- [x] Committed
+Commit: (see git log)
+Summary: Extended `src/tools/dispatch.ts` zod `inputShape` with 6 optional opts — `outputDir`, `cookies`, `subLangs` (non-empty strings), `frameCount` (int ≥1), `sceneThreshold` (0..1), `addDir` — each both declared AND copied into the `opts` passed to `JobStore.dispatch` (verified no validated-but-dropped field). Out-of-range `frameCount`/`sceneThreshold` rejected at the zod boundary. `outputPath` description broadened off ".png-only" (type unchanged). Dispatch tests live in `test/tools.test.ts`. This is the opt contract Phases 4-6 consume. 176 tests pass, tsc clean.
