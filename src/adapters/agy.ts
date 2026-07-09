@@ -24,9 +24,15 @@
  * not the outcome. The contract (see `injectContract` below) defines the
  * marker as "the last line of output," so `parseResult` must scan for the
  * LAST marker-shaped line, not the first — otherwise an echoed `DONE`
- * example can mask a real, later `FAILED` verdict. `lastMarkerMatch` below
- * scans every match and keeps the final one for exactly this reason.
+ * example can mask a real, later `FAILED` verdict. `lastMarkerMatch`
+ * (`_agy-shared.ts`) scans every match and keeps the final one for exactly
+ * this reason.
+ *
+ * The argv-order guarantee and `lastMarkerMatch` live in `_agy-shared.ts`
+ * (shared with `agy-image.ts`) so the flag-order and marker-collision fixes
+ * exist exactly once.
  */
+import { buildAgyArgv, lastMarkerMatch } from "./_agy-shared.ts";
 import type { Adapter } from "./types.ts";
 import type { AdapterMode, AdapterResult, DispatchOpts } from "../types.ts";
 
@@ -50,19 +56,6 @@ export const mode: AdapterMode = "write";
  */
 const RESULT_MARKER_RE = /^AGY_RESULT:\s*(DONE|FAILED)\s*$/gm;
 
-/**
- * Scan every match of `re` in `text` and return the last one — never the
- * first. `re` must carry the `g` flag. This is the fix for the marker-
- * collision landmine documented at the top of this file: the harness's real
- * verdict is its LAST marker line, not the first marker-shaped line that
- * happens to appear (e.g. an echoed instruction).
- */
-function lastMarkerMatch(re: RegExp, text: string): RegExpExecArray | undefined {
-  let last: RegExpExecArray | undefined;
-  for (const m of text.matchAll(re)) last = m;
-  return last;
-}
-
 export function buildArgs(prompt: string, opts: DispatchOpts): string[] {
   const flags: string[] = [];
   pushOptionalStringFlag(flags, opts, "model", "--model");
@@ -79,9 +72,10 @@ export function buildArgs(prompt: string, opts: DispatchOpts): string[] {
   // agent must follow; the injection risk is inherent to delegating a task and
   // is the accepted v1 posture (same-cwd, real env).
   //
-  // Structural guard against the flag-order landmine: `--print` and the prompt
-  // are always pushed last, in that order — nothing lands after the prompt.
-  return ["agy", "--sandbox", "--dangerously-skip-permissions", ...flags, "--print", prompt];
+  // Structural guard against the flag-order landmine: `buildAgyArgv` always
+  // pushes `--print` and the prompt last, in that order — nothing lands
+  // after the prompt.
+  return buildAgyArgv(["--sandbox", "--dangerously-skip-permissions", ...flags], prompt);
 }
 
 export function injectContract(prompt: string): string {

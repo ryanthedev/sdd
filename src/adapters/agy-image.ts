@@ -49,9 +49,14 @@
  * rejected with a `TypeError` before it ever reaches argv/spawn. An already-
  * absolute `outputPath` is a caller specifying an explicit target directly
  * (not a traversal) and passes through unchanged, as before.
+ *
+ * The argv-order guarantee and `lastMarkerMatch` live in `_agy-shared.ts`
+ * (shared with `agy.ts`) so the flag-order and marker-collision fixes exist
+ * exactly once.
  */
 import { existsSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
+import { buildAgyArgv, lastMarkerMatch } from "./_agy-shared.ts";
 import type { Adapter } from "./types.ts";
 import type { AdapterMode, AdapterResult, DispatchOpts } from "../types.ts";
 
@@ -71,12 +76,6 @@ export const probeable = false;
  */
 const SAVED_MARKER_RE = /^AGY_IMAGE_SAVED:\s*(.+)$/gm;
 
-function lastMarkerMatch(re: RegExp, text: string): RegExpExecArray | undefined {
-  let last: RegExpExecArray | undefined;
-  for (const m of text.matchAll(re)) last = m;
-  return last;
-}
-
 export function buildArgs(prompt: string, opts: DispatchOpts): string[] {
   const outPath = resolveOutputPath(opts);
   // agy 1.0.16 has no --image/--out flags — image gen is a built-in agent
@@ -95,7 +94,7 @@ export function buildArgs(prompt: string, opts: DispatchOpts): string[] {
   // write — inside that sandbox. Verified: this combination still generates and
   // writes the PNG (incl. to a path outside cwd).
   const withPath = `${prompt}\n\nAbsolute save path (use exactly this, save nowhere else): ${outPath}`;
-  return ["agy", "--sandbox", "--dangerously-skip-permissions", "--print", withPath];
+  return buildAgyArgv(["--sandbox", "--dangerously-skip-permissions"], withPath);
 }
 
 export function injectContract(prompt: string): string {

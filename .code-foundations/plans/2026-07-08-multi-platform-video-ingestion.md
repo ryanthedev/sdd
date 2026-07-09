@@ -324,3 +324,10 @@
 - [x] Committed
 Commit: (see git log)
 Summary: Added `src/lib/preflight.ts` — `preflight()` probes yt-dlp/mlx-whisper/ffmpeg for presence, version, and (ffmpeg) required encoders (mjpeg/png + pcm_s16le), returning per-tool hints; a `bun run src/lib/preflight.ts` CLI prints JSON and exits non-zero for the skill's gate. README documents install + Instagram cookies/nightly caveat. Library path is console-free. 164 tests pass, tsc clean.
+
+### Phase 2: Extract `_agy-shared` helpers (Gate: Full)
+- [x] BUILD: Discovery + design + implementation complete
+- [x] REVIEW: Verification passed (1st attempt)
+- [x] Committed
+Commit: (see git log)
+Summary: Added `src/adapters/_agy-shared.ts` exporting `buildAgyArgv(subcommandFlags, prompt)` (prepends `agy`, appends `--print`, prompt last — flag-order landmine now structural in one place) and `lastMarkerMatch`; refactored `agy.ts` + `agy-image.ts` to import both (no more copy-paste). Behavior-preserving: existing agy/agy-image test files byte-identical, argv order unchanged. This is the shared seam Phase 6 (`agy-vision`) will consume. 174 tests pass, tsc clean.
