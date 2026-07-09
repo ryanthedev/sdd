@@ -347,3 +347,10 @@ Summary: Extended `src/tools/dispatch.ts` zod `inputShape` with 6 optional opts 
 - [x] Committed
 Commit: (see git log)
 Summary: Added `src/adapters/yt-dlp.ts` — read-mode adapter fetching audio (+best-effort subs) from YouTube/Instagram/TikTok/X to an external dir; flags always before the positional URL (structural `--` end-of-options separator + http(s)-scheme validation block yt-dlp OPTION injection like `--exec=`); `resolveContained` traversal barricade on `outputDir`+`cookies`; identity `injectContract`; `parseResult` classifies on exit + real `existsSync` of the emitted `.wav` path (via yt-dlp's `--print after_move:filepath`). Also closed the `sleepRequests` dispatch-opt seam. 203 tests pass, tsc clean, 100% coverage on the adapter. Note: SSRF (internal-network URLs) is unrestricted — inherent to a fetch-a-URL tool, accepted for v1.
+
+### Phase 5: `whisper` + `ffmpeg-frames` adapters (Gate: Standard)
+- [x] BUILD: Discovery + design + implementation complete
+- [x] REVIEW: Verification passed (1st attempt)
+- [x] Committed
+Commit: (see git log)
+Summary: Added `src/adapters/whisper.ts` (mlx_whisper large-v3-turbo → srt+txt; learns outputDir from the `Args:` verbose stdout dict) and `src/adapters/ffmpeg-frames.ts` (scene-select+mpdecimate dedup with a periodic-OR-scene filter guaranteeing ≥1 frame, `frameCount` cap with a `dropped` count, PTS-named frames + `manifest.json` mapping frame→tSeconds; learns outputDir from ffmpeg's `Output #0 ... to '<path>'` stderr). Both `read`-mode with traversal barricades, identity injectContract. Removed one unused import post-review. 250 tests pass, tsc clean. Accepted: ffmpeg-frames.ts at 89.2% line coverage — the 3 uncovered lines are defensive I/O-failure catch branches (readdirSync/writeFileSync throwing), verified correct by trace; fs-mock tests for them judged low-value.
