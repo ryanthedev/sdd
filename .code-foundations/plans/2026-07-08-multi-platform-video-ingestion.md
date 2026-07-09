@@ -129,14 +129,15 @@
 **Goal:** A `read`-mode adapter wrapping `yt-dlp` that, for any of the four platforms, extracts audio (+ opportunistic subtitles) to a caller-named external dir, with cookies/sleep/sub-lang opts.
 
 **Scope:**
-- IN: `buildArgs` emitting `yt-dlp` argv (flags before the positional URL): audio-only extraction (`-x --audio-format wav`), optional `--cookies`, `--sub-langs`/`--write-auto-subs`, `--sleep-requests`, output template into `opts.outputDir`; identity `injectContract`; `parseResult` classifying on exit-code + output-file existence.
+- IN: `buildArgs` emitting `yt-dlp` argv (flags before the positional URL): fetch a **resolution-capped video** (e.g. `-f "bv*[height<=720]+ba/b[height<=720]/b"` — 720p is ample for frame analysis and bounds bandwidth) AND extract a whisper-ready wav from it, KEEPING both (`-x --audio-format wav -k`/`--keep-video`), optional `--cookies`, `--sub-langs`/`--write-auto-subs`, `--sleep-requests`, output template into `opts.outputDir`; identity `injectContract`; `parseResult` classifying on exit-code + output-file existence, reporting BOTH the audio wav and the retained video path in `artifacts`.
 - OUT: transcription; frame extraction; profile/bulk downloads; auto-installing yt-dlp.
+- **AMENDED (Phase 7 UPDATE_PLAN):** original scope was audio-only, but `ffmpeg-frames` (Phase 5) needs a local video file to extract keyframes — so yt-dlp must also retain the video and report its path. The visual half of the feature depends on this.
 
 **Constraints:** Identity `injectContract` (URL must not be mutated). `mode: "read"` with media to an external dir (dodge write-write guard, per agy-image). Path-traversal barricade on `outputDir` and `cookies` paths (reuse the `resolveOutputPath`/`assertContained` pattern). Cookies path is credential-adjacent — validate, never log its contents.
 **Edge cases:** yt-dlp exit≠0 (login-required, rate-limited, extractor-broken) → `failed` with stderr tail in summary; exit 0 but no output file → `failed` (the silent-success guard, via existence check); URL with shell metacharacters → inert (argv array, `shell:false`).
 **Depends on:** Phase 3 | **Unlocks:** Phase 7
 **File scope:** `src/adapters/yt-dlp.ts, test/adapter-yt-dlp.test.ts`
-**Produces:** adapter `name:"yt-dlp"`, `mode:"read"`; `AdapterResult.artifacts = [audioWavPath, ...subtitlePaths]` under `opts.outputDir`; classification = exit0 AND expected audio file exists. (Whisper in Phase 5 consumes this audio at *runtime* via the skill, not as a code dependency — the two adapters are independent.)
+**Produces:** adapter `name:"yt-dlp"`, `mode:"read"`; `AdapterResult.artifacts = [audioWavPath, videoPath, ...subtitlePaths]` under `opts.outputDir`; classification = exit0 AND expected audio file exists. Whisper (Phase 5) consumes the audio and `ffmpeg-frames` (Phase 5) consumes the video at *runtime* via the skill — not code dependencies; the adapters stay independent.
 
 **File hints:** `src/adapters/agy-image.ts` — `resolveOutputPath`/`assertContained` traversal barricade + external-artifact `mode:"read"` precedent; `src/adapters/mistral.ts` — a minimal adapter with a `binary` override (yt-dlp's binary is `yt-dlp`).
 
@@ -146,6 +147,7 @@
 - [ ] DW-4.3: `parseResult` returns `done` with the audio path in `artifacts` on exit 0 + file present.
 - [ ] DW-4.4: a `../`-escaping `outputDir` throws a `TypeError` before spawn.
 - [ ] DW-4.5: identity `injectContract` returns the URL unchanged.
+- [ ] DW-4.6: `buildArgs` retains the video (resolution-capped) alongside the wav, and `parseResult` reports the video path in `artifacts` on exit 0 + files present (so `ffmpeg-frames` has a source).
 
 **Difficulty:** MEDIUM
 **Uncertainty:** whether to resolve captions in-adapter or leave to whisper — default audio-only + best-effort subs; the skill decides whether to skip whisper.
@@ -269,6 +271,7 @@
 - [ ] T-4.3 (unit): exit 0 + file present → `done` with audio path. [DW-4.3]
 - [ ] T-4.4 (dirty): `../`-escaping `outputDir` throws `TypeError`. [DW-4.4]
 - [ ] T-4.5 (unit): identity `injectContract` returns URL unchanged. [DW-4.5]
+- [ ] T-4.6 (unit): `buildArgs` keeps a res-capped video; `parseResult` reports the video path in `artifacts` on exit 0 + files present. [DW-4.6]
 - [ ] T-5.1 (unit): `whisper` pins large-v3-turbo, SRT output. [DW-5.1]
 - [ ] T-5.2 (dirty): `whisper` exit 0 no transcript → `failed`. [DW-5.2]
 - [ ] T-5.3 (unit): `ffmpeg-frames` injects threshold + cap defaults. [DW-5.3]
@@ -305,6 +308,7 @@
 | External artifact dir + `mode:"read"` | Media in source tree | Keeps write-write guard free so transcribe ∥ frames fan out (agy-image precedent) | 4,5,6 |
 | Pinned adapter, never `opts.sandbox` | opts flag | Most-dangerous knob must not reach the MCP-client boundary (codex.ts names the attack) | 6 |
 | Identity `injectContract` for tool adapters | Marker contract | Their "prompt" is a URL/path; classify on exit + file existence instead | 4,5 |
+| yt-dlp fetches res-capped VIDEO + audio (not audio-only) | Audio-only (original) | `ffmpeg-frames` needs a local video for keyframes — the visual half requires it; 720p cap bounds bandwidth (Phase 7 UPDATE_PLAN caught the audio-only gap) | 4 |
 
 ---
 ## Notes
@@ -343,8 +347,8 @@ Summary: Extended `src/tools/dispatch.ts` zod `inputShape` with 6 optional opts 
 
 ### Phase 4: `yt-dlp` fetch adapter (Gate: Full, Security-sensitive)
 - [x] BUILD: Discovery + design + implementation complete (fable)
-- [x] REVIEW: 3-sample fable majority PASS (3/3)
-- [x] Committed
+- [x] REVIEW: 3-sample fable majority PASS (3/3); re-reviewed 3-sample PASS (3/3) after the Phase-7-driven amendment
+- [x] Committed (initial 07d76a8 + amendment)
 Commit: (see git log)
 Summary: Added `src/adapters/yt-dlp.ts` — read-mode adapter fetching audio (+best-effort subs) from YouTube/Instagram/TikTok/X to an external dir; flags always before the positional URL (structural `--` end-of-options separator + http(s)-scheme validation block yt-dlp OPTION injection like `--exec=`); `resolveContained` traversal barricade on `outputDir`+`cookies`; identity `injectContract`; `parseResult` classifies on exit + real `existsSync` of the emitted `.wav` path (via yt-dlp's `--print after_move:filepath`). Also closed the `sleepRequests` dispatch-opt seam. 203 tests pass, tsc clean, 100% coverage on the adapter. Note: SSRF (internal-network URLs) is unrestricted — inherent to a fetch-a-URL tool, accepted for v1.
 

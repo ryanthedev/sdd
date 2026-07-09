@@ -48,11 +48,13 @@ test("test_DW_4_1_url_is_last_argv_element_all_flags_before_it", () => {
     if (el.startsWith("-")) expect(i).toBeLessThan(urlIdx);
   }
   // The full plan-pinned flag set is present.
-  for (const flag of ["-x", "--audio-format", "-f", "--cookies", "--sub-langs", "--sleep-requests", "-o"]) {
+  for (const flag of ["-x", "--audio-format", "-f", "-k", "--cookies", "--sub-langs", "--sleep-requests", "-o"]) {
     expect(argv).toContain(flag);
   }
   expect(argv[argv.indexOf("--audio-format") + 1]).toBe("wav");
-  expect(argv[argv.indexOf("-f") + 1]).toBe("bestaudio");
+  // Amended contract (Phase 7 cross-adapter fix): a resolution-capped video,
+  // not audio-only — `-f` caps at 720p and `-k` keeps the merged video.
+  expect(argv[argv.indexOf("-f") + 1]).toContain("height<=720");
 });
 
 test("test_DW_4_1_end_of_options_separator_immediately_precedes_url", () => {
@@ -80,6 +82,66 @@ test("subLangs opt expands to the full best-effort subtitle flag group", () => {
   expect(argv).toContain("--write-auto-subs");
   expect(argv[argv.indexOf("--sub-langs") + 1]).toBe("en.*,ja");
   expect(argv[argv.indexOf("--sub-format") + 1]).toBe("vtt");
+});
+
+// ── DW-4.6: resolution-capped video retained alongside the wav ─────────────
+
+test("test_DW_4_6_buildArgs_caps_resolution_keeps_video_and_emits_labeled_video_print", () => {
+  const argv = ytdlp.buildArgs(URL, { outputDir: freshDir() });
+  expect(argv[argv.indexOf("-f") + 1]).toContain("height<=720"); // resolution cap
+  expect(argv).toContain("-k"); // keep merged video after wav extraction
+  // A labeled video-path --print channel exists, distinct from the bare wav line.
+  expect(argv.some((a) => a.includes("SDD_VIDEO_PATH:%(filepath)s"))).toBe(true);
+  // The audio --print (first one) is still the bare after_move:filepath line.
+  expect(argv[argv.indexOf("--print") + 1]).toBe("after_move:filepath");
+});
+
+test("test_DW_4_6_parseResult_reports_both_audio_and_video_in_artifacts", () => {
+  const dir = freshDir();
+  const wav = join(dir, "vid.wav");
+  const video = join(dir, "vid.mp4");
+  writeFileSync(wav, "RIFF");
+  writeFileSync(video, "\x00\x00");
+  const stdout = `[download] 100%\n${wav}\nSDD_VIDEO_PATH:${video}\n`;
+  const result = ytdlp.parseResult(stdout, "", 0);
+  expect(result.status).toBe("done");
+  expect(result.artifacts).toEqual([wav, video]); // audio first, then retained video
+  expect(result.summary).toContain(video);
+});
+
+test("artifacts order is audio, video, then subtitles", () => {
+  const dir = freshDir();
+  const wav = join(dir, "v.wav");
+  const video = join(dir, "v.mp4");
+  const vtt = join(dir, "v.en.vtt");
+  for (const [p, c] of [
+    [wav, "RIFF"],
+    [video, "\x00"],
+    [vtt, "WEBVTT"],
+  ] as const)
+    writeFileSync(p, c);
+  const stdout = `[info] Writing video subtitles to: ${vtt}\n${wav}\nSDD_VIDEO_PATH:${video}\n`;
+  expect(ytdlp.parseResult(stdout, "", 0).artifacts).toEqual([wav, video, vtt]);
+});
+
+test("a labeled video path whose file is missing is dropped, not fatal (audio still done)", () => {
+  const dir = freshDir();
+  const wav = join(dir, "v.wav");
+  writeFileSync(wav, "RIFF");
+  const ghostVideo = join(dir, "ghost.mp4"); // reported but never written
+  const result = ytdlp.parseResult(`${wav}\nSDD_VIDEO_PATH:${ghostVideo}\n`, "", 0);
+  expect(result.status).toBe("done");
+  expect(result.artifacts).toEqual([wav]); // silent-success guard stays keyed on the audio file only
+});
+
+test("the LAST labeled video line wins when several appear", () => {
+  const dir = freshDir();
+  const wav = join(dir, "v.wav");
+  const real = join(dir, "real.mp4");
+  writeFileSync(wav, "RIFF");
+  writeFileSync(real, "\x00");
+  const stdout = `${wav}\nSDD_VIDEO_PATH:/somewhere/stale.mp4\nSDD_VIDEO_PATH:${real}\n`;
+  expect(ytdlp.parseResult(stdout, "", 0).artifacts).toEqual([wav, real]);
 });
 
 // ── DW-4.2: exit 0 but expected audio file absent → failed ─────────────────

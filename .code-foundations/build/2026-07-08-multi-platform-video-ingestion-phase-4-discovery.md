@@ -1,5 +1,7 @@
 # Discovery + Design: Phase 4 - `yt-dlp` fetch adapter
 
+> **AMENDMENT (post-build, Phase 7 cross-adapter contract fix).** Phase 7 caught that the visual half of the pipeline (Phase 5 `ffmpeg-frames`) needs a LOCAL VIDEO FILE, which an audio-only fetch never produced. Amended: `buildArgs` now fetches a **720p-capped merged video** (`-f "bv*[height<=720]+ba/b[height<=720]/b"`) and keeps it (`-k`/--keep-video) alongside the extracted wav; `parseResult` reports **both** — `artifacts = [audioWavPath, videoPath, ...subtitlePaths]`. New **DW-4.6** added and covered. Marker channel for the second path: a LABELLED `--print after_video:SDD_VIDEO_PATH:%(filepath)s` line (the audio wav stays the bare `after_move:filepath` line), parsed by label, last-occurrence-wins. The exact WHEN-stage→filepath mapping is pinned at the later manual E2E phase (consistent with Phase 5's ffmpeg-flag uncertainty note); the label-based parse contract is what the unit tests own. Video is ADDITIVE — the silent-success guard stays keyed on the AUDIO file alone; a video marker whose file is missing is dropped, not fatal. All 27 original tests stayed green; the one assertion pinning the now-removed `-f bestaudio` audio-only value was updated to the capped-video contract (behavior changed by the amendment, not a weakened test). Details below in the DW table and Design Decisions.
+
 ## Files Found
 - `src/adapters/agy-image.ts` — `resolveOutputPath`/`assertContained` traversal barricade, external-artifact `mode:"read"` precedent, existence-check classification, `probeable = false` precedent.
 - `src/adapters/_agy-shared.ts` — `lastMarkerMatch` (last-occurrence marker scan) is reusable here; `buildAgyArgv` is agy-specific and NOT reused.
@@ -32,8 +34,9 @@ All Phase 4 prerequisites are in place: the Adapter port supports `probeable`/`b
 | DW-4.3 | `parseResult` returns `done` with the audio path in `artifacts` on exit 0 + file present | COVERED | `test_DW_4_3_exit_0_and_existing_wav_is_done_with_artifact`, `test_DW_4_3_existing_subtitles_are_appended_to_artifacts` |
 | DW-4.4 | a `../`-escaping `outputDir` throws a `TypeError` before spawn | COVERED | `test_DW_4_4_dotdot_escaping_outputDir_throws_TypeError`, `test_DW_4_4_deep_dotdot_escape_throws_TypeError`, plus the analogous cookies-path test |
 | DW-4.5 | identity `injectContract` returns the URL unchanged | COVERED | `test_DW_4_5_injectContract_is_identity` |
+| DW-4.6 | `buildArgs` retains the res-capped video alongside the wav; `parseResult` reports the video path in `artifacts` on exit 0 + files present | COVERED | `test_DW_4_6_buildArgs_caps_resolution_keeps_video_and_emits_labeled_video_print`, `test_DW_4_6_parseResult_reports_both_audio_and_video_in_artifacts` (+ ordering, missing-video-dropped, last-video-wins edge tests) |
 
-**All items COVERED:** YES (5/5 — matches the dispatch prompt's 5 DW-IDs)
+**All items COVERED:** YES (6/6 — original 5 DW-IDs + amended DW-4.6)
 
 ## Design Decisions
 

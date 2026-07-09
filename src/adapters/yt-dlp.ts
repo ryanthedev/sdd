@@ -1,8 +1,15 @@
 /**
  * yt-dlp adapter — multi-platform video fetch harness (YouTube, Instagram,
- * TikTok, X). Single contract: one video URL in, one whisper-ready WAV (plus
- * best-effort VTT subtitles) out, landed in a caller-named external directory
- * and reported in `artifacts`.
+ * TikTok, X). Single contract: one video URL in, TWO local media files out —
+ * a whisper-ready WAV and the resolution-capped merged VIDEO it was extracted
+ * from (plus best-effort VTT subtitles) — landed in a caller-named external
+ * directory and reported in `artifacts`.
+ *
+ * WHY KEEP THE VIDEO (Phase 7 cross-adapter contract): the pipeline's visual
+ * half (Phase 5 `ffmpeg-frames`) extracts keyframes from a LOCAL VIDEO FILE.
+ * An audio-only fetch would starve it on every run, so buildArgs fetches a
+ * 720p-capped video (`-f bv*[height<=720]+ba/…` — ample for frame analysis,
+ * bounds bandwidth) and keeps it (`-k`) after extracting the wav.
  *
  * `mode: "read"` — media lands at an explicit external `opts.outputDir` the
  * caller names, never in the source tree, so this does not count as a
@@ -73,6 +80,12 @@ export const probeable = false;
  *  lastMarkerMatch can take the LAST occurrence. */
 const AUDIO_PATH_LINE_RE = /^(\/.*\.wav)\r?$/gm;
 
+/** Label prefix on the video `--print` line (see buildArgs). A tagged channel,
+ *  distinct from the bare wav line, so parseResult never confuses the two. */
+const VIDEO_MARKER_PREFIX = "SDD_VIDEO_PATH:";
+/** The retained-video marker line. `g` for lastMarkerMatch. */
+const VIDEO_PATH_LINE_RE = /^SDD_VIDEO_PATH:(.+?)\r?$/gm;
+
 /** Best-effort subtitle artifacts: yt-dlp's `[info] Writing video subtitles
  *  to: <path>` / `[info] Writing video automatic subtitles to: <path>` lines
  *  (visible because buildArgs passes `--no-quiet`). */
@@ -84,12 +97,18 @@ export function buildArgs(prompt: string, opts: DispatchOpts): string[] {
 
   const argv = [
     "yt-dlp",
-    // Audio-only, whisper-ready extraction (plan-pinned flag set).
+    // Resolution-capped video WITH its audio, merged — 720p is ample for
+    // Phase 5's keyframe analysis and bounds bandwidth. The `/b[height<=720]`
+    // and trailing `/b` fallbacks keep single-stream platforms (Instagram/
+    // TikTok/X) working when separate bv*/ba streams aren't offered.
+    "-f",
+    "bv*[height<=720]+ba/b[height<=720]/b",
+    // Extract a whisper-ready wav from that video AND keep the merged video
+    // (`-k`/--keep-video) so BOTH files survive for the two pipeline halves.
     "-x",
     "--audio-format",
     "wav",
-    "-f",
-    "bestaudio",
+    "-k",
     // One URL, one video — profile/bulk downloads are out of scope.
     "--no-playlist",
     // Output template rooted in the caller's (resolved-absolute) outputDir;
@@ -109,10 +128,27 @@ export function buildArgs(prompt: string, opts: DispatchOpts): string[] {
   const sleep = validateOptionalSleepRequests(opts);
   if (sleep !== undefined) argv.push("--sleep-requests", String(sleep));
 
-  // The contract marker: print the final (post-postprocessing) filepath.
+  // Contract markers — two labeled stdout channels, since parseResult gets no
+  // opts and must recover TWO paths (audio + video):
+  //  1) the AUDIO wav: `--print after_move:filepath` prints the final moved
+  //     filepath. With -k, both the wav and the video are moved and printed
+  //     here as bare path lines; parseResult picks the one ending in `.wav`.
+  //  2) the VIDEO: a LABELLED `--print after_video:SDD_VIDEO_PATH:%(filepath)s`
+  //     prints the merged video path once, tagged so parseResult can tell it
+  //     apart from the bare wav line unambiguously (last-occurrence-wins).
   // --no-simulate re-enables the download (--print alone implies simulate);
   // --no-quiet restores the info lines subtitle collection reads.
-  argv.push("--print", "after_move:filepath", "--no-simulate", "--no-quiet");
+  // (The exact WHEN-stage→filepath mapping is pinned against a real clip in
+  // the later manual E2E phase; the label-based parse contract below is what
+  // this adapter's unit tests own and guarantee.)
+  argv.push(
+    "--print",
+    "after_move:filepath",
+    "--print",
+    `after_video:${VIDEO_MARKER_PREFIX}%(filepath)s`,
+    "--no-simulate",
+    "--no-quiet",
+  );
 
   // Structural end-of-options barricade: nothing after `--` can be parsed as
   // a yt-dlp option, and the URL is always the LAST argv element.
@@ -155,14 +191,24 @@ export function parseResult(stdout: string, stderr: string, exitCode: number): A
       raw: stdout,
     };
   }
+  // The retained video is additive, not a gate: if its marker line is present
+  // and the file exists, report it; if the line is present but the file is
+  // missing, report only what exists rather than failing the whole job (the
+  // silent-success guard stays keyed on the AUDIO file alone).
+  const videoMatch = lastMarkerMatch(VIDEO_PATH_LINE_RE, stdout);
+  const videoPath = videoMatch && existsSync(videoMatch[1]!.trim()) ? videoMatch[1]!.trim() : undefined;
+
   const subtitles = [...new Set([...stdout.matchAll(SUBTITLE_LINE_RE)].map((m) => m[1]!))].filter((p) =>
     existsSync(p),
   );
+  // Order (plan-pinned): audio, then retained video, then best-effort subs.
+  const artifacts = [wavPath, ...(videoPath !== undefined ? [videoPath] : []), ...subtitles];
+  const videoNote = videoPath !== undefined ? ` + video ${videoPath}` : "";
   const subNote = subtitles.length > 0 ? ` (+${subtitles.length} subtitle file(s))` : "";
   return {
     status: "done",
-    summary: `yt-dlp: extracted audio to ${wavPath}${subNote}`,
-    artifacts: [wavPath, ...subtitles],
+    summary: `yt-dlp: extracted audio to ${wavPath}${videoNote}${subNote}`,
+    artifacts,
     raw: stdout,
   };
 }
