@@ -11,6 +11,21 @@
  * 720p-capped video (`-f bv*[height<=720]+ba/…` — ample for frame analysis,
  * bounds bandwidth) and keeps it (`-k`) after extracting the wav.
  *
+ * VIDEO-PATH MARKER (verified against real yt-dlp 2026.07.04): the video path
+ * rides a LABELLED `--print post_process:SDD_VIDEO_PATH:%(filepath)s` line.
+ * The `after_video` stage was tried first and prints `NA` (its `filepath`
+ * field is unpopulated); `post_process` fires after the Merger/ExtractAudio
+ * postprocessors and DOES carry the merged video's filepath — but as a
+ * BASENAME / cwd-relative value (e.g. `jNQXAC9IVRw.webm`), not absolute. So
+ * parseResult resolves it to absolute via
+ * `join(dirname(<absolute wav path>), basename(<marker value>))`: the wav's
+ * directory IS the output dir and both files live there (flat
+ * `-o %(id)s.%(ext)s` template). `post_process` also prints an ExtractAudio
+ * line, so parseResult selects the LAST marker whose value has a VIDEO
+ * extension (never the `.wav`) — `-k` also keeps pre-merge fragment files
+ * (`<stem>.f251.webm`), but those never appear as a post_process filepath and
+ * basename+join is safe regardless.
+ *
  * `mode: "read"` — media lands at an explicit external `opts.outputDir` the
  * caller names, never in the source tree, so this does not count as a
  * working-tree write for the JobStore write-write guard (agy-image precedent).
@@ -62,7 +77,7 @@
  * downloads: one URL, one video.
  */
 import { existsSync } from "node:fs";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { lastMarkerMatch } from "./_agy-shared.ts";
 import type { Adapter } from "./types.ts";
 import type { AdapterMode, AdapterResult, DispatchOpts } from "../types.ts";
@@ -83,8 +98,11 @@ const AUDIO_PATH_LINE_RE = /^(\/.*\.wav)\r?$/gm;
 /** Label prefix on the video `--print` line (see buildArgs). A tagged channel,
  *  distinct from the bare wav line, so parseResult never confuses the two. */
 const VIDEO_MARKER_PREFIX = "SDD_VIDEO_PATH:";
-/** The retained-video marker line. `g` for lastMarkerMatch. */
-const VIDEO_PATH_LINE_RE = /^SDD_VIDEO_PATH:(.+?)\r?$/gm;
+/** A retained-video marker line whose value ends in a VIDEO extension — never
+ *  the `.wav` (post_process fires for both the Merger and ExtractAudio). The
+ *  value is a basename/relative path, resolved against the wav's dir. `g` for
+ *  the last-occurrence scan. */
+const VIDEO_PATH_LINE_RE = /^SDD_VIDEO_PATH:(.+\.(?:webm|mp4|mkv|mov))\r?$/gim;
 
 /** Best-effort subtitle artifacts: yt-dlp's `[info] Writing video subtitles
  *  to: <path>` / `[info] Writing video automatic subtitles to: <path>` lines
@@ -133,19 +151,17 @@ export function buildArgs(prompt: string, opts: DispatchOpts): string[] {
   //  1) the AUDIO wav: `--print after_move:filepath` prints the final moved
   //     filepath. With -k, both the wav and the video are moved and printed
   //     here as bare path lines; parseResult picks the one ending in `.wav`.
-  //  2) the VIDEO: a LABELLED `--print after_video:SDD_VIDEO_PATH:%(filepath)s`
-  //     prints the merged video path once, tagged so parseResult can tell it
-  //     apart from the bare wav line unambiguously (last-occurrence-wins).
+  //  2) the VIDEO: a LABELLED `--print post_process:SDD_VIDEO_PATH:%(filepath)s`
+  //     tags the merged video path (as a basename — parseResult resolves it
+  //     against the wav's dir). `post_process`, not `after_video` (whose
+  //     filepath field is NA) — verified against real yt-dlp 2026.07.04.
   // --no-simulate re-enables the download (--print alone implies simulate);
   // --no-quiet restores the info lines subtitle collection reads.
-  // (The exact WHEN-stage→filepath mapping is pinned against a real clip in
-  // the later manual E2E phase; the label-based parse contract below is what
-  // this adapter's unit tests own and guarantee.)
   argv.push(
     "--print",
     "after_move:filepath",
     "--print",
-    `after_video:${VIDEO_MARKER_PREFIX}%(filepath)s`,
+    `post_process:${VIDEO_MARKER_PREFIX}%(filepath)s`,
     "--no-simulate",
     "--no-quiet",
   );
@@ -192,11 +208,20 @@ export function parseResult(stdout: string, stderr: string, exitCode: number): A
     };
   }
   // The retained video is additive, not a gate: if its marker line is present
-  // and the file exists, report it; if the line is present but the file is
-  // missing, report only what exists rather than failing the whole job (the
-  // silent-success guard stays keyed on the AUDIO file alone).
+  // and the resolved file exists, report it; if the line is present but the
+  // file is missing, report only what exists rather than failing the whole job
+  // (the silent-success guard stays keyed on the AUDIO file alone).
+  //
+  // The marker VALUE is a basename / cwd-relative path (post_process's filepath
+  // is not absolute — verified against real yt-dlp). Resolve it against the
+  // wav's directory: both files land in the flat `-o %(id)s.%(ext)s` output
+  // dir, so `dirname(wav)/basename(marker)` is the absolute merged-video path.
   const videoMatch = lastMarkerMatch(VIDEO_PATH_LINE_RE, stdout);
-  const videoPath = videoMatch && existsSync(videoMatch[1]!.trim()) ? videoMatch[1]!.trim() : undefined;
+  let videoPath: string | undefined;
+  if (videoMatch) {
+    const resolvedVideo = join(dirname(wavPath), basename(videoMatch[1]!.trim()));
+    if (existsSync(resolvedVideo)) videoPath = resolvedVideo;
+  }
 
   const subtitles = [...new Set([...stdout.matchAll(SUBTITLE_LINE_RE)].map((m) => m[1]!))].filter((p) =>
     existsSync(p),

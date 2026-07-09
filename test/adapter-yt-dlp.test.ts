@@ -90,23 +90,41 @@ test("test_DW_4_6_buildArgs_caps_resolution_keeps_video_and_emits_labeled_video_
   const argv = ytdlp.buildArgs(URL, { outputDir: freshDir() });
   expect(argv[argv.indexOf("-f") + 1]).toContain("height<=720"); // resolution cap
   expect(argv).toContain("-k"); // keep merged video after wav extraction
-  // A labeled video-path --print channel exists, distinct from the bare wav line.
-  expect(argv.some((a) => a.includes("SDD_VIDEO_PATH:%(filepath)s"))).toBe(true);
+  // The video --print uses the post_process stage (after_video's filepath is
+  // NA — verified against real yt-dlp), labeled so parseResult can tag it.
+  expect(argv.some((a) => a === "post_process:SDD_VIDEO_PATH:%(filepath)s")).toBe(true);
+  expect(argv.some((a) => a.startsWith("after_video:"))).toBe(false);
   // The audio --print (first one) is still the bare after_move:filepath line.
   expect(argv[argv.indexOf("--print") + 1]).toBe("after_move:filepath");
 });
 
-test("test_DW_4_6_parseResult_reports_both_audio_and_video_in_artifacts", () => {
+// post_process emits the video path as a BASENAME (not absolute); parseResult
+// resolves it against the wav's dir. These synthetic triples mirror the real
+// yt-dlp stdout shape confirmed in the E2E (see also the real-binary test).
+test("test_DW_4_6_parseResult_resolves_basename_video_against_wav_dir_and_reports_both", () => {
   const dir = freshDir();
-  const wav = join(dir, "vid.wav");
-  const video = join(dir, "vid.mp4");
+  const wav = join(dir, "jNQXAC9IVRw.wav");
+  const video = join(dir, "jNQXAC9IVRw.webm");
   writeFileSync(wav, "RIFF");
   writeFileSync(video, "\x00\x00");
-  const stdout = `[download] 100%\n${wav}\nSDD_VIDEO_PATH:${video}\n`;
+  // absolute wav line (after_move) + BASENAME video line (post_process)
+  const stdout = `[download] 100%\n${wav}\nSDD_VIDEO_PATH:jNQXAC9IVRw.webm\n`;
   const result = ytdlp.parseResult(stdout, "", 0);
   expect(result.status).toBe("done");
-  expect(result.artifacts).toEqual([wav, video]); // audio first, then retained video
+  expect(result.artifacts).toEqual([wav, video]); // audio first, then resolved-absolute video
   expect(result.summary).toContain(video);
+});
+
+test("post_process ExtractAudio (.wav) line is not mistaken for the video marker", () => {
+  // post_process fires for BOTH Merger and ExtractAudio; the video regex only
+  // accepts a video extension, so a SDD_VIDEO_PATH:<stem>.wav line is ignored.
+  const dir = freshDir();
+  const wav = join(dir, "clip.wav");
+  const video = join(dir, "clip.webm");
+  writeFileSync(wav, "RIFF");
+  writeFileSync(video, "\x00");
+  const stdout = `${wav}\nSDD_VIDEO_PATH:clip.wav\nSDD_VIDEO_PATH:clip.webm\n`;
+  expect(ytdlp.parseResult(stdout, "", 0).artifacts).toEqual([wav, video]);
 });
 
 test("artifacts order is audio, video, then subtitles", () => {
@@ -120,16 +138,15 @@ test("artifacts order is audio, video, then subtitles", () => {
     [vtt, "WEBVTT"],
   ] as const)
     writeFileSync(p, c);
-  const stdout = `[info] Writing video subtitles to: ${vtt}\n${wav}\nSDD_VIDEO_PATH:${video}\n`;
+  const stdout = `[info] Writing video subtitles to: ${vtt}\n${wav}\nSDD_VIDEO_PATH:v.mp4\n`;
   expect(ytdlp.parseResult(stdout, "", 0).artifacts).toEqual([wav, video, vtt]);
 });
 
-test("a labeled video path whose file is missing is dropped, not fatal (audio still done)", () => {
+test("a labeled video whose resolved file is missing is dropped, not fatal (audio still done)", () => {
   const dir = freshDir();
   const wav = join(dir, "v.wav");
-  writeFileSync(wav, "RIFF");
-  const ghostVideo = join(dir, "ghost.mp4"); // reported but never written
-  const result = ytdlp.parseResult(`${wav}\nSDD_VIDEO_PATH:${ghostVideo}\n`, "", 0);
+  writeFileSync(wav, "RIFF"); // no video file written into dir
+  const result = ytdlp.parseResult(`${wav}\nSDD_VIDEO_PATH:ghost.mp4\n`, "", 0);
   expect(result.status).toBe("done");
   expect(result.artifacts).toEqual([wav]); // silent-success guard stays keyed on the audio file only
 });
@@ -140,7 +157,8 @@ test("the LAST labeled video line wins when several appear", () => {
   const real = join(dir, "real.mp4");
   writeFileSync(wav, "RIFF");
   writeFileSync(real, "\x00");
-  const stdout = `${wav}\nSDD_VIDEO_PATH:/somewhere/stale.mp4\nSDD_VIDEO_PATH:${real}\n`;
+  // basenames; stale.mp4 was never written to dir, real.mp4 was
+  const stdout = `${wav}\nSDD_VIDEO_PATH:stale.mp4\nSDD_VIDEO_PATH:real.mp4\n`;
   expect(ytdlp.parseResult(stdout, "", 0).artifacts).toEqual([wav, real]);
 });
 

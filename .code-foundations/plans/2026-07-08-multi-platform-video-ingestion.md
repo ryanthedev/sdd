@@ -242,7 +242,7 @@
 - [ ] DW-7.3: per-platform auth notes cover all four (Instagram cookies/nightly/sleeps called out).
 - [ ] DW-7.4: the split-privilege rule (fetch full-network / fusion sandboxed) and the strong-vision-model rule are both stated.
 - [ ] DW-7.5: the skill validates cleanly (frontmatter + structure) and is discoverable.
-- [ ] DW-7.6 (E2E): following the skill, one real public URL (e.g. a short YouTube clip) runs fetch → whisper ∥ frames → agy-vision fusion and produces a non-empty fused-understanding artifact at the named external path. This is the only test that exercises the whole pipeline on real tooling; proves success criterion #1.
+- [x] DW-7.6 (E2E): **VERIFIED 2026-07-09.** Installed yt-dlp 2026.07.04 + mlx-whisper + ffmpeg 8.1.1; preflight exits 0; ran `https://www.youtube.com/watch?v=jNQXAC9IVRw` through the full pipeline (real JobStore + discovered adapters) → non-empty `fused.json` with timestamp-aligned `{summary, moments[{tSeconds,spoken,visual,isVisualGag}]}`; the sandboxed vision model correctly described the frames (elephants, red/black jacket) and aligned them with the transcript. Success criterion #1 proven on real tooling. The E2E exposed + fixed a real yt-dlp video-reporting bug (`after_video:%(filepath)s` = `NA` → switched to `post_process:SDD_VIDEO_PATH:` resolved absolute against the audio dir), re-verified 3-sample fable PASS.
 
 **Difficulty:** MEDIUM
 **Uncertainty:** whether the skill also needs a thin `run.ts` helper vs pure doctrine — default pure doctrine (Claude sequences dispatches), matching house pattern.
