@@ -354,3 +354,10 @@ Summary: Added `src/adapters/yt-dlp.ts` — read-mode adapter fetching audio (+b
 - [x] Committed
 Commit: (see git log)
 Summary: Added `src/adapters/whisper.ts` (mlx_whisper large-v3-turbo → srt+txt; learns outputDir from the `Args:` verbose stdout dict) and `src/adapters/ffmpeg-frames.ts` (scene-select+mpdecimate dedup with a periodic-OR-scene filter guaranteeing ≥1 frame, `frameCount` cap with a `dropped` count, PTS-named frames + `manifest.json` mapping frame→tSeconds; learns outputDir from ffmpeg's `Output #0 ... to '<path>'` stderr). Both `read`-mode with traversal barricades, identity injectContract. Removed one unused import post-review. 250 tests pass, tsc clean. Accepted: ffmpeg-frames.ts at 89.2% line coverage — the 3 uncovered lines are defensive I/O-failure catch branches (readdirSync/writeFileSync throwing), verified correct by trace; fs-mock tests for them judged low-value.
+
+### Phase 6: `agy-vision` fusion adapter (Gate: Full, Security-sensitive)
+- [x] BUILD: Discovery + design + implementation complete (fable)
+- [x] REVIEW: 3-sample fable majority PASS (3/3)
+- [x] Committed
+Commit: (see git log)
+Summary: Added `src/adapters/agy-vision.ts` — the sandboxed multimodal fusion step. `--sandbox` is a single structural literal in `buildArgs` (no code path drops it — the split-privilege barricade, verified unbypassable by 3 reviewers); `--add-dir <artifactDir>` grants read access to transcript+frames; default vision model `"Gemini 3.1 Pro (High)"` (Flash-Low loops). `injectContract` (designed via oberskills:prompt safety guidance) puts the trusted contract first, fences transcript + on-screen frame text as untrusted data with explicit no-shell/no-network/ignore-embedded-instructions, and requires a JSON `{summary, moments[{tSeconds,spoken,visual,isVisualGag}]}` artifact + an `AGY_VISION_SAVED:` last-line marker. `parseResult` = last-marker + `existsSync`. Traversal barricades on `addDir`+`outputPath` (.json-pinned). The sandbox is the real control against image-borne injection; the fence is defense-in-depth. 269 tests pass, tsc clean.
