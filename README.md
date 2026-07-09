@@ -67,6 +67,31 @@ export function parseResult(stdout: string, stderr: string, exitCode: number): A
 
 `src/adapters/discover.ts` scans `src/adapters/*.ts` at startup, validates each file exports `name`, `mode`, `buildArgs`, `injectContract`, and `parseResult`, and skips (with a stderr warning, never a crash) anything malformed or missing an export. `test/*.ts` and `.d.ts` files, plus `discover.ts`/`types.ts` themselves, are treated as infrastructure and never loaded as adapters.
 
+## Video ingestion setup
+
+The video-ingestion pipeline (added in later phases, orchestrated by `skills/video-ingest/`) shells out to three external CLIs that are **not** managed by `bun install` — install them yourself, then run the preflight check below.
+
+| Tool | Install | Notes |
+|---|---|---|
+| `yt-dlp` | `brew install yt-dlp` (or `pip install -U yt-dlp` / `uv tool install yt-dlp`) | Fetches audio (+ opportunistic captions) from YouTube, Instagram, TikTok, and X. |
+| `ffmpeg` | `brew install ffmpeg` | Used for audio extraction and scene-cut keyframe capture. |
+| `mlx-whisper` | `pip install -U mlx-whisper` (or `uv tool install mlx-whisper`) | Apple Silicon (MLX) speech-to-text; requires a Mac with Apple Silicon and Python 3.9+. |
+
+Run the preflight check before using the pipeline:
+
+```
+bun run src/lib/preflight.ts
+```
+
+It prints a JSON report naming what's present, what's missing, and the exact install command for anything missing, then exits non-zero if anything needs attention.
+
+### Instagram caveat
+
+Instagram frequently rate-limits or requires login for reels/stories, unlike the other three platforms. Two things help:
+
+- **Cookies:** export a logged-in session's cookies (e.g. via a browser extension like "Get cookies.txt") and pass the file to `yt-dlp --cookies <path>`. Use a burner/throwaway account — never your primary credentials, and never commit or log the cookies file.
+- **Nightly build:** Instagram's extractor breaks often as Instagram changes its site; `yt-dlp`'s nightly channel ships extractor fixes faster than the stable release (`pip install -U --pre "yt-dlp[default]"`). Pair this with `--sleep-requests` to throttle and avoid tripping rate limits.
+
 ## Development
 
 ```
