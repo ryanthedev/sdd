@@ -3,3 +3,6 @@ node_modules/
 .DS_Store
 dist/
 .code-foundations/wave-worktrees/
+
+# Local Claude Code state (settings + nested agent worktrees)
+.claude/
