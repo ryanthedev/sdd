@@ -263,12 +263,11 @@ test("test_DW_1_5_out_of_enum_effort_rejected_at_tool_boundary", () => {
 });
 
 test("test_DW_1_5_forwarded_keys_inert_for_adapters_that_do_not_read_them", () => {
-  // `effort` is read by NO adapter other than codex; `model` does not affect
-  // an adapter that doesn't read it (grok reads no opts keys at all).
-  // NOTE (documented in the phase discovery file): agy DOES read `opts.model`
-  // by its own pre-existing design (agy.ts:68) — that is agy's model knob,
-  // not codex leakage — so agy is asserted inert for `effort` only.
-  expect(grok.buildArgs("p", { model: "o3", effort: "high" })).toEqual(grok.buildArgs("p", {}));
+  // `effort` is read by NO adapter other than codex. `model` IS read by grok
+  // (its `-m` passthrough) and by agy (agy.ts, its own model knob) — so both
+  // are asserted inert for `effort` only, and grok's `model` is asserted live.
+  expect(grok.buildArgs("p", { effort: "high" })).toEqual(grok.buildArgs("p", {}));
+  expect(grok.buildArgs("p", { model: "grok-4.5" })).not.toEqual(grok.buildArgs("p", {}));
   expect(agy.buildArgs("p", { effort: "high" })).toEqual(agy.buildArgs("p", {}));
 });
 

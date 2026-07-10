@@ -64,6 +64,27 @@ for (const { mod, name, binary, approve } of REVIEW_ADAPTERS) {
   });
 }
 
+test("grok: opts.model is passed through as -m <model> before -p (prompt stays last)", () => {
+  const argv = grok.buildArgs("do it", { model: "grok-4.5" });
+  expect(argv).toEqual(["grok", "--always-approve", "-m", "grok-4.5", "-p", "do it"]);
+  expect(argv[argv.length - 1]).toBe("do it"); // prompt is LAST, after -m
+});
+
+test("grok: opts.model works in read mode (no approval flag, -m still before -p)", () => {
+  const argv = grok.buildArgs("review it", { mode: "read", model: "grok-4.5" });
+  expect(argv).toEqual(["grok", "-m", "grok-4.5", "-p", "review it"]);
+});
+
+test("grok: omitting opts.model preserves the default (no -m flag emitted)", () => {
+  const argv = grok.buildArgs("do it", {});
+  expect(argv).not.toContain("-m");
+});
+
+test("grok: a non-empty-string opts.model throws (loud failure, never silent)", () => {
+  expect(() => grok.buildArgs("x", { model: "" })).toThrow(TypeError);
+  expect(() => grok.buildArgs("x", { model: 42 as unknown as string })).toThrow(TypeError);
+});
+
 test("name≠binary: only mistral overrides binary (to vibe); others omit it", () => {
   expect(mistral.binary).toBe("vibe");
   // grok/qwen/kimi keep name==binary and don't export a binary override
