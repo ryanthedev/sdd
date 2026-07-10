@@ -273,6 +273,69 @@ test("test_DW_1_5_forwarded_keys_inert_for_adapters_that_do_not_read_them", () =
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// DW-3.1: dispatch forwards the new video-ingestion opts (outputDir, cookies,
+// subLangs, frameCount, sceneThreshold, addDir) verbatim into DispatchOpts.
+// ─────────────────────────────────────────────────────────────────────────────
+test("test_DW_3_1_dispatch_forwards_video_ingestion_opts_into_dispatch_opts", async () => {
+  const dir = freshDir("sdd-tools-adapters-");
+  writeAdapterFile(dir, "ok-adapter.ts", OK_ADAPTER);
+  const rt = newRuntime(dir);
+  const dispatchSpy = spyOn(rt.jobStore, "dispatch");
+  const dispatch = createDispatchTool(rt);
+
+  const res = await dispatch.handler({
+    adapter: "ok-adapter",
+    prompt: "https://example.com/video",
+    outputDir: "/tmp/out-dir",
+    cookies: "/tmp/cookies.txt",
+    subLangs: "en,en-US",
+    frameCount: 5,
+    sceneThreshold: 0.4,
+    addDir: "/tmp/frames-dir",
+    sleepRequests: 3,
+  });
+
+  expect(res.isError).toBeUndefined();
+  expect(dispatchSpy).toHaveBeenCalledTimes(1);
+  const opts = dispatchSpy.mock.calls[0]![2];
+  expect(opts).toMatchObject({
+    outputDir: "/tmp/out-dir",
+    cookies: "/tmp/cookies.txt",
+    subLangs: "en,en-US",
+    frameCount: 5,
+    sceneThreshold: 0.4,
+    addDir: "/tmp/frames-dir",
+    sleepRequests: 3,
+  });
+
+  await rt.jobStore.wait([structured(res).jobId as string], 5000);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DW-3.2: out-of-range sceneThreshold/frameCount rejected at the tool boundary,
+// not silently coerced. Boundary-valid values still pass.
+// ─────────────────────────────────────────────────────────────────────────────
+test("test_DW_3_2_out_of_range_scene_threshold_and_frame_count_rejected_at_tool_boundary", () => {
+  const schema = z.object(dispatchInputShape);
+
+  expect(schema.safeParse({ adapter: "codex", prompt: "p", sceneThreshold: 1.5 }).success).toBe(false);
+  expect(schema.safeParse({ adapter: "codex", prompt: "p", frameCount: 0 }).success).toBe(false);
+  expect(schema.safeParse({ adapter: "codex", prompt: "p", frameCount: -1 }).success).toBe(false);
+  expect(schema.safeParse({ adapter: "codex", prompt: "p", frameCount: 1.5 }).success).toBe(false); // not an integer
+  expect(schema.safeParse({ adapter: "codex", prompt: "p", sceneThreshold: -0.1 }).success).toBe(false);
+
+  // boundary-valid values are accepted, not clamped away
+  expect(schema.safeParse({ adapter: "codex", prompt: "p", sceneThreshold: 0 }).success).toBe(true);
+  expect(schema.safeParse({ adapter: "codex", prompt: "p", sceneThreshold: 1 }).success).toBe(true);
+  expect(schema.safeParse({ adapter: "codex", prompt: "p", frameCount: 1 }).success).toBe(true);
+
+  // sleepRequests shares the positive-int contract
+  expect(schema.safeParse({ adapter: "codex", prompt: "p", sleepRequests: 0 }).success).toBe(false);
+  expect(schema.safeParse({ adapter: "codex", prompt: "p", sleepRequests: 2.5 }).success).toBe(false);
+  expect(schema.safeParse({ adapter: "codex", prompt: "p", sleepRequests: 2 }).success).toBe(true);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Edge: result on a still-running job -> running status, not a partial artifact.
 // ─────────────────────────────────────────────────────────────────────────────
 test("test_edge_result_on_running_job_returns_running_not_partial_artifact", async () => {

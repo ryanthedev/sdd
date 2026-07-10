@@ -44,8 +44,64 @@ export const inputShape = {
     .min(1)
     .optional()
     .describe(
-      'Adapter-specific: absolute or cwd-relative ".png" path for image-generating adapters (agy-image) to save to. ' +
-        "Required by those adapters; ignored by others.",
+      "Adapter-specific: absolute or cwd-relative artifact path (image, JSON, or Markdown depending on the " +
+        "adapter) for output-producing adapters to save to. Required by those adapters; ignored by others.",
+    ),
+  outputDir: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      "Adapter-specific: output directory for fetch/frame-extraction adapters to land media outside the source " +
+        "tree. Ignored by adapters that don't read it.",
+    ),
+  cookies: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      "Adapter-specific: path to a cookies file for auth-gated fetch adapters (yt-dlp-backed). Ignored by " +
+        "adapters that don't read it.",
+    ),
+  subLangs: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      'Adapter-specific: subtitle language selector string, e.g. "en,en-US", for transcript-fetching adapters. ' +
+        "Ignored by adapters that don't read it.",
+    ),
+  frameCount: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe("Adapter-specific: number of frames to extract (integer >= 1). Ignored by adapters that don't read it."),
+  sceneThreshold: z
+    .number()
+    .min(0)
+    .max(1)
+    .optional()
+    .describe(
+      "Adapter-specific: scene-change detection threshold in [0, 1] for frame-extraction adapters. Ignored by " +
+        "adapters that don't read it.",
+    ),
+  addDir: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      "Adapter-specific: directory to grant a sandboxed analysis adapter read access to (--add-dir). Ignored by " +
+        "adapters that don't read it.",
+    ),
+  sleepRequests: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe(
+      "Adapter-specific: --sleep-requests throttle (integer >= 1) for fetch adapters, to avoid platform rate-limits. " +
+        "Ignored by adapters that don't read it.",
     ),
 };
 
@@ -72,6 +128,13 @@ export function createDispatchTool(rt: Runtime): ToolModule<typeof inputShape> {
         ...(args.model !== undefined ? { model: args.model } : {}),
         ...(args.effort !== undefined ? { effort: args.effort } : {}),
         ...(args.outputPath !== undefined ? { outputPath: args.outputPath } : {}),
+        ...(args.outputDir !== undefined ? { outputDir: args.outputDir } : {}),
+        ...(args.cookies !== undefined ? { cookies: args.cookies } : {}),
+        ...(args.subLangs !== undefined ? { subLangs: args.subLangs } : {}),
+        ...(args.frameCount !== undefined ? { frameCount: args.frameCount } : {}),
+        ...(args.sceneThreshold !== undefined ? { sceneThreshold: args.sceneThreshold } : {}),
+        ...(args.addDir !== undefined ? { addDir: args.addDir } : {}),
+        ...(args.sleepRequests !== undefined ? { sleepRequests: args.sleepRequests } : {}),
       };
 
       try {
