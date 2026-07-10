@@ -1,10 +1,12 @@
 /**
- * Read-only review / second-opinion adapters (grok, qwen, kimi, mistral).
- * These share the review output contract (src/lib/review-contract.ts) and
- * differ only in binary + one-shot flag. No real CLI is spawned; buildArgs /
- * injectContract / parseResult are unit-tested directly, plus directory-scan
- * discovery and the name≠binary override. Live model calls need each provider's
- * API key and are verified out-of-band.
+ * Code-agent adapters (grok, qwen, kimi, mistral). These share the review
+ * output contract (src/lib/review-contract.ts) and differ only in binary +
+ * one-shot flag + write-approval flag. They DEFAULT to write mode (emit their
+ * approval flag so they can modify the repo); a per-call `opts.mode:"read"`
+ * override drops the approval flag for a review-only run. No real CLI is
+ * spawned; buildArgs / injectContract / parseResult are unit-tested directly,
+ * plus directory-scan discovery and the name≠binary override. Live model calls
+ * need each provider's API key and are verified out-of-band.
  */
 import { expect, test } from "bun:test";
 import { join } from "node:path";
@@ -15,20 +17,27 @@ import * as mistral from "../src/adapters/mistral.ts";
 import * as qwen from "../src/adapters/qwen.ts";
 
 const REVIEW_ADAPTERS = [
-  { mod: grok, name: "grok", binary: "grok" },
-  { mod: qwen, name: "qwen", binary: "qwen" },
-  { mod: kimi, name: "kimi", binary: "kimi" },
-  { mod: mistral, name: "mistral", binary: "vibe" },
+  { mod: grok, name: "grok", binary: "grok", approve: "--always-approve" },
+  { mod: qwen, name: "qwen", binary: "qwen", approve: "--yolo" },
+  { mod: kimi, name: "kimi", binary: "kimi", approve: "--yolo" },
+  { mod: mistral, name: "mistral", binary: "vibe", approve: "--auto-approve" },
 ] as const;
 
-for (const { mod, name, binary } of REVIEW_ADAPTERS) {
-  test(`${name}: read mode, correct binary, prompt is last argv element after -p`, () => {
-    expect(mod.mode).toBe("read");
+for (const { mod, name, binary, approve } of REVIEW_ADAPTERS) {
+  test(`${name}: write mode by default, emits approval flag before -p, prompt is last`, () => {
+    expect(mod.mode).toBe("write");
     expect(mod.name).toBe(name);
     const argv = mod.buildArgs("review this diff", {});
-    expect(argv[0]).toBe(binary);
+    expect(argv).toEqual([binary, approve, "-p", "review this diff"]);
     expect(argv[argv.length - 1]).toBe("review this diff"); // prompt is LAST
     expect(argv[argv.length - 2]).toBe("-p"); // immediately after the one-shot flag
+  });
+
+  test(`${name}: opts.mode:"read" override omits the approval flag (review-only run)`, () => {
+    const argv = mod.buildArgs("review this diff", { mode: "read" });
+    expect(argv).toEqual([binary, "-p", "review this diff"]);
+    expect(argv).not.toContain(approve);
+    expect(argv[argv.length - 1]).toBe("review this diff"); // prompt still LAST
   });
 
   test(`${name}: injectContract appends the VERDICT/Findings contract to the prompt`, () => {
@@ -63,12 +72,12 @@ test("name≠binary: only mistral overrides binary (to vibe); others omit it", (
   expect((kimi as { binary?: string }).binary).toBeUndefined();
 });
 
-test("all four review adapters are discovered via directory scan, binary override flows through", () => {
+test("all four code-agent adapters are discovered via directory scan, binary override flows through", () => {
   const found = discoverAdapters(join(import.meta.dir, "..", "src", "adapters"));
   for (const { name } of REVIEW_ADAPTERS) {
     const a = found.find((x) => x.name === name);
     expect(a).toBeDefined();
-    expect(a!.mode).toBe("read");
+    expect(a!.mode).toBe("write");
   }
   expect(found.find((x) => x.name === "mistral")!.binary).toBe("vibe");
 });

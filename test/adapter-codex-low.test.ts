@@ -37,7 +37,7 @@ afterEach(async () => {
 // ─────────────────────────────────────────────────────────────────────────────
 test("test_DW_2_2_codex_low_exports_port_shape_and_reuses_codex_contract", () => {
   expect(codexLow.name).toBe("codex-low");
-  expect(codexLow.mode).toBe("read");
+  expect(codexLow.mode).toBe("write");
   expect(codexLow.binary).toBe("codex");
   expect(typeof codexLow.buildArgs).toBe("function");
   expect(codexLow.injectContract).toBe(codex.injectContract);
@@ -52,7 +52,7 @@ test("codex-low buildArgs pins low effort on the default model with no -m flag",
     "-c",
     "model_reasoning_effort=low",
     "--sandbox",
-    "read-only",
+    "workspace-write",
     "review this",
   ]);
   expect(argv).not.toContain("-m");
@@ -60,7 +60,7 @@ test("codex-low buildArgs pins low effort on the default model with no -m flag",
 
 test("codex-low ignores per-call model and effort just like codex-high", () => {
   const argv = codexLow.buildArgs("p", { model: "o3", effort: "high" });
-  expect(argv).toEqual(["codex", "exec", "-c", "model_reasoning_effort=low", "--sandbox", "read-only", "p"]);
+  expect(argv).toEqual(["codex", "exec", "-c", "model_reasoning_effort=low", "--sandbox", "workspace-write", "p"]);
   expect(argv).not.toContain("o3");
   expect(argv).not.toContain("model_reasoning_effort=high");
 });
@@ -89,8 +89,8 @@ test("test_DW_2_4_list_adapters_reports_variants_with_binary_present", async () 
   const lowEntry = adapters.find((a) => a.name === "codex-low");
   expect(highEntry).toBeDefined();
   expect(lowEntry).toBeDefined();
-  expect(highEntry!.mode).toBe("read");
-  expect(lowEntry!.mode).toBe("read");
+  expect(highEntry!.mode).toBe("write");
+  expect(lowEntry!.mode).toBe("write");
   // binaryPresent reflects `codex` on PATH (via binary:"codex"), same probe result as the base adapter.
   const codexEntry = adapters.find((a) => a.name === "codex");
   expect(highEntry!.binaryPresent).toBe(codexEntry!.binaryPresent);

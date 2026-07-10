@@ -1,24 +1,29 @@
 /**
- * grok adapter — xAI Grok Build CLI as a read-only second-opinion / review
- * harness. Verified against `grok --help` (Grok 0.2.82): the non-interactive
- * one-shot form is `grok -p/--single "<prompt>"`, with the answer on stdout in
- * the default (text) output format. Auth: GROK_API_KEY / GROK_DEPLOYMENT_KEY in
- * the environment (never handled here — the JobStore passes process.env through).
+ * grok adapter — xAI Grok Build CLI. Verified against `grok --help`
+ * (Grok 0.2.82): the non-interactive one-shot form is `grok -p/--single
+ * "<prompt>"`, with the answer on stdout in the default (text) output format.
+ * Auth: GROK_API_KEY / GROK_DEPLOYMENT_KEY in the environment (never handled
+ * here — the JobStore passes process.env through).
  *
- * mode "read": a review harness, not an implementer — no --cwd / write flags are
- * emitted, so the agent answers the prompt rather than mutating the tree.
+ * Defaults to WRITE mode: it emits `--always-approve` so the agent can modify
+ * the repo headlessly (write-mode jobs serialize per cwd via the JobStore
+ * guard). Pass `opts.mode:"read"` for a review-only run — no approval flag is
+ * emitted, so the agent answers the prompt rather than mutating the tree. No
+ * `danger-full-access`/full-access knob is ever emitted.
  */
 import type { AdapterMode, AdapterResult, DispatchOpts } from "../types.ts";
 import type { Adapter } from "./types.ts";
 import { injectReviewContract, parseReviewResult } from "../lib/review-contract.ts";
 
 export const name = "grok";
-export const mode: AdapterMode = "read";
+export const mode: AdapterMode = "write";
 
-export function buildArgs(prompt: string, _opts: DispatchOpts): string[] {
+export function buildArgs(prompt: string, opts: DispatchOpts): string[] {
+  const effectiveMode: AdapterMode = opts.mode ?? mode;
   // `-p` (alias of `--single`) takes the prompt as its value and runs headless.
-  // Prompt is the last argv element, immediately after the flag.
-  return ["grok", "-p", prompt];
+  // The write-approval flag precedes `-p` so the prompt stays the LAST argv
+  // element. Read mode omits it (the CLI then can't apply edits headlessly).
+  return effectiveMode === "write" ? ["grok", "--always-approve", "-p", prompt] : ["grok", "-p", prompt];
 }
 
 export const injectContract = injectReviewContract;

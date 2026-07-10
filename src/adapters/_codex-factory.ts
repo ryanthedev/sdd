@@ -27,7 +27,7 @@ import * as codex from "./codex.ts";
 export interface CodexVariantConfig extends CodexArgvConfig {
   /** Adapter name — the on-disk filename stem and the dispatch key. */
   name: string;
-  /** Read/write mode for the write-write guard. Defaults to "read". */
+  /** Read/write mode for the write-write guard. Defaults to "write". */
   mode?: AdapterMode;
 }
 
@@ -49,7 +49,7 @@ export interface CodexVariant {
  */
 export function makeCodexVariant(cfg: CodexVariantConfig): CodexVariant {
   const { name, mode: variantMode, ...argvCfg } = cfg;
-  const resolvedMode: AdapterMode = variantMode ?? "read";
+  const resolvedMode: AdapterMode = variantMode ?? "write";
 
   return {
     name,

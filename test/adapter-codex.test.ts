@@ -13,7 +13,7 @@ import { discoverAdapters } from "../src/adapters/discover.ts";
 
 test("codex adapter exports the Adapter port shape", () => {
   expect(codex.name).toBe("codex");
-  expect(codex.mode).toBe("read");
+  expect(codex.mode).toBe("write");
   expect(typeof codex.buildArgs).toBe("function");
   expect(typeof codex.injectContract).toBe("function");
   expect(typeof codex.parseResult).toBe("function");
@@ -22,14 +22,19 @@ test("codex adapter exports the Adapter port shape", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 // buildArgs: argv array, sandbox mode mapping, never a shell string.
 // ─────────────────────────────────────────────────────────────────────────────
-test("buildArgs defaults to read-only sandbox and returns a plain argv array", () => {
+test("buildArgs defaults to workspace-write sandbox and returns a plain argv array", () => {
   const argv = codex.buildArgs("review this diff", {});
   expect(Array.isArray(argv)).toBe(true);
   expect(argv.every((a) => typeof a === "string")).toBe(true);
-  expect(argv).toEqual(["codex", "exec", "--sandbox", "read-only", "review this diff"]);
+  expect(argv).toEqual(["codex", "exec", "--sandbox", "workspace-write", "review this diff"]);
 });
 
-test("buildArgs uses workspace-write sandbox only when opts.mode is write", () => {
+test("buildArgs uses read-only sandbox when opts.mode is read (review-only override)", () => {
+  const argv = codex.buildArgs("just review the fix", { mode: "read" });
+  expect(argv).toEqual(["codex", "exec", "--sandbox", "read-only", "just review the fix"]);
+});
+
+test("buildArgs keeps workspace-write sandbox when opts.mode is write (explicit)", () => {
   const argv = codex.buildArgs("implement the fix", { mode: "write" });
   expect(argv).toEqual(["codex", "exec", "--sandbox", "workspace-write", "implement the fix"]);
 });
@@ -51,10 +56,11 @@ test("buildArgs passes a shell-metacharacter prompt through as one literal argv 
 // Phase 1 (codex model selection): shared buildCodexArgv — flag emission,
 // ordering (caller flags BEFORE --sandbox, prompt LAST), barricade.
 // ─────────────────────────────────────────────────────────────────────────────
-test("test_DW_1_1_buildCodexArgv_no_cfg_is_byte_identical_to_current_codex_argv", () => {
+test("test_DW_1_1_buildCodexArgv_no_cfg_matches_codex_default_argv", () => {
   expect(buildCodexArgv("p", "read")).toEqual(["codex", "exec", "--sandbox", "read-only", "p"]);
-  // Regression guard: the shared builder and the adapter's no-param path agree.
-  expect(buildCodexArgv("p", "read")).toEqual(codex.buildArgs("p", {}));
+  // Regression guard: the shared builder (write) and the adapter's no-param
+  // path (now write-by-default) agree.
+  expect(buildCodexArgv("p", "write")).toEqual(codex.buildArgs("p", {}));
 });
 
 test("test_DW_1_2_model_flag_precedes_sandbox_prompt_last", () => {
@@ -138,13 +144,13 @@ test("test_DW_1_3_codex_buildArgs_emits_model_and_effort_flags", () => {
     "-c",
     "model_reasoning_effort=high",
     "--sandbox",
-    "read-only",
+    "workspace-write",
     "p",
   ]);
 });
 
-test("test_DW_1_4_no_params_argv_unchanged_from_today", () => {
-  expect(codex.buildArgs("p", {})).toEqual(["codex", "exec", "--sandbox", "read-only", "p"]);
+test("test_DW_1_4_no_params_argv_defaults_to_workspace_write", () => {
+  expect(codex.buildArgs("p", {})).toEqual(["codex", "exec", "--sandbox", "workspace-write", "p"]);
 });
 
 test("test_DW_1_6_shell_metachar_model_stays_single_literal_argv_element", () => {
@@ -158,7 +164,7 @@ test("test_DW_1_6_shell_metachar_model_stays_single_literal_argv_element", () =>
 
 test("codex.buildArgs with effort only emits -c but no -m", () => {
   const argv = codex.buildArgs("p", { effort: "low" });
-  expect(argv).toEqual(["codex", "exec", "-c", "model_reasoning_effort=low", "--sandbox", "read-only", "p"]);
+  expect(argv).toEqual(["codex", "exec", "-c", "model_reasoning_effort=low", "--sandbox", "workspace-write", "p"]);
   expect(argv).not.toContain("-m");
 });
 

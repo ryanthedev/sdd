@@ -352,7 +352,7 @@ test("test_DW_3_3_list_adapters_reports_codex_from_real_adapters_dir", async () 
 
   const codexEntry = adapters.find((a) => a.name === "codex");
   expect(codexEntry).toBeDefined();
-  expect(codexEntry!.mode).toBe("read");
+  expect(codexEntry!.mode).toBe("write");
   expect(typeof codexEntry!.binaryPresent).toBe("boolean");
 });
 

@@ -1,25 +1,29 @@
 /**
- * kimi adapter — Moonshot Kimi CLI as a read-only second-opinion / review
- * harness. Verified against `kimi --help` (kimi-code 0.22.3): the non-interactive
- * one-shot form is `kimi -p/--prompt "<prompt>"` ("Run one prompt
- * non-interactively and print the response"), answer on stdout in the default
- * (text) output format. Auth: MOONSHOT_API_KEY in the environment (passed
- * through by the JobStore, never handled here).
+ * kimi adapter — Moonshot Kimi CLI. Verified against `kimi --help`
+ * (kimi-code 0.22.3): the non-interactive one-shot form is `kimi -p/--prompt
+ * "<prompt>"` ("Run one prompt non-interactively and print the response"),
+ * answer on stdout in the default (text) output format. Auth: MOONSHOT_API_KEY
+ * in the environment (passed through by the JobStore, never handled here).
  *
  * NOTE: the earlier research claimed `kimi --print -p ... --quiet`; the installed
  * CLI has no `--print`/`--quiet` — `-p` alone is the headless one-shot flag.
  *
- * mode "read": a review harness — no write-approval flags emitted.
+ * Defaults to WRITE mode: it emits `--yolo` so the agent can modify the repo
+ * headlessly (write-mode jobs serialize per cwd via the JobStore guard). Pass
+ * `opts.mode:"read"` for a review-only run — no approval flag is emitted. No
+ * `danger-full-access`/full-access knob is ever emitted.
  */
 import type { AdapterMode, AdapterResult, DispatchOpts } from "../types.ts";
 import type { Adapter } from "./types.ts";
 import { injectReviewContract, parseReviewResult } from "../lib/review-contract.ts";
 
 export const name = "kimi";
-export const mode: AdapterMode = "read";
+export const mode: AdapterMode = "write";
 
-export function buildArgs(prompt: string, _opts: DispatchOpts): string[] {
-  return ["kimi", "-p", prompt];
+export function buildArgs(prompt: string, opts: DispatchOpts): string[] {
+  const effectiveMode: AdapterMode = opts.mode ?? mode;
+  // The approval flag precedes `-p` so the prompt stays the LAST argv element.
+  return effectiveMode === "write" ? ["kimi", "--yolo", "-p", prompt] : ["kimi", "-p", prompt];
 }
 
 export const injectContract = injectReviewContract;

@@ -22,15 +22,16 @@ test("test_DW_2_1_factory_buildArgs_emits_configOverrides_before_sandbox_prompt_
     "-c",
     "model_reasoning_effort=high",
     "--sandbox",
-    "read-only",
+    "workspace-write",
     "p",
   ]);
 });
 
-test("makeCodexVariant defaults mode to read and never emits danger-full-access", () => {
+test("makeCodexVariant defaults mode to write and never emits danger-full-access", () => {
   const variant = makeCodexVariant({ name: "x" });
-  expect(variant.mode).toBe("read");
-  expect(variant.buildArgs("p", {})).toEqual(["codex", "exec", "--sandbox", "read-only", "p"]);
+  expect(variant.mode).toBe("write");
+  expect(variant.buildArgs("p", {})).toEqual(["codex", "exec", "--sandbox", "workspace-write", "p"]);
+  expect(variant.buildArgs("p", {})).not.toContain("danger-full-access");
 });
 
 test("makeCodexVariant honors an explicit write mode", () => {
@@ -39,12 +40,18 @@ test("makeCodexVariant honors an explicit write mode", () => {
   expect(variant.buildArgs("p", {})).toEqual(["codex", "exec", "--sandbox", "workspace-write", "p"]);
 });
 
+test("makeCodexVariant honors an explicit read mode", () => {
+  const variant = makeCodexVariant({ name: "x", mode: "read" });
+  expect(variant.mode).toBe("read");
+  expect(variant.buildArgs("p", {})).toEqual(["codex", "exec", "--sandbox", "read-only", "p"]);
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // DW-2.2 (codex-high half): port shape + identity reuse of codex's contract.
 // ─────────────────────────────────────────────────────────────────────────────
 test("test_DW_2_2_codex_high_exports_port_shape_and_reuses_codex_contract", () => {
   expect(codexHigh.name).toBe("codex-high");
-  expect(codexHigh.mode).toBe("read");
+  expect(codexHigh.mode).toBe("write");
   expect(codexHigh.binary).toBe("codex");
   expect(typeof codexHigh.buildArgs).toBe("function");
   // Identity reuse, not re-implementation — same function reference as codex.ts.
@@ -59,7 +66,7 @@ test("codex-high buildArgs pins high effort on the default model with no -m flag
     "-c",
     "model_reasoning_effort=high",
     "--sandbox",
-    "read-only",
+    "workspace-write",
     "review this",
   ]);
   expect(codexHigh.buildArgs("review this", {})).not.toContain("-m");
@@ -70,7 +77,7 @@ test("codex-high buildArgs pins high effort on the default model with no -m flag
 // ─────────────────────────────────────────────────────────────────────────────
 test("test_DW_2_5_codex_high_ignores_per_call_model_and_effort", () => {
   const argv = codexHigh.buildArgs("p", { model: "o3", effort: "low" });
-  expect(argv).toEqual(["codex", "exec", "-c", "model_reasoning_effort=high", "--sandbox", "read-only", "p"]);
+  expect(argv).toEqual(["codex", "exec", "-c", "model_reasoning_effort=high", "--sandbox", "workspace-write", "p"]);
   expect(argv).not.toContain("-m");
   expect(argv).not.toContain("o3");
   expect(argv).not.toContain("model_reasoning_effort=low");
@@ -106,7 +113,7 @@ test("discovered codex-high adapter round-trips through the Adapter port", () =>
   const adapters = discoverAdapters(join(import.meta.dir, "../src/adapters"));
   const found = adapters.find((a) => a.name === "codex-high");
   expect(found).toBeDefined();
-  expect(found!.mode).toBe("read");
+  expect(found!.mode).toBe("write");
   expect(found!.binary).toBe("codex");
   expect(found!.buildArgs("p", {})).toEqual([
     "codex",
@@ -114,7 +121,7 @@ test("discovered codex-high adapter round-trips through the Adapter port", () =>
     "-c",
     "model_reasoning_effort=high",
     "--sandbox",
-    "read-only",
+    "workspace-write",
     "p",
   ]);
 });

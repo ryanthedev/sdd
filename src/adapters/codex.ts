@@ -3,9 +3,11 @@
  * Pure data + pure functions, no I/O: JobStore (Phase 2) spawns `buildArgs`'
  * argv and feeds the captured stdout/stderr/exitCode into `parseResult`.
  *
- * Read-only by default: `mode` is "read" (a review/second-opinion harness).
- * `buildArgs` maps to codex's sandbox flag: "read" -> --sandbox read-only,
- * "write" -> --sandbox workspace-write. `danger-full-access` is never emitted.
+ * Write by default: `mode` is "write" so the harness can modify the repo
+ * (write-mode jobs serialize per cwd via the JobStore guard). `buildArgs` maps
+ * to codex's sandbox flag: "write" -> --sandbox workspace-write, and a per-call
+ * `opts.mode:"read"` override -> --sandbox read-only for a review-only run.
+ * `danger-full-access` is never emitted.
  *
  * Output split (verified against `codex exec --help` in this environment):
  * codex writes progress to STDERR and its final answer to STDOUT. `summary`/
@@ -20,7 +22,7 @@ import type { AdapterMode, AdapterResult, DispatchOpts } from "../types.ts";
 import { buildCodexArgv, type CodexArgvConfig } from "./_codex-shared.ts";
 
 export const name = "codex";
-export const mode: AdapterMode = "read";
+export const mode: AdapterMode = "write";
 
 /**
  * Per-call reasoning-effort allowlist. Mirrors the zod enum in

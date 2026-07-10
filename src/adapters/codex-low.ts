@@ -1,9 +1,11 @@
 /**
  * `codex-low` — a codex variant pinned to `model_reasoning_effort=low` on
  * the default model, for cheap/fast codex work that doesn't need deep
- * reasoning. Read mode, `binary:"codex"` (the real CLI probed by
- * `list_adapters`). Built by `makeCodexVariant` (see `_codex-factory.ts`) so
- * flag assembly and the output contract are reused, never re-implemented.
+ * reasoning. Write mode by default (inherits the factory default, so it can
+ * modify the repo; write-mode jobs serialize per cwd), `binary:"codex"` (the
+ * real CLI probed by `list_adapters`). Built by `makeCodexVariant` (see
+ * `_codex-factory.ts`) so flag assembly and the output contract are reused,
+ * never re-implemented.
  *
  * Per-call `model`/`effort` on `opts` are ignored — the pin is the whole
  * point. Pass those to the base `codex` adapter instead.
