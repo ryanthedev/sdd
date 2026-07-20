@@ -12,7 +12,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Adapter } from "../src/adapters/types.ts";
-import type { AdapterMode, AdapterResult } from "../src/types.ts";
+import type { AdapterResult } from "../src/types.ts";
 import { JobStore } from "../src/lib/jobs.ts";
 
 const BUN = process.execPath; // the bun binary running this test
@@ -41,14 +41,12 @@ afterEach(async () => {
 /** Build a stub Adapter from parts; identity injectContract unless overridden. */
 function stubAdapter(parts: {
   name?: string;
-  mode?: AdapterMode;
   buildArgs: Adapter["buildArgs"];
   injectContract?: Adapter["injectContract"];
   parseResult?: Adapter["parseResult"];
 }): Adapter {
   return {
     name: parts.name ?? "stub",
-    mode: parts.mode ?? "read",
     buildArgs: parts.buildArgs,
     injectContract: parts.injectContract ?? ((p) => p),
     parseResult:
@@ -136,46 +134,52 @@ test("test_DW_2_2_exit_zero_without_marker_is_failed", async () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// DW-2.3: write-write guard (same cwd) rejects the 2nd; reads run concurrently.
+// No concurrency policy: the store imposes NONE. Two jobs sharing one cwd both
+// dispatch and both run — deciding whether that is safe is the CALLER's job.
+// (This is the behavior that used to be refused as a "write-write conflict".)
 // ─────────────────────────────────────────────────────────────────────────────
-test("test_DW_2_3_second_write_same_cwd_rejected", () => {
+test("test_two_concurrent_jobs_in_the_same_cwd_both_dispatch_and_reach_terminal", async () => {
   const store = newStore();
   const cwd = freshDir("sdd-cwd-");
-  const writer = stubAdapter({
-    name: "writer",
-    mode: "write",
-    buildArgs: () => [BUN, "-e", "setInterval(()=>{}, 1e9)"], // stays running
+  const worker = stubAdapter({
+    name: "worker",
+    buildArgs: () => [BUN, "-e", "process.stdout.write('VERDICT: ok')"],
   });
 
-  const first = store.dispatch(writer, "write A", { cwd });
-  expect(store.get(first)!.state).toBe("running");
+  const a = store.dispatch(worker, "job A", { cwd });
+  const b = store.dispatch(worker, "job B", { cwd }); // same cwd → never refused
+  expect(a).not.toBe(b);
+  expect(store.get(a)!.cwd).toBe(cwd);
+  expect(store.get(b)!.cwd).toBe(cwd);
 
-  expect(() => store.dispatch(writer, "write B", { cwd })).toThrow(/write-write conflict/);
+  const res = await store.wait([a, b], 5000);
+  expect(res.stillRunning).toEqual([]);
+  expect(res.done.sort()).toEqual([a, b].sort()); // both reached a terminal state
+  expect(store.get(a)!.state).toBe("done");
+  expect(store.get(b)!.state).toBe("done");
 });
 
-test("test_DW_2_3_writes_in_different_cwds_allowed", () => {
+test("test_two_long_running_jobs_in_the_same_cwd_run_concurrently", () => {
   const store = newStore();
-  const writer = stubAdapter({
-    name: "writer",
-    mode: "write",
-    buildArgs: () => [BUN, "-e", "setInterval(()=>{}, 1e9)"],
+  const cwd = freshDir("sdd-cwd-");
+  const sleeper = stubAdapter({
+    name: "sleeper",
+    buildArgs: () => [BUN, "-e", "setInterval(()=>{}, 1e9)"], // stays running
   });
-  const a = store.dispatch(writer, "w", { cwd: freshDir("sdd-cwdA-") });
-  const b = store.dispatch(writer, "w", { cwd: freshDir("sdd-cwdB-") });
+  const a = store.dispatch(sleeper, "job A", { cwd });
+  const b = store.dispatch(sleeper, "job B", { cwd }); // same cwd, both alive at once
   expect(store.get(a)!.state).toBe("running");
   expect(store.get(b)!.state).toBe("running");
 });
 
-test("test_DW_2_3_two_reads_run_concurrently", () => {
+test("test_jobs_in_different_cwds_run_concurrently", () => {
   const store = newStore();
-  const cwd = freshDir("sdd-cwd-");
-  const reader = stubAdapter({
-    name: "reader",
-    mode: "read",
+  const sleeper = stubAdapter({
+    name: "sleeper",
     buildArgs: () => [BUN, "-e", "setInterval(()=>{}, 1e9)"],
   });
-  const a = store.dispatch(reader, "read A", { cwd });
-  const b = store.dispatch(reader, "read B", { cwd }); // same cwd, both reads → allowed
+  const a = store.dispatch(sleeper, "w", { cwd: freshDir("sdd-cwdA-") });
+  const b = store.dispatch(sleeper, "w", { cwd: freshDir("sdd-cwdB-") });
   expect(store.get(a)!.state).toBe("running");
   expect(store.get(b)!.state).toBe("running");
 });
@@ -281,7 +285,7 @@ test("test_DW_2_5_sigint_to_server_reaps_children", async () => {
 import { JobStore } from ${JSON.stringify(jobsPath)};
 const store = new JobStore({ installSignalHandlers: true, logDir: ${JSON.stringify(dir)} });
 const sleeper = {
-  name: "sleeper", mode: "read",
+  name: "sleeper",
   buildArgs: () => [${JSON.stringify(BUN)}, "-e", "require('fs').writeFileSync(" + ${JSON.stringify(JSON.stringify(childPidFile))} + ",String(process.pid));setInterval(()=>{},1e9)"],
   injectContract: (p) => p,
   parseResult: (o) => ({ status: "done", summary: o, artifacts: [], raw: o }),
@@ -429,16 +433,6 @@ test("test_shutdown_is_idempotent", async () => {
   await store.shutdown();
   await store.shutdown(); // second call must not throw
   expect(true).toBe(true);
-});
-
-test("test_opts_mode_overrides_adapter_mode_for_guard", () => {
-  const store = newStore();
-  const cwd = freshDir("sdd-cwd-");
-  // Adapter declares read, but the dispatch opts force write → guard applies.
-  const readAdapter = stubAdapter({ name: "r", mode: "read", buildArgs: () => [BUN, "-e", "setInterval(()=>{},1e9)"] });
-  const first = store.dispatch(readAdapter, "w1", { cwd, mode: "write" });
-  expect(store.get(first)!.mode).toBe("write");
-  expect(() => store.dispatch(readAdapter, "w2", { cwd, mode: "write" })).toThrow(/write-write conflict/);
 });
 
 test("test_stderr_chunks_are_streamed_into_the_per_job_log_file", async () => {

@@ -4,9 +4,8 @@
  * `artifacts`). Separate file from `agy.ts` on purpose: one output contract
  * per adapter keeps marker validation unambiguous (see plan Decision Log).
  *
- * `mode: "read"` — the PNG lands at an explicit external artifact path the
- * caller names, never in the source tree, so this does not count as a
- * working-tree write for the JobStore write-write guard.
+ * The PNG lands at an explicit external artifact path the caller names, never
+ * in the source tree.
  *
  * PATH LANDMINE (grug note): agy resolves a relative output filename by
  * searching all of /Users, not the job cwd. `buildArgs` therefore resolves
@@ -58,13 +57,12 @@ import { existsSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { buildAgyArgv, lastMarkerMatch } from "./_agy-shared.ts";
 import type { Adapter } from "./types.ts";
-import type { AdapterMode, AdapterResult, DispatchOpts } from "../types.ts";
+import type { AdapterResult, DispatchOpts } from "../types.ts";
 
 export const name = "agy-image";
 /** CLI binary is `agy` (same as the agy adapter); the "-image" is the adapter's
  *  own contract, not a separate binary — so list_adapters probes `agy` on PATH. */
 export const binary = "agy";
-export const mode: AdapterMode = "read";
 /** Opt OUT of `check_adapter`'s automatic live probe: a probe would bill a real
  *  image generation and needs an outputPath a health check can't supply. */
 export const probeable = false;
@@ -194,5 +192,5 @@ function assertContained(resolved: string, base: string, raw: string): void {
   }
 }
 
-const _check: Adapter = { name, binary, probeable, mode, buildArgs, injectContract, parseResult };
+const _check: Adapter = { name, binary, probeable, buildArgs, injectContract, parseResult };
 void _check;

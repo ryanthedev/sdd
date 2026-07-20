@@ -9,24 +9,21 @@
  * is `vibe`, so it sets the port's optional `binary` field so `list_adapters`
  * probes the right thing on PATH. `buildArgs` argv[0] is `vibe` to match.
  *
- * Defaults to WRITE mode: it emits `--auto-approve` so the agent can modify the
- * repo headlessly (write-mode jobs serialize per cwd via the JobStore guard).
- * Pass `opts.mode:"read"` for a review-only run — no approval flag is emitted,
- * so the agent answers the prompt rather than editing the tree. No
- * `danger-full-access`/full-access knob is ever emitted.
+ * Always emits `--auto-approve` so the agent can act headlessly, which means it
+ * may modify the tree it is dispatched into. Whether that is safe right now —
+ * and whether two jobs may share one tree — is the CALLER's decision, not this
+ * adapter's. No `danger-full-access`/full-access knob is ever emitted.
  */
-import type { AdapterMode, AdapterResult, DispatchOpts } from "../types.ts";
+import type { AdapterResult, DispatchOpts } from "../types.ts";
 import type { Adapter } from "./types.ts";
 import { injectReviewContract, parseReviewResult } from "../lib/review-contract.ts";
 
 export const name = "mistral";
 export const binary = "vibe";
-export const mode: AdapterMode = "write";
 
-export function buildArgs(prompt: string, opts: DispatchOpts): string[] {
-  const effectiveMode: AdapterMode = opts.mode ?? mode;
+export function buildArgs(prompt: string, _opts: DispatchOpts): string[] {
   // The approval flag precedes `-p` so the prompt stays the LAST argv element.
-  return effectiveMode === "write" ? ["vibe", "--auto-approve", "-p", prompt] : ["vibe", "-p", prompt];
+  return ["vibe", "--auto-approve", "-p", prompt];
 }
 
 export const injectContract = injectReviewContract;
@@ -35,5 +32,5 @@ export function parseResult(stdout: string, _stderr: string, exitCode: number): 
   return parseReviewResult(name, stdout, exitCode);
 }
 
-const _check: Adapter = { name, binary, mode, buildArgs, injectContract, parseResult };
+const _check: Adapter = { name, binary, buildArgs, injectContract, parseResult };
 void _check;

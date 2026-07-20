@@ -1,9 +1,10 @@
 /**
- * Shared output contract for read-only "second-opinion / review" adapters
- * (grok, qwen, kimi, mistral). These CLIs differ only in their binary and
- * one-shot flag; the contract they must satisfy — a `VERDICT:` line plus a
- * `## Findings` section — is identical, so it lives here rather than being
- * copy-pasted four times. Mirrors the codex adapter's contract exactly (codex
+ * Shared output contract for the "second-opinion / review" adapters (grok,
+ * qwen, kimi, mistral). Review is the job they are ASKED to do, not a limit on
+ * what they can do — each runs headlessly permissive and may edit the tree it
+ * is given. These CLIs differ only in their binary and one-shot flag; the
+ * contract they must satisfy — a `VERDICT:` line plus a `## Findings` section —
+ * is identical, so it lives here rather than being copy-pasted four times. Mirrors the codex adapter's contract exactly (codex
  * predates this helper and keeps its own inline copy).
  *
  * Kept in src/lib/ (NOT src/adapters/) on purpose: the adapter directory scan

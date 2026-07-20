@@ -3,7 +3,7 @@
  * a typed `ToolModule` contract plus `ok()`/`err()` result builders every tool
  * handler returns instead of throwing. `register.ts` wraps `invoke` in a
  * try/catch backstop, but each handler here also catches its own known failure
- * modes (unknown adapter, write-write conflict, ...) so the caller gets a
+ * modes (unknown adapter, bad cwd, ...) so the caller gets a
  * specific, actionable message instead of a generic "X failed" string.
  */
 import type { z } from "zod";

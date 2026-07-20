@@ -13,7 +13,6 @@ import type { AdapterResult, DispatchOpts, Job, JobState } from "../src/types.ts
 test("test_DW_1_3_adapter_port_conforms_and_buildArgs_returns_string_array", () => {
   const adapter: Adapter = {
     name: "sample",
-    mode: "read",
     buildArgs: (prompt: string, opts: DispatchOpts): string[] => {
       const sandbox = typeof opts.sandbox === "string" ? opts.sandbox : "read-only";
       // A shell-metacharacter-laden prompt is just another argv element here.
@@ -28,7 +27,7 @@ test("test_DW_1_3_adapter_port_conforms_and_buildArgs_returns_string_array", () 
     }),
   };
 
-  const argv = adapter.buildArgs("look at `whoami`; rm -rf /", { mode: "read", sandbox: "read-only" });
+  const argv = adapter.buildArgs("look at `whoami`; rm -rf /", { sandbox: "read-only" });
   expect(Array.isArray(argv)).toBe(true);
   expect(argv.every((a) => typeof a === "string")).toBe(true);
   // The dangerous prompt survives verbatim as a single argv element — no shell.
@@ -38,7 +37,6 @@ test("test_DW_1_3_adapter_port_conforms_and_buildArgs_returns_string_array", () 
 test("test_DW_1_3_adapter_parseResult_fails_when_marker_absent", () => {
   const adapter: Adapter = {
     name: "sample",
-    mode: "read",
     buildArgs: () => [],
     injectContract: (p) => p,
     parseResult: (stdout, _stderr, exitCode): AdapterResult => ({
@@ -57,11 +55,10 @@ test("test_DW_1_3_adapter_parseResult_fails_when_marker_absent", () => {
 test("test_DW_1_3_core_types_are_constructable", () => {
   const result: AdapterResult = { status: "done", summary: "ok", artifacts: ["/tmp/out.png"], raw: "raw" };
   const state: JobState = "running";
-  const opts: DispatchOpts = { cwd: "/repo", mode: "write", timeoutMs: 30_000, model: "gpt-5" };
+  const opts: DispatchOpts = { cwd: "/repo", timeoutMs: 30_000, model: "gpt-5" };
   const job: Job = {
     id: "job_1",
     adapter: "sample",
-    mode: "write",
     cwd: "/repo",
     state,
     logPath: "/tmp/job_1.log",

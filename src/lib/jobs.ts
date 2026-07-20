@@ -9,8 +9,12 @@
  *   - streaming the child's stdout+stderr to a per-job log file,
  *   - tracking the pid / process group and reaping it on cancel/shutdown,
  *   - on exit, running the adapter's parseResult into an AdapterResult and
- *     deciding done vs failed (exit code AND contract-marker validation),
- *   - the write-write concurrency guard (one writer per cwd).
+ *     deciding done vs failed (exit code AND contract-marker validation).
+ *
+ * The store deliberately has NO notion of a job reading vs writing the tree and
+ * imposes no concurrency policy: every dispatch runs immediately, in parallel.
+ * Deciding whether two jobs may safely touch the same tree at once is the
+ * CALLER's job.
  *
  * SECURITY (barricade design): `dispatch` is the trust boundary. prompt/opts are
  * untrusted. The child is spawned from an argv ARRAY with an explicit cwd and
@@ -27,7 +31,7 @@ import { type WriteStream, closeSync, createWriteStream, mkdirSync, mkdtempSync,
 import { tmpdir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import type { Adapter } from "../adapters/types.ts";
-import type { AdapterMode, AdapterResult, DispatchOpts, Job } from "../types.ts";
+import type { AdapterResult, DispatchOpts, Job } from "../types.ts";
 import { newJobId } from "./ids.ts";
 import { log } from "./log.ts";
 
@@ -95,7 +99,9 @@ export class JobStore {
    * Spawn `adapter`'s work unit as a child process and start tracking it.
    * Returns the job id SYNCHRONOUSLY — the child runs asynchronously; the caller
    * polls with `get`/`wait`. Throws (fails fast, no job created) on invalid
-   * input, a write-write conflict, a bad cwd, or an unwritable log file.
+   * input, a bad cwd, or an unwritable log file. Never refuses a dispatch for
+   * concurrency reasons: serializing jobs that would collide is the caller's
+   * call, not the store's.
    */
   dispatch(adapter: Adapter, prompt: string, opts: DispatchOpts = {}): string {
     // Barricade: validate all untrusted/boundary input before doing anything.
@@ -103,15 +109,12 @@ export class JobStore {
     if (typeof prompt !== "string") throw new TypeError("dispatch: prompt must be a string");
 
     const cwd = this.#resolveCwd(opts.cwd);
-    const mode: AdapterMode = opts.mode ?? adapter.mode;
-    this.#assertNoWriteConflict(mode, cwd, adapter.name);
-
     const argv = this.#buildArgv(adapter, prompt, opts);
 
     const id = newJobId();
     const logPath = this.#openLogPath(id);
 
-    this.#spawnAndTrack(id, adapter, mode, cwd, logPath, argv);
+    this.#spawnAndTrack(id, adapter, cwd, logPath, argv);
     return id;
   }
 
@@ -197,9 +200,6 @@ export class JobStore {
     if (typeof adapter.name !== "string" || adapter.name.length === 0) {
       throw new TypeError("dispatch: adapter.name must be a non-empty string");
     }
-    if (adapter.mode !== "read" && adapter.mode !== "write") {
-      throw new TypeError('dispatch: adapter.mode must be "read" or "write"');
-    }
     for (const fn of ["buildArgs", "injectContract", "parseResult"] as const) {
       if (typeof adapter[fn] !== "function") throw new TypeError(`dispatch: adapter.${fn} must be a function`);
     }
@@ -216,20 +216,6 @@ export class JobStore {
     }
     if (!stat.isDirectory()) throw new Error(`dispatch: cwd is not a directory: ${target}`);
     return target;
-  }
-
-  /** Refuse a second concurrent WRITE job in the same cwd (serialize writes). */
-  #assertNoWriteConflict(mode: AdapterMode, cwd: string, adapterName: string): void {
-    if (mode !== "write") return;
-    for (const tracked of this.#jobs.values()) {
-      const { job } = tracked;
-      if (job.state === "running" && job.mode === "write" && job.cwd === cwd) {
-        throw new Error(
-          `write-write conflict: job ${job.id} (${job.adapter}) is already writing in ${cwd}. ` +
-            `Serialize writes — wait for it to finish or cancel it before dispatching "${adapterName}".`,
-        );
-      }
-    }
   }
 
   /**
@@ -271,14 +257,7 @@ export class JobStore {
   }
 
   /** Spawn the child (no shell, new process group), wire streaming + exit handling. */
-  #spawnAndTrack(
-    id: string,
-    adapter: Adapter,
-    mode: AdapterMode,
-    cwd: string,
-    logPath: string,
-    argv: string[],
-  ): void {
+  #spawnAndTrack(id: string, adapter: Adapter, cwd: string, logPath: string, argv: string[]): void {
     const child = spawn(argv[0]!, argv.slice(1), {
       cwd,
       detached: true, // new process group → cancel/shutdown can kill the whole group
@@ -302,7 +281,6 @@ export class JobStore {
     const job: Job = {
       id,
       adapter: adapter.name,
-      mode,
       cwd,
       state: "running",
       logPath,

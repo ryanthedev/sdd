@@ -7,9 +7,6 @@
  * inward on these; nothing here depends outward.
  */
 
-/** Whether a work unit only reads the working tree, or may mutate it. */
-export type AdapterMode = "read" | "write";
-
 /**
  * Lifecycle state of a dispatched job. A job is `running` until its child
  * process exits AND the adapter's parseResult has classified the output;
@@ -35,12 +32,11 @@ export interface AdapterResult {
 /**
  * Options threaded from a dispatch call down into an adapter's buildArgs. The
  * base fields are common to every adapter; the open index signature lets each
- * adapter read its own adapter-specific keys (sandbox mode, model, …) without
- * this core type having to know about them.
+ * adapter read its own adapter-specific keys (model, effort, …) without this
+ * core type having to know about them.
  */
 export interface DispatchOpts {
   cwd?: string;
-  mode?: AdapterMode;
   timeoutMs?: number;
   [k: string]: unknown;
 }
@@ -53,7 +49,6 @@ export interface DispatchOpts {
 export interface Job {
   id: string;
   adapter: string;
-  mode: AdapterMode;
   cwd: string;
   state: JobState;
   logPath: string;

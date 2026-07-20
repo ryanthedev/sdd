@@ -44,7 +44,6 @@ function captureStderr(fn: () => void): string[] {
 
 const VALID_ADAPTER = `
 export const name = "fixture";
-export const mode = "read";
 export function buildArgs(prompt, opts) { return ["exec", prompt]; }
 export function injectContract(prompt) { return prompt + "\\nVERDICT:"; }
 export function parseResult(stdout, stderr, exitCode) {
@@ -76,8 +75,8 @@ test("test_DW_1_4_missing_dir_returns_empty_and_warns_no_throw", () => {
 
 test("test_DW_1_4_missing_export_is_skipped_with_warning_no_throw", () => {
   const dir = freshDir();
-  // Declares name + mode but omits buildArgs / injectContract / parseResult.
-  writeAdapterFile(dir, "broken.ts", `export const name = "broken";\nexport const mode = "read";\n`);
+  // Declares name but omits buildArgs / injectContract / parseResult.
+  writeAdapterFile(dir, "broken.ts", `export const name = "broken";\n`);
 
   let adapters: Adapter[] | undefined;
   const logs = captureStderr(() => {
@@ -101,7 +100,6 @@ test("test_DW_1_4_valid_adapter_is_discovered", () => {
   expect(adapters.length).toBe(1);
   const a = adapters[0]!;
   expect(a.name).toBe("fixture");
-  expect(a.mode).toBe("read");
   expect(a.buildArgs("hello", {})).toEqual(["exec", "hello"]);
   expect(a.injectContract("hi")).toContain("VERDICT:");
   expect(a.parseResult("out", "", 0)).toEqual({ status: "done", summary: "out", artifacts: [], raw: "out" });

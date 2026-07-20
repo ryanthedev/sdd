@@ -1,8 +1,8 @@
 /**
  * agy-image adapter — Phase 4.
  *
- * Covers DW-4.3 (mode "read", absolute PNG path in artifacts, missing-file ->
- * failed), DW-4.4 (directory-scan discovery), and the plan's relative-path
+ * Covers DW-4.3 (absolute PNG path in artifacts, missing-file -> failed),
+ * DW-4.4 (directory-scan discovery), and the plan's relative-path
  * edge case (resolved to absolute before spawn). No real agy binary is
  * spawned; buildArgs/parseResult are unit-tested directly, with real temp
  * files standing in for "the PNG the harness wrote".
@@ -25,10 +25,6 @@ afterEach(() => {
 });
 
 // ── DW-4.3 ──────────────────────────────────────────────────────────────────
-
-test("test_DW_4_3_mode_is_read", () => {
-  expect(agyImage.mode).toBe("read");
-});
 
 test("test_DW_4_3_valid_marker_and_existing_file_is_done_with_absolute_artifact", () => {
   const dir = freshDir();
@@ -184,7 +180,6 @@ test("test_DW_4_4_agy_image_discovered_via_directory_scan", () => {
   const adapters = discoverAdapters(join(import.meta.dir, "..", "src", "adapters"));
   const found = adapters.find((a) => a.name === "agy-image");
   expect(found).toBeDefined();
-  expect(found!.mode).toBe("read");
   expect(typeof found!.buildArgs).toBe("function");
   expect(typeof found!.injectContract).toBe("function");
   expect(typeof found!.parseResult).toBe("function");

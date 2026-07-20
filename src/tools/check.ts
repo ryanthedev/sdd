@@ -11,6 +11,7 @@
  * is reserved for the two cases that are genuinely not health verdicts: an
  * unknown adapter name, and a synchronous throw from the probe dispatch itself.
  */
+import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -81,32 +82,21 @@ export function createCheckTool(rt: Runtime): ToolModule<typeof inputShape> {
 
       // Live probe: run PROBE_PROMPT through the normal dispatch path.
       //
-      // We always dispatch with `mode:"read"` — it skips the write-write guard
-      // and, for adapters that HONOR opts.mode (e.g. codex, which selects a
-      // read-only sandbox), keeps the probe read-only.
-      //
-      // cwd isolation is applied ONLY for write-capable adapters. A write-mode
-      // harness like agy IGNORES opts.mode (its buildArgs always emits
-      // `--dangerously-skip-permissions`), so mode alone cannot stop it mutating
-      // the tree; isolation must be STRUCTURAL. For those, when the caller gives
-      // no cwd, run the probe in a fresh throwaway temp dir so any write lands
-      // off-tree, never in the user's working directory. (agy runs fine in a bare
-      // non-git temp dir — no git init needed.)
-      //
-      // READ-mode harnesses run in the server's REAL cwd: they cannot write during
-      // a probe (codex is read-only sandboxed; the API-key CLIs never touch the
-      // fs), and some REQUIRE a git/trusted working dir — codex refuses to run in a
-      // bare temp dir ("not inside a trusted directory"), which would be a false
-      // `failed`. The real cwd provides that context. A caller-supplied cwd is
-      // always honored for ANY adapter (their explicit choice); no temp dir is
-      // created or cleaned in that case.
-      const isolate = adapter.mode === "write";
-      const ownsTempCwd = isolate && args.cwd === undefined;
-      const probeCwd = args.cwd ?? (isolate ? mkdtempSync(join(tmpdir(), "sdd-check-")) : process.cwd());
+      // Isolation is STRUCTURAL, and unconditional. A probeable adapter is an
+      // agent harness launched with its approval flag on (codex `--sandbox
+      // workspace-write`, agy `--dangerously-skip-permissions`, the API-key CLIs
+      // `--yolo`/`--auto-approve`), so nothing in the prompt can stop one from
+      // mutating whatever tree it lands in — only the cwd we hand it can. When
+      // the caller names no cwd, the probe therefore runs in a fresh throwaway
+      // temp dir, so any write lands off-tree rather than in the user's working
+      // directory. A caller-supplied cwd is always honored (their explicit
+      // choice); no temp dir is created, git-initialized, or cleaned in that case.
+      const ownsTempCwd = args.cwd === undefined;
+      const probeCwd = args.cwd ?? makeProbeCwd();
       try {
         let jobId: string;
         try {
-          jobId = rt.jobStore.dispatch(adapter, PROBE_PROMPT, { mode: "read", cwd: probeCwd });
+          jobId = rt.jobStore.dispatch(adapter, PROBE_PROMPT, { cwd: probeCwd });
         } catch (e) {
           return err(`${adapter.name}: probe dispatch failed: ${friendlyMessage(e)}`, {
             adapter: adapter.name,
@@ -163,6 +153,23 @@ export function createCheckTool(rt: Runtime): ToolModule<typeof inputShape> {
       }
     },
   };
+}
+
+/**
+ * Create the throwaway cwd the probe runs in, as a git repo.
+ *
+ * The `git init` is load-bearing, not hygiene: codex refuses to run in a
+ * directory that is not a git repo ("Not inside a trusted directory and
+ * --skip-git-repo-check was not specified", verified against the real CLI) — in
+ * a bare temp dir it exits without ever contacting the model, which check_adapter
+ * would then report as `failed` and read as "codex is not authenticated". A
+ * git-initialized dir probes clean. Best-effort: if `git` is missing the temp dir
+ * still stands, and harnesses that don't care (agy, the API-key CLIs) run in it fine.
+ */
+function makeProbeCwd(): string {
+  const dir = mkdtempSync(join(tmpdir(), "sdd-check-"));
+  spawnSync("git", ["init", "-q"], { cwd: dir, stdio: "ignore" });
+  return dir;
 }
 
 /**

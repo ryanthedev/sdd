@@ -13,37 +13,34 @@ import { discoverAdapters } from "../src/adapters/discover.ts";
 
 test("codex adapter exports the Adapter port shape", () => {
   expect(codex.name).toBe("codex");
-  expect(codex.mode).toBe("write");
   expect(typeof codex.buildArgs).toBe("function");
   expect(typeof codex.injectContract).toBe("function");
   expect(typeof codex.parseResult).toBe("function");
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// buildArgs: argv array, sandbox mode mapping, never a shell string.
+// buildArgs: argv array, the one hardcoded sandbox, never a shell string.
 // ─────────────────────────────────────────────────────────────────────────────
-test("buildArgs defaults to workspace-write sandbox and returns a plain argv array", () => {
+test("buildArgs emits the workspace-write sandbox and returns a plain argv array", () => {
   const argv = codex.buildArgs("review this diff", {});
   expect(Array.isArray(argv)).toBe(true);
   expect(argv.every((a) => typeof a === "string")).toBe(true);
   expect(argv).toEqual(["codex", "exec", "--sandbox", "workspace-write", "review this diff"]);
 });
 
-test("buildArgs uses read-only sandbox when opts.mode is read (review-only override)", () => {
-  const argv = codex.buildArgs("just review the fix", { mode: "read" });
-  expect(argv).toEqual(["codex", "exec", "--sandbox", "read-only", "just review the fix"]);
-});
-
-test("buildArgs keeps workspace-write sandbox when opts.mode is write (explicit)", () => {
-  const argv = codex.buildArgs("implement the fix", { mode: "write" });
-  expect(argv).toEqual(["codex", "exec", "--sandbox", "workspace-write", "implement the fix"]);
+test("buildArgs emits workspace-write unconditionally, whatever the opts", () => {
+  // read-only is not reachable: codex always runs where it can edit the tree it
+  // is dispatched into. Whether that is safe is the caller's call, not ours.
+  for (const opts of [{}, { timeoutMs: 1000 }, { cwd: "/tmp" }, { model: "o3" }]) {
+    const argv = codex.buildArgs("just review the fix", opts);
+    expect(argv[argv.length - 2]).toBe("workspace-write");
+    expect(argv).not.toContain("read-only");
+  }
 });
 
 test("buildArgs never emits danger-full-access", () => {
-  const readArgv = codex.buildArgs("p", {});
-  const writeArgv = codex.buildArgs("p", { mode: "write" });
-  expect(readArgv).not.toContain("danger-full-access");
-  expect(writeArgv).not.toContain("danger-full-access");
+  expect(codex.buildArgs("p", {})).not.toContain("danger-full-access");
+  expect(codex.buildArgs("p", { model: "o3", effort: "high" })).not.toContain("danger-full-access");
 });
 
 test("buildArgs passes a shell-metacharacter prompt through as one literal argv element", () => {
@@ -57,51 +54,50 @@ test("buildArgs passes a shell-metacharacter prompt through as one literal argv 
 // ordering (caller flags BEFORE --sandbox, prompt LAST), barricade.
 // ─────────────────────────────────────────────────────────────────────────────
 test("test_DW_1_1_buildCodexArgv_no_cfg_matches_codex_default_argv", () => {
-  expect(buildCodexArgv("p", "read")).toEqual(["codex", "exec", "--sandbox", "read-only", "p"]);
-  // Regression guard: the shared builder (write) and the adapter's no-param
-  // path (now write-by-default) agree.
-  expect(buildCodexArgv("p", "write")).toEqual(codex.buildArgs("p", {}));
+  expect(buildCodexArgv("p")).toEqual(["codex", "exec", "--sandbox", "workspace-write", "p"]);
+  // Regression guard: the shared builder and the adapter's no-cfg path agree.
+  expect(buildCodexArgv("p")).toEqual(codex.buildArgs("p", {}));
 });
 
 test("test_DW_1_2_model_flag_precedes_sandbox_prompt_last", () => {
-  expect(buildCodexArgv("p", "read", { model: "o3" })).toEqual([
+  expect(buildCodexArgv("p", { model: "o3" })).toEqual([
     "codex",
     "exec",
     "-m",
     "o3",
     "--sandbox",
-    "read-only",
+    "workspace-write",
     "p",
   ]);
 });
 
 test("test_DW_1_2_configOverrides_emit_dash_c_before_sandbox", () => {
-  expect(buildCodexArgv("p", "read", { configOverrides: { model_reasoning_effort: "high" } })).toEqual([
+  expect(buildCodexArgv("p", { configOverrides: { model_reasoning_effort: "high" } })).toEqual([
     "codex",
     "exec",
     "-c",
     "model_reasoning_effort=high",
     "--sandbox",
-    "read-only",
+    "workspace-write",
     "p",
   ]);
 });
 
 test("test_DW_1_7_profile_flag_precedes_sandbox", () => {
-  expect(buildCodexArgv("p", "read", { profile: "x" })).toEqual([
+  expect(buildCodexArgv("p", { profile: "x" })).toEqual([
     "codex",
     "exec",
     "-p",
     "x",
     "--sandbox",
-    "read-only",
+    "workspace-write",
     "p",
   ]);
 });
 
 test("buildCodexArgv combines model, profile, and overrides in fixed order, all before --sandbox", () => {
   expect(
-    buildCodexArgv("p", "write", {
+    buildCodexArgv("p", {
       model: "o3",
       profile: "x",
       configOverrides: { model_reasoning_effort: "low", foo: "bar" },
@@ -124,11 +120,11 @@ test("buildCodexArgv combines model, profile, and overrides in fixed order, all 
 });
 
 test("buildCodexArgv skips empty-string model/profile instead of emitting a bare flag", () => {
-  expect(buildCodexArgv("p", "read", { model: "", profile: "" })).toEqual(buildCodexArgv("p", "read"));
+  expect(buildCodexArgv("p", { model: "", profile: "" })).toEqual(buildCodexArgv("p"));
 });
 
 test("buildCodexArgv never emits danger-full-access even with flags present", () => {
-  const argv = buildCodexArgv("p", "write", { model: "o3", configOverrides: { k: "v" } });
+  const argv = buildCodexArgv("p", { model: "o3", configOverrides: { k: "v" } });
   expect(argv).not.toContain("danger-full-access");
 });
 
@@ -149,7 +145,7 @@ test("test_DW_1_3_codex_buildArgs_emits_model_and_effort_flags", () => {
   ]);
 });
 
-test("test_DW_1_4_no_params_argv_defaults_to_workspace_write", () => {
+test("test_DW_1_4_no_params_argv_is_workspace_write", () => {
   expect(codex.buildArgs("p", {})).toEqual(["codex", "exec", "--sandbox", "workspace-write", "p"]);
 });
 
@@ -166,18 +162,6 @@ test("codex.buildArgs with effort only emits -c but no -m", () => {
   const argv = codex.buildArgs("p", { effort: "low" });
   expect(argv).toEqual(["codex", "exec", "-c", "model_reasoning_effort=low", "--sandbox", "workspace-write", "p"]);
   expect(argv).not.toContain("-m");
-});
-
-test("codex.buildArgs honors mode write alongside per-call flags", () => {
-  expect(codex.buildArgs("p", { mode: "write", model: "o3" })).toEqual([
-    "codex",
-    "exec",
-    "-m",
-    "o3",
-    "--sandbox",
-    "workspace-write",
-    "p",
-  ]);
 });
 
 // Defense-in-depth: JobStore.dispatch is callable programmatically (bypassing
@@ -252,4 +236,46 @@ test("parseResult fails on non-zero exit code regardless of markers", () => {
   const result = codex.parseResult(stdout, "codex: fatal error", 1);
   expect(result.status).toBe("failed");
   expect(result.summary).toContain("1");
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Failure diagnostics: a non-zero exit surfaces stderr in the summary (never
+// raw), and codex's git-repo refusal is recognized and given an actionable fix
+// instead of being misread as an auth failure.
+// ─────────────────────────────────────────────────────────────────────────────
+test("parseResult recognizes codex's git-repo refusal and returns an actionable summary", () => {
+  // The real CLI's exact line, on stderr, before it ever reaches the model.
+  const stderr = "Not inside a trusted directory and --skip-git-repo-check was not specified";
+  const result = codex.parseResult("", stderr, 1);
+  expect(result.status).toBe("failed");
+  expect(result.summary).toContain("git repo");
+  expect(result.summary).toMatch(/git init/); // tells the caller how to fix it
+  expect(result.summary).toMatch(/not an auth or quota failure/i); // and steers away from the misdiagnosis
+});
+
+test("parseResult recognizes the git-repo refusal by either half of the message", () => {
+  for (const stderr of ["Not inside a trusted directory", "pass --skip-git-repo-check to override"]) {
+    expect(codex.parseResult("", stderr, 1).summary).toMatch(/git init/);
+  }
+});
+
+test("parseResult surfaces a bounded stderr tail for an unrecognized non-zero exit", () => {
+  const stderr = "error: 401 Unauthorized — token expired";
+  const result = codex.parseResult("", stderr, 1);
+  expect(result.status).toBe("failed");
+  expect(result.summary).toContain("codex exited 1");
+  expect(result.summary).toContain("401 Unauthorized"); // the real error, not just the code
+});
+
+test("parseResult failure summary never leaks stderr into raw", () => {
+  const stderr = "Not inside a trusted directory and --skip-git-repo-check was not specified";
+  const stdout = "partial stdout";
+  const result = codex.parseResult(stdout, stderr, 1);
+  expect(result.raw).toBe(stdout); // raw stays stdout-only on the failure path too
+  expect(result.raw).not.toContain("trusted directory");
+});
+
+test("parseResult falls back to the bare exit code when stderr is empty", () => {
+  const result = codex.parseResult("", "   \n  ", 137);
+  expect(result.summary).toBe("codex exited 137");
 });

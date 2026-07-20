@@ -34,19 +34,9 @@
  */
 import { buildAgyArgv, lastMarkerMatch } from "./_agy-shared.ts";
 import type { Adapter } from "./types.ts";
-import type { AdapterMode, AdapterResult, DispatchOpts } from "../types.ts";
+import type { AdapterResult, DispatchOpts } from "../types.ts";
 
 export const name = "agy";
-
-/**
- * Conservative default. agy can both review (read) and implement (write); the
- * JobStore write-write guard only serializes `mode: "write"` jobs in a given
- * cwd. Defaulting to "write" means an implement dispatch can never silently
- * bypass that guard by forgetting to declare itself — callers opt IN to
- * "read" via `opts.mode` for review-only jobs (JobStore already supports a
- * per-dispatch override: `opts.mode ?? adapter.mode`).
- */
-export const mode: AdapterMode = "write";
 
 /**
  * Marker line the harness must echo verbatim to confirm a real outcome.
@@ -125,5 +115,5 @@ function pushOptionalStringFlag(flags: string[], opts: DispatchOpts, key: string
 // Compile-time-only proof that this module's plain exports satisfy the
 // Adapter port — discoverAdapters duck-types at runtime, so this is the only
 // place a signature drift would be caught by tsc.
-const _check: Adapter = { name, mode, buildArgs, injectContract, parseResult };
+const _check: Adapter = { name, buildArgs, injectContract, parseResult };
 void _check;

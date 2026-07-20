@@ -23,7 +23,6 @@ const EXPECTED_ARGV = (prompt: string) => [
 
 test("codex-sol exports the port shape and reuses codex's contract by identity", () => {
   expect(codexSol.name).toBe("codex-sol");
-  expect(codexSol.mode).toBe("write");
   expect(codexSol.binary).toBe("codex");
   expect(typeof codexSol.buildArgs).toBe("function");
   expect(codexSol.injectContract).toBe(codex.injectContract);
@@ -41,20 +40,14 @@ test("codex-sol ignores per-call model/effort — the pin is the whole point", (
   expect(argv).not.toContain("model_reasoning_effort=low");
 });
 
-test("codex-sol ignores a per-call opts.mode — the variant mode is pinned (DW-2.5)", () => {
-  // Unlike the base `codex` adapter, a pinned variant does NOT honor opts.mode;
-  // it always emits its constructed workspace-write sandbox.
-  expect(codexSol.buildArgs("p", { mode: "read" })).toEqual(EXPECTED_ARGV("p"));
-});
-
 test("codex-sol never emits danger-full-access", () => {
   expect(codexSol.buildArgs("p", {})).not.toContain("danger-full-access");
-  expect(codexSol.buildArgs("p", { mode: "read" })).not.toContain("danger-full-access");
+  expect(codexSol.buildArgs("p", { model: "o3" })).not.toContain("danger-full-access");
 });
 
 test("discovery picks up codex-sol from the adapters dir", () => {
   const adaptersDir = join(import.meta.dir, "..", "src", "adapters");
   const found = discoverAdapters(adaptersDir).find((a) => a.name === "codex-sol");
   expect(found).toBeDefined();
-  expect(found!.mode).toBe("write");
+  expect(found!.binary).toBe("codex");
 });

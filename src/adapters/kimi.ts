@@ -8,22 +8,20 @@
  * NOTE: the earlier research claimed `kimi --print -p ... --quiet`; the installed
  * CLI has no `--print`/`--quiet` — `-p` alone is the headless one-shot flag.
  *
- * Defaults to WRITE mode: it emits `--yolo` so the agent can modify the repo
- * headlessly (write-mode jobs serialize per cwd via the JobStore guard). Pass
- * `opts.mode:"read"` for a review-only run — no approval flag is emitted. No
- * `danger-full-access`/full-access knob is ever emitted.
+ * Always emits `--yolo` so the agent can act headlessly, which means it may
+ * modify the tree it is dispatched into. Whether that is safe right now — and
+ * whether two jobs may share one tree — is the CALLER's decision, not this
+ * adapter's. No `danger-full-access`/full-access knob is ever emitted.
  */
-import type { AdapterMode, AdapterResult, DispatchOpts } from "../types.ts";
+import type { AdapterResult, DispatchOpts } from "../types.ts";
 import type { Adapter } from "./types.ts";
 import { injectReviewContract, parseReviewResult } from "../lib/review-contract.ts";
 
 export const name = "kimi";
-export const mode: AdapterMode = "write";
 
-export function buildArgs(prompt: string, opts: DispatchOpts): string[] {
-  const effectiveMode: AdapterMode = opts.mode ?? mode;
+export function buildArgs(prompt: string, _opts: DispatchOpts): string[] {
   // The approval flag precedes `-p` so the prompt stays the LAST argv element.
-  return effectiveMode === "write" ? ["kimi", "--yolo", "-p", prompt] : ["kimi", "-p", prompt];
+  return ["kimi", "--yolo", "-p", prompt];
 }
 
 export const injectContract = injectReviewContract;
@@ -32,5 +30,5 @@ export function parseResult(stdout: string, _stderr: string, exitCode: number): 
   return parseReviewResult(name, stdout, exitCode);
 }
 
-const _check: Adapter = { name, mode, buildArgs, injectContract, parseResult };
+const _check: Adapter = { name, buildArgs, injectContract, parseResult };
 void _check;

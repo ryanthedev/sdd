@@ -4,10 +4,8 @@
  * plus a `manifest.json` timestamp map out, landed in a caller-named
  * external directory and reported in `artifacts`.
  *
- * `mode: "read"` — frames land at an explicit external `opts.outputDir` the
- * caller names, never in the source tree, so this does not count as a
- * working-tree write for the JobStore write-write guard (yt-dlp / agy-image
- * precedent).
+ * Frames land at an explicit external `opts.outputDir` the caller names, never
+ * in the source tree (yt-dlp / agy-image precedent).
  *
  * IDENTITY CONTRACT: the "prompt" IS the input video path, and JobStore
  * applies `injectContract` BEFORE `buildArgs` — any non-identity contract
@@ -67,10 +65,10 @@
  * assigns manifest construction to `parseResult` ("parseResult builds the
  * manifest and classifies"), and ffmpeg itself cannot produce manifest.json.
  * `parseResult` therefore performs exactly one `writeFileSync` — into the
- * external, caller-named `outputDir`, never the source tree, so the
- * write-write guard is unaffected (same reasoning as the child processes'
- * own external-dir writes in yt-dlp/agy-image). A failed write is a `failed`
- * result: manifest.json is a required `Produces` artifact, not best-effort.
+ * external, caller-named `outputDir`, never the source tree (same reasoning as
+ * the child processes' own external-dir writes in yt-dlp/agy-image). A failed
+ * write is a `failed` result: manifest.json is a required `Produces` artifact,
+ * not best-effort.
  *
  * SECURITY BARRICADES (untrusted MCP-client input, validated at entry):
  * - The input video path (the prompt) is the value of the explicit `-i` flag
@@ -101,11 +99,10 @@
 import { readdirSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { Adapter } from "./types.ts";
-import type { AdapterMode, AdapterResult, DispatchOpts } from "../types.ts";
+import type { AdapterResult, DispatchOpts } from "../types.ts";
 
 export const name = "ffmpeg-frames";
 export const binary = "ffmpeg";
-export const mode: AdapterMode = "read";
 /** Opt OUT of check_adapter's automatic live probe: a probe supplies no
  *  outputDir (buildArgs would throw) and a real run is a slow video decode. */
 export const probeable = false;
@@ -352,5 +349,5 @@ function errMessage(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
-const _check: Adapter = { name, binary, probeable, mode, buildArgs, injectContract, parseResult };
+const _check: Adapter = { name, binary, probeable, buildArgs, injectContract, parseResult };
 void _check;

@@ -27,23 +27,11 @@ test("test_DW_2_1_factory_buildArgs_emits_configOverrides_before_sandbox_prompt_
   ]);
 });
 
-test("makeCodexVariant defaults mode to write and never emits danger-full-access", () => {
+test("makeCodexVariant with no cfg emits workspace-write and never danger-full-access", () => {
   const variant = makeCodexVariant({ name: "x" });
-  expect(variant.mode).toBe("write");
   expect(variant.buildArgs("p", {})).toEqual(["codex", "exec", "--sandbox", "workspace-write", "p"]);
   expect(variant.buildArgs("p", {})).not.toContain("danger-full-access");
-});
-
-test("makeCodexVariant honors an explicit write mode", () => {
-  const variant = makeCodexVariant({ name: "x", mode: "write" });
-  expect(variant.mode).toBe("write");
-  expect(variant.buildArgs("p", {})).toEqual(["codex", "exec", "--sandbox", "workspace-write", "p"]);
-});
-
-test("makeCodexVariant honors an explicit read mode", () => {
-  const variant = makeCodexVariant({ name: "x", mode: "read" });
-  expect(variant.mode).toBe("read");
-  expect(variant.buildArgs("p", {})).toEqual(["codex", "exec", "--sandbox", "read-only", "p"]);
+  expect(variant.buildArgs("p", {})).not.toContain("read-only"); // read-only is unreachable
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -51,7 +39,6 @@ test("makeCodexVariant honors an explicit read mode", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 test("test_DW_2_2_codex_high_exports_port_shape_and_reuses_codex_contract", () => {
   expect(codexHigh.name).toBe("codex-high");
-  expect(codexHigh.mode).toBe("write");
   expect(codexHigh.binary).toBe("codex");
   expect(typeof codexHigh.buildArgs).toBe("function");
   // Identity reuse, not re-implementation — same function reference as codex.ts.
@@ -113,7 +100,6 @@ test("discovered codex-high adapter round-trips through the Adapter port", () =>
   const adapters = discoverAdapters(join(import.meta.dir, "../src/adapters"));
   const found = adapters.find((a) => a.name === "codex-high");
   expect(found).toBeDefined();
-  expect(found!.mode).toBe("write");
   expect(found!.binary).toBe("codex");
   expect(found!.buildArgs("p", {})).toEqual([
     "codex",

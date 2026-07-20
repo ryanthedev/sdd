@@ -3,10 +3,8 @@
  * contract: one audio file in, a timestamped transcript (SRT + TXT) out,
  * landed in a caller-named external directory and reported in `artifacts`.
  *
- * `mode: "read"` — the transcript lands at an explicit external
- * `opts.outputDir` the caller names, never in the source tree, so this does
- * not count as a working-tree write for the JobStore write-write guard
- * (agy-image / yt-dlp precedent).
+ * The transcript lands at an explicit external `opts.outputDir` the caller
+ * names, never in the source tree (agy-image / yt-dlp precedent).
  *
  * BINARY: the CLI is `mlx_whisper` (underscore), not `whisper` or
  * `mlx-whisper` — the `binary` export overrides the on-PATH probe name while
@@ -78,12 +76,11 @@
 import { existsSync } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { Adapter } from "./types.ts";
-import type { AdapterMode, AdapterResult, DispatchOpts } from "../types.ts";
+import type { AdapterResult, DispatchOpts } from "../types.ts";
 
 export const name = "whisper";
 /** CLI binary is `mlx_whisper` (underscore) — differs from the dispatch key. */
 export const binary = "mlx_whisper";
-export const mode: AdapterMode = "read";
 /** Opt OUT of check_adapter's automatic live probe: a probe supplies no
  *  outputDir (buildArgs would throw) and a real run is a slow, real transcription. */
 export const probeable = false;
@@ -249,5 +246,5 @@ function stderrTail(stderr: string): string {
   return ` — stderr tail: ${tail.replaceAll("\n", " | ")}`;
 }
 
-const _check: Adapter = { name, binary, probeable, mode, buildArgs, injectContract, parseResult };
+const _check: Adapter = { name, binary, probeable, buildArgs, injectContract, parseResult };
 void _check;

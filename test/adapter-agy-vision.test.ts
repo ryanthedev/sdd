@@ -55,7 +55,7 @@ test("test_DW_6_1_sandbox_present_on_every_opts_variation", () => {
     validOpts(dir),
     validOpts(dir, { model: "Claude Opus 4.8" }),
     validOpts(dir, { cwd: dir, addDir: ".", outputPath: "fused.json" }),
-    validOpts(dir, { timeoutMs: 1000, mode: "read" }),
+    validOpts(dir, { timeoutMs: 1000 }),
   ];
   for (const opts of variations) {
     const argv = agyVision.buildArgs("p", opts);
@@ -221,10 +221,9 @@ test("malformed_model_opt_throws_type_error", () => {
 
 // ── Adapter surface + discovery ──────────────────────────────────────────────
 
-test("adapter_surface_is_read_mode_agy_binary_not_probeable", () => {
+test("adapter_surface_is_agy_binary_not_probeable", () => {
   expect(agyVision.name).toBe("agy-vision");
   expect(agyVision.binary).toBe("agy");
-  expect(agyVision.mode).toBe("read");
   expect(agyVision.probeable).toBe(false);
 });
 

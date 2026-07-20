@@ -1,12 +1,13 @@
 /**
  * Code-agent adapters (grok, qwen, kimi, mistral). These share the review
  * output contract (src/lib/review-contract.ts) and differ only in binary +
- * one-shot flag + write-approval flag. They DEFAULT to write mode (emit their
- * approval flag so they can modify the repo); a per-call `opts.mode:"read"`
- * override drops the approval flag for a review-only run. No real CLI is
- * spawned; buildArgs / injectContract / parseResult are unit-tested directly,
- * plus directory-scan discovery and the name≠binary override. Live model calls
- * need each provider's API key and are verified out-of-band.
+ * one-shot flag + approval flag. Each is unconditionally permissive: the
+ * approval flag is ALWAYS emitted so the harness can act headlessly (whether
+ * letting it edit a given tree is safe is the caller's call, not the
+ * adapter's). No real CLI is spawned; buildArgs / injectContract / parseResult
+ * are unit-tested directly, plus directory-scan discovery and the name≠binary
+ * override. Live model calls need each provider's API key and are verified
+ * out-of-band.
  */
 import { expect, test } from "bun:test";
 import { join } from "node:path";
@@ -24,8 +25,7 @@ const REVIEW_ADAPTERS = [
 ] as const;
 
 for (const { mod, name, binary, approve } of REVIEW_ADAPTERS) {
-  test(`${name}: write mode by default, emits approval flag before -p, prompt is last`, () => {
-    expect(mod.mode).toBe("write");
+  test(`${name}: emits the approval flag before -p, prompt is last`, () => {
     expect(mod.name).toBe(name);
     const argv = mod.buildArgs("review this diff", {});
     expect(argv).toEqual([binary, approve, "-p", "review this diff"]);
@@ -33,11 +33,12 @@ for (const { mod, name, binary, approve } of REVIEW_ADAPTERS) {
     expect(argv[argv.length - 2]).toBe("-p"); // immediately after the one-shot flag
   });
 
-  test(`${name}: opts.mode:"read" override omits the approval flag (review-only run)`, () => {
-    const argv = mod.buildArgs("review this diff", { mode: "read" });
-    expect(argv).toEqual([binary, "-p", "review this diff"]);
-    expect(argv).not.toContain(approve);
-    expect(argv[argv.length - 1]).toBe("review this diff"); // prompt still LAST
+  test(`${name}: the approval flag is ALWAYS emitted, whatever the opts`, () => {
+    // Unconditionally permissive: no opt drops the approval flag. Deciding
+    // whether the harness may edit this tree is the caller's job, not ours.
+    for (const opts of [{}, { timeoutMs: 1000 }, { cwd: "/tmp" }, { effort: "high" }]) {
+      expect(mod.buildArgs("review this diff", opts)).toContain(approve);
+    }
   });
 
   test(`${name}: injectContract appends the VERDICT/Findings contract to the prompt`, () => {
@@ -70,11 +71,6 @@ test("grok: opts.model is passed through as -m <model> before -p (prompt stays l
   expect(argv[argv.length - 1]).toBe("do it"); // prompt is LAST, after -m
 });
 
-test("grok: opts.model works in read mode (no approval flag, -m still before -p)", () => {
-  const argv = grok.buildArgs("review it", { mode: "read", model: "grok-4.5" });
-  expect(argv).toEqual(["grok", "-m", "grok-4.5", "-p", "review it"]);
-});
-
 test("grok: omitting opts.model preserves the default (no -m flag emitted)", () => {
   const argv = grok.buildArgs("do it", {});
   expect(argv).not.toContain("-m");
@@ -98,7 +94,7 @@ test("all four code-agent adapters are discovered via directory scan, binary ove
   for (const { name } of REVIEW_ADAPTERS) {
     const a = found.find((x) => x.name === name);
     expect(a).toBeDefined();
-    expect(a!.mode).toBe("write");
+    expect(typeof a!.buildArgs).toBe("function");
   }
   expect(found.find((x) => x.name === "mistral")!.binary).toBe("vibe");
 });

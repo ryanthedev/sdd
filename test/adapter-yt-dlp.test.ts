@@ -333,8 +333,7 @@ test("malformed optional opts throw TypeErrors instead of being dropped", () => 
 
 // ── adapter surface + discovery ─────────────────────────────────────────────
 
-test("mode is read and the adapter opts out of live probing", () => {
-  expect(ytdlp.mode).toBe("read");
+test("the adapter opts out of live probing", () => {
   expect(ytdlp.probeable).toBe(false);
 });
 
@@ -342,7 +341,6 @@ test("yt-dlp is discovered via directory scan, no registry edit", () => {
   const adapters = discoverAdapters(join(import.meta.dir, "..", "src", "adapters"));
   const found = adapters.find((a) => a.name === "yt-dlp");
   expect(found).toBeDefined();
-  expect(found!.mode).toBe("read");
   expect(typeof found!.buildArgs).toBe("function");
   expect(typeof found!.injectContract).toBe("function");
   expect(typeof found!.parseResult).toBe("function");

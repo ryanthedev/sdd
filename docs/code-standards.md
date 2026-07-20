@@ -58,20 +58,19 @@ function pushOptionalStringFlag(flags: string[], opts: DispatchOpts, key: string
 
 ## 2. Code Examples
 
-### A minimal review-only adapter (`src/adapters/grok.ts`)
+### A minimal review adapter (`src/adapters/grok.ts`)
 ```typescript
 // DO — pure data + pure functions, no spawning, `_check` proves port conformance at compile time
 export const name = "grok";
-export const mode: AdapterMode = "read";
 
 export function buildArgs(prompt: string, _opts: DispatchOpts): string[] {
-  return ["grok", "-p", prompt]; // flag then prompt — prompt is always last
+  return ["grok", "--always-approve", "-p", prompt]; // flags then prompt — prompt is always last
 }
 export const injectContract = injectReviewContract;      // shared helper, not reimplemented
 export function parseResult(stdout: string, _stderr: string, exitCode: number): AdapterResult {
   return parseReviewResult(name, stdout, exitCode);
 }
-const _check: Adapter = { name, mode, buildArgs, injectContract, parseResult };
+const _check: Adapter = { name, buildArgs, injectContract, parseResult };
 void _check;
 
 // DON'T — no compile-time port check, opts read without validation, no contract marker
@@ -82,7 +81,7 @@ export function buildArgs(prompt, opts) {
 
 ### Contract-marker parsing — LAST occurrence wins
 ```typescript
-// DO — src/adapters/agy.ts:60-64 — scans every match, keeps the LAST one
+// DO — src/adapters/_agy-shared.ts — scans every match, keeps the LAST one
 function lastMarkerMatch(re: RegExp, text: string): RegExpExecArray | undefined {
   let last: RegExpExecArray | undefined;
   for (const m of text.matchAll(re)) last = m;
@@ -109,10 +108,10 @@ if (model !== undefined) {
   cfg.model = model;
 }
 
-// From src/tools/dispatch.ts:77-82 — tool layer: catch and translate to a structured result
+// From src/tools/dispatch.ts:135-139 — tool layer: catch and translate to a structured result
 try {
   const jobId = rt.jobStore.dispatch(adapter, args.prompt, opts);
-  return ok(`dispatched "${adapter.name}" as ${jobId} (mode ${opts.mode ?? adapter.mode})`, { jobId });
+  return ok(`dispatched "${adapter.name}" as ${jobId}`, { jobId });
 } catch (e) {
   return err(`dispatch failed: ${friendlyMessage(e)}`, { code: "dispatch_failed" });
 }
@@ -124,7 +123,7 @@ try {
 
 All internal imports use explicit `.ts` extensions (Bun/ESM requirement, `allowImportingTsExtensions: true` in tsconfig.json):
 ```typescript
-import type { AdapterMode, AdapterResult, DispatchOpts } from "../types.ts";
+import type { AdapterResult, DispatchOpts } from "../types.ts";
 import { buildCodexArgv, type CodexArgvConfig } from "./_codex-shared.ts";
 ```
 
@@ -158,7 +157,7 @@ test("test_DW_4_4_agy_discovered_via_directory_scan", () => {
   const adapters = discoverAdapters(join(import.meta.dir, "..", "src", "adapters"));
   const found = adapters.find((a) => a.name === "agy");
   expect(found).toBeDefined();
-  expect(found!.mode).toBe("write");
+  expect(typeof found!.buildArgs).toBe("function");
 });
 ```
 
@@ -166,10 +165,10 @@ Every new adapter gets a `test/adapter-<name>.test.ts` covering: argv shape/flag
 
 ## 6. Naming Conventions
 
-- Adapter module exports: `name`, `mode`, `buildArgs`, `injectContract`, `parseResult` — always these exact identifiers as plain top-level `export`s (duck-typed by `discover.ts`, not a class).
+- Adapter module exports: `name`, `buildArgs`, `injectContract`, `parseResult` — always these exact identifiers as plain top-level `export`s (duck-typed by `discover.ts`, not a class).
 - Tool factories: `createXTool(rt: Runtime)`, e.g. `createDispatchTool` (src/tools/dispatch.ts:54). One per file, named to match the file (`dispatch.ts` → `createDispatchTool`).
 - Files that are helpers, not adapters: leading underscore — `_codex-shared.ts`, `_codex-factory.ts`. `discover.ts`'s `isCandidate` skips any `_`-prefixed or `.`-prefixed file, so this is how you keep a shared helper out of the adapter registry without an allowlist edit.
-- Contract markers are `SCREAMING_SNAKE:` line prefixes unique per adapter — `AGY_RESULT:`, `AGY_IMAGE_SAVED:`, `VERDICT:`/`## Findings` (codex). Never reuse another adapter's marker name.
+- Contract markers are `SCREAMING_SNAKE:` line prefixes unique per adapter — `AGY_RESULT:`, `AGY_IMAGE_SAVED:`, `AGY_VISION_SAVED:`, `SDD_VIDEO_PATH:` (yt-dlp), `VERDICT:`/`## Findings` (the review roster, shared via `src/lib/review-contract.ts`). Never reuse another adapter's marker name.
 - Private class fields use `#` (ECMAScript private, not `_`-prefix convention) — see every method on `JobStore` in src/lib/jobs.ts (`#jobs`, `#assertValidAdapter`, ...).
 - Domain term "job", never "task" or "run" — matches `Job`, `JobStore`, `JobState`, `jobId` throughout.
 
@@ -178,23 +177,29 @@ Every new adapter gets a `test/adapter-<name>.test.ts` covering: argv shape/flag
 ```
 src/
 ├── types.ts              # Core domain types — the innermost layer, no outward imports
-├── lib/                  # jobs.ts (the one spawn/lifecycle capability), log.ts, ids.ts, review-contract.ts
-├── adapters/
+├── lib/                  # jobs.ts (the one spawn/lifecycle capability), log.ts, ids.ts,
+│                         #   review-contract.ts, preflight.ts (video-pipeline CLI gate)
+├── adapters/             # Fourteen adapters + infra
 │   ├── types.ts           # The Adapter port (interface) — infra, skipped by discovery
 │   ├── discover.ts        # Directory-scan registry — infra, skipped by discovery
 │   ├── _codex-shared.ts   # Underscore = helper, not an adapter — skipped by discovery
 │   ├── _codex-factory.ts  # Underscore = helper, not an adapter — skipped by discovery
+│   ├── _agy-shared.ts     # Underscore = helper (buildAgyArgv, lastMarkerMatch) — skipped
 │   ├── codex.ts            # Concrete adapter (per-call model/effort)
-│   ├── codex-high.ts       # Pinned variant, built via _codex-factory.ts
-│   ├── agy.ts / agy-image.ts / grok.ts / kimi.ts / mistral.ts / qwen.ts
+│   ├── codex-high.ts / codex-low.ts / codex-sol.ts   # Pinned variants, via _codex-factory.ts
+│   ├── agy.ts / grok.ts / kimi.ts / mistral.ts / qwen.ts      # Agent harnesses
+│   ├── agy-image.ts / agy-vision.ts                          # Artifact producers
+│   ├── yt-dlp.ts / whisper.ts / ffmpeg-frames.ts             # Video pipeline (real CLIs, identity injectContract)
 └── tools/
     ├── runtime.ts          # Shared Runtime (JobStore + adaptersDir), no methods
     ├── shared.ts           # ToolModule type, ok()/err()/friendlyMessage()
     └── dispatch.ts / status.ts / result.ts / wait.ts / cancel.ts / list-adapters.ts / check.ts
 test/
 ├── adapter-<name>.test.ts   # One per adapter, stdout/stderr/exitCode triples into parseResult
-├── adapters-discover.test.ts / adapters-review.test.ts
-├── jobs.test.ts / tools.test.ts / tools-check.test.ts / server-boot.test.ts / types.test.ts
+│                            #   (the four review CLIs share adapters-review.test.ts)
+├── adapters-discover.test.ts / adapters-review.test.ts / adapter-agy-shared.test.ts
+├── jobs.test.ts / tools.test.ts / tools-check.test.ts / preflight.test.ts
+├── server-boot.test.ts / types.test.ts
 ```
 
 New adapter → `src/adapters/<name>.ts` + `test/adapter-<name>.test.ts`. New tool → `src/tools/<name>.ts` + a `createXTool(rt)` factory, registered in `src/register.ts`. Never put an adapter file directly under `src/tools/` or vice versa.
@@ -203,9 +208,9 @@ New adapter → `src/adapters/<name>.ts` + `test/adapter-<name>.test.ts`. New to
 
 - **Bun runtime, `bun test` only** — no Jest/Vitest/ts-node. `.ts` files run directly, no build step.
 - **Adapter discovery is a directory scan (`readdirSync` + synchronous `createRequire`), not a hand-maintained registry.** Adding an adapter is dropping a file, never editing a list. `discover.ts` never throws — a malformed adapter file is a stderr warning and a skip, because a bad third-party-ish adapter file must never crash the MCP server.
-- **`opts.mode ?? adapter.mode`, never the adapter's `mode` field alone.** Every dispatch call site resolves mode this way (JobStore.dispatch, codex.ts buildArgs) so a caller can force a write-mode adapter into read-mode for a review-only run without editing the adapter.
+- **The JobStore imposes no concurrency policy — every dispatch runs immediately, in parallel.** No job is refused because another is already running in the same `cwd`; the server does not model which jobs read and which write. Agent harnesses are unconditionally permissive (codex `--sandbox workspace-write`, agy `--dangerously-skip-permissions`, grok `--always-approve`, kimi/qwen `--yolo`, mistral `--auto-approve`), so any dispatched harness may edit the tree it is handed. Serializing jobs that would collide on one tree — or handing them separate `cwd`s — is the caller's decision. See `src/lib/jobs.ts:15`.
 - **Pinned codex variants ignore `opts` on `buildArgs` entirely** (`_codex-factory.ts:58`) — the pin is a security/determinism feature, not a default that can be overridden by a caller passing `model`/`effort`.
-- **External artifact paths (e.g. agy-image PNG output) are declared `mode: "read"`** even though a file is written — because the write-write guard only serializes writes to the *working tree*, and an out-of-tree artifact path doesn't conflict with concurrent tree-writing jobs. See `src/adapters/agy-image.ts:8-9`.
+- **External artifact paths (e.g. agy-image PNG output) land outside the source tree**, at an absolute path the caller names — `buildArgs` resolves it to an absolute path itself rather than delegating that resolution to the harness. See `src/adapters/agy-image.ts`.
 - Zod for MCP tool input validation (`src/tools/dispatch.ts` `inputShape`) — this is the schema boundary a raw MCP client actually hits; TypeScript types alone don't validate JSON-RPC payloads at runtime.
 
 ## 9. Exemplar Files

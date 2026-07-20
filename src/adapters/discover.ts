@@ -49,9 +49,6 @@ function toAdapter(mod: Record<string, unknown>): Adapter | { missing: string[] 
   const name = mod.name;
   if (typeof name !== "string" || name.length === 0) missing.push("name");
 
-  const mode = mod.mode;
-  if (mode !== "read" && mode !== "write") missing.push("mode");
-
   if (typeof mod.buildArgs !== "function") missing.push("buildArgs");
   if (typeof mod.injectContract !== "function") missing.push("injectContract");
   if (typeof mod.parseResult !== "function") missing.push("parseResult");
@@ -74,7 +71,6 @@ function toAdapter(mod: Record<string, unknown>): Adapter | { missing: string[] 
     name: name as string,
     binary: typeof binary === "string" ? binary : undefined,
     probeable: typeof probeable === "boolean" ? probeable : undefined,
-    mode: mode as Adapter["mode"],
     buildArgs: mod.buildArgs as Adapter["buildArgs"],
     injectContract: mod.injectContract as Adapter["injectContract"],
     parseResult: mod.parseResult as Adapter["parseResult"],

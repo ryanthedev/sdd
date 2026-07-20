@@ -3,26 +3,29 @@
  * Pure data + pure functions, no I/O: JobStore (Phase 2) spawns `buildArgs`'
  * argv and feeds the captured stdout/stderr/exitCode into `parseResult`.
  *
- * Write by default: `mode` is "write" so the harness can modify the repo
- * (write-mode jobs serialize per cwd via the JobStore guard). `buildArgs` maps
- * to codex's sandbox flag: "write" -> --sandbox workspace-write, and a per-call
- * `opts.mode:"read"` override -> --sandbox read-only for a review-only run.
- * `danger-full-access` is never emitted.
+ * The harness always runs under `--sandbox workspace-write`: it may edit the
+ * tree it is dispatched into, and nothing outside it. `danger-full-access` is
+ * never emitted. Whether it is safe to let codex edit a given tree right now —
+ * and whether two jobs may share one — is the CALLER's decision, not this
+ * adapter's.
  *
  * Output split (verified against `codex exec --help` in this environment):
- * codex writes progress to STDERR and its final answer to STDOUT. `summary`/
- * `raw` are built from stdout ONLY — stderr progress must never leak into the
- * collected result (DW-3.2). `parseResult` also enforces the contract-marker
- * backstop: a missing `VERDICT:`/`## Findings` marker (or a non-zero exit
- * code) is `failed` regardless of what else is in stdout — the same
- * silent-misparse guard Phase 2 established for JobStore, applied here to
+ * codex writes progress to STDERR and its final answer to STDOUT. `raw` is
+ * built from stdout ONLY — stderr progress must never leak into a SUCCESSFUL
+ * result (DW-3.2). The one exception is a FAILED result's `summary`: codex's
+ * diagnostics (auth, quota, and the git-repo refusal below) land on stderr, so
+ * on a non-zero exit `parseResult` surfaces a recognized signature or a bounded
+ * stderr tail there — turning a bare "codex exited 1" into something actionable.
+ * `raw` stays stdout-only on every path. `parseResult` also enforces the
+ * contract-marker backstop: a missing `VERDICT:`/`## Findings` marker (or a
+ * non-zero exit code) is `failed` regardless of what else is in stdout — the
+ * same silent-misparse guard Phase 2 established for JobStore, applied here to
  * codex's own output contract.
  */
-import type { AdapterMode, AdapterResult, DispatchOpts } from "../types.ts";
+import type { AdapterResult, DispatchOpts } from "../types.ts";
 import { buildCodexArgv, type CodexArgvConfig } from "./_codex-shared.ts";
 
 export const name = "codex";
-export const mode: AdapterMode = "write";
 
 /**
  * Per-call reasoning-effort allowlist. Mirrors the zod enum in
@@ -49,12 +52,10 @@ export function injectContract(prompt: string): string {
 }
 
 /**
- * `codex exec [...flags] --sandbox <mode> <prompt>` as an argv array (argv[0]
- * is the `codex` binary itself — JobStore spawns argv[0] with the rest as
- * args). Resolves the effective mode itself (`opts.mode ?? mode`) because
- * JobStore calls buildArgs with the caller's original opts, not its own
- * resolved mode. Flag assembly is delegated to the shared buildCodexArgv so
- * ordering and the sandbox barricade live in one place.
+ * `codex exec [...flags] --sandbox workspace-write <prompt>` as an argv array
+ * (argv[0] is the `codex` binary itself — JobStore spawns argv[0] with the rest
+ * as args). Flag assembly is delegated to the shared buildCodexArgv so ordering
+ * and the sandbox barricade live in one place.
  *
  * SECURITY (per-call allowlist): this trust boundary reads ONLY `opts.model`
  * and `opts.effort` — never arbitrary configOverrides from opts. An open
@@ -66,8 +67,6 @@ export function injectContract(prompt: string): string {
  * surfaces the throw as a clean MCP error.
  */
 export function buildArgs(prompt: string, opts: DispatchOpts): string[] {
-  const effectiveMode: AdapterMode = opts.mode ?? mode;
-
   const cfg: CodexArgvConfig = {};
   const { model, effort } = opts;
   if (model !== undefined) {
@@ -83,13 +82,40 @@ export function buildArgs(prompt: string, opts: DispatchOpts): string[] {
     cfg.configOverrides = { model_reasoning_effort: effort };
   }
 
-  return buildCodexArgv(prompt, effectiveMode, cfg);
+  return buildCodexArgv(prompt, cfg);
 }
 
-/** Extract + validate the contract markers from stdout; stderr never contributes to summary/raw. */
-export function parseResult(stdout: string, _stderr: string, exitCode: number): AdapterResult {
+/**
+ * codex refuses to run outside a git repository, exiting non-zero with this line
+ * on stderr BEFORE it ever contacts the model. Verified against the real CLI. It
+ * is easy to misread as an auth/quota failure, so we recognize it explicitly and
+ * hand back the fix. Matches either half of the message in case the wording drifts.
+ */
+const GIT_REPO_REFUSAL_RE = /not inside a trusted directory|skip-git-repo-check/i;
+
+/**
+ * Human-readable summary for a non-zero codex exit. stderr is where codex's real
+ * diagnostics live, so we surface them here (summary only — never `raw`). A
+ * recognized signature gets an actionable message; anything else gets a bounded
+ * stderr tail so the caller sees the actual error instead of just the exit code.
+ */
+function codexFailureSummary(stderr: string, exitCode: number): string {
+  if (GIT_REPO_REFUSAL_RE.test(stderr)) {
+    return (
+      "codex failed: its working directory is not a git repository. codex refuses to run outside a git repo " +
+      '("Not inside a trusted directory and --skip-git-repo-check was not specified") and exits before ever ' +
+      "reaching the model — this is NOT an auth or quota failure. Fix: run `git init` in the dispatch cwd, " +
+      "dispatch codex with a git-repo cwd, or have the caller allow --skip-git-repo-check."
+    );
+  }
+  const tail = stderr.trim().slice(-600).trim();
+  return tail ? `codex exited ${exitCode}: ${tail}` : `codex exited ${exitCode}`;
+}
+
+/** Extract + validate the contract markers from stdout; `raw` is always stdout-only (see header). */
+export function parseResult(stdout: string, stderr: string, exitCode: number): AdapterResult {
   if (exitCode !== 0) {
-    return { status: "failed", summary: `codex exited ${exitCode}`, artifacts: [], raw: stdout };
+    return { status: "failed", summary: codexFailureSummary(stderr, exitCode), artifacts: [], raw: stdout };
   }
   if (!VERDICT_RE.test(stdout) || !FINDINGS_RE.test(stdout)) {
     return {

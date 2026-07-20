@@ -197,8 +197,7 @@ test("malformed outputDir throws a TypeError instead of being dropped", () => {
 
 // ── adapter surface + discovery ─────────────────────────────────────────────
 
-test("mode is read, binary overrides to mlx_whisper, and the adapter opts out of live probing", () => {
-  expect(whisper.mode).toBe("read");
+test("binary overrides to mlx_whisper, and the adapter opts out of live probing", () => {
   expect(whisper.binary).toBe("mlx_whisper");
   expect(whisper.probeable).toBe(false);
 });
@@ -207,7 +206,6 @@ test("whisper is discovered via directory scan, no registry edit", () => {
   const adapters = discoverAdapters(join(import.meta.dir, "..", "src", "adapters"));
   const found = adapters.find((a) => a.name === "whisper");
   expect(found).toBeDefined();
-  expect(found!.mode).toBe("read");
   expect(found!.binary).toBe("mlx_whisper");
   expect(typeof found!.buildArgs).toBe("function");
   expect(typeof found!.injectContract).toBe("function");

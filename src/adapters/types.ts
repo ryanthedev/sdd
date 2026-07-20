@@ -10,7 +10,7 @@
  * Dependency direction (Clean Architecture): this boundary imports the core
  * domain types inward. Nothing in the core imports this port.
  */
-import type { AdapterMode, AdapterResult, DispatchOpts } from "../types.ts";
+import type { AdapterResult, DispatchOpts } from "../types.ts";
 
 export interface Adapter {
   /** Unique adapter name — also the on-disk filename stem and the dispatch key. */
@@ -34,9 +34,6 @@ export interface Adapter {
    * check can't supply) — `check_adapter` then reports binary presence only.
    */
   probeable?: boolean;
-
-  /** Whether this adapter reads or writes the working tree (drives the write-write guard). */
-  mode: AdapterMode;
 
   /**
    * Build the child-process argv for this work unit.

@@ -19,7 +19,7 @@
  * IDENTITY from `codex.ts` (not re-implemented) so the output contract has a
  * single source of truth across the base adapter and every variant.
  */
-import type { AdapterMode, AdapterResult, DispatchOpts } from "../types.ts";
+import type { AdapterResult, DispatchOpts } from "../types.ts";
 import { buildCodexArgv, type CodexArgvConfig } from "./_codex-shared.ts";
 import * as codex from "./codex.ts";
 
@@ -27,14 +27,11 @@ import * as codex from "./codex.ts";
 export interface CodexVariantConfig extends CodexArgvConfig {
   /** Adapter name — the on-disk filename stem and the dispatch key. */
   name: string;
-  /** Read/write mode for the write-write guard. Defaults to "write". */
-  mode?: AdapterMode;
 }
 
 /** The shape discovery expects a variant module to export, as a plain object. */
 export interface CodexVariant {
   name: string;
-  mode: AdapterMode;
   binary: string;
   buildArgs(prompt: string, opts: DispatchOpts): string[];
   injectContract(prompt: string): string;
@@ -48,14 +45,12 @@ export interface CodexVariant {
  * "codex" so `list_adapters` probes the real CLI, not the variant name.
  */
 export function makeCodexVariant(cfg: CodexVariantConfig): CodexVariant {
-  const { name, mode: variantMode, ...argvCfg } = cfg;
-  const resolvedMode: AdapterMode = variantMode ?? "write";
+  const { name, ...argvCfg } = cfg;
 
   return {
     name,
-    mode: resolvedMode,
     binary: "codex",
-    buildArgs: (prompt: string, _opts: DispatchOpts): string[] => buildCodexArgv(prompt, resolvedMode, argvCfg),
+    buildArgs: (prompt: string, _opts: DispatchOpts): string[] => buildCodexArgv(prompt, argvCfg),
     injectContract: codex.injectContract,
     parseResult: codex.parseResult,
   };

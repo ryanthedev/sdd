@@ -1,6 +1,6 @@
 /**
  * Shared codex argv assembly — the single place that owns codex flag spelling,
- * flag ordering, the sandbox mapping, and the prompt-last invariant. The base
+ * flag ordering, the sandbox flag, and the prompt-last invariant. The base
  * `codex` adapter delegates here for its per-call model/effort path, and the
  * variant factory (Phase 2) delegates here for pinned rosters — so the
  * flag-ordering and sandbox-safety logic exists exactly once.
@@ -21,14 +21,13 @@
  *   - Caller-influenced flags are emitted BEFORE `--sandbox`. If codex's
  *     flag parsing is later-wins, the trusted sandbox flag therefore prevails
  *     — defense-in-depth on top of the caller-side allowlist.
- *   - The sandbox mapping only knows `read-only`/`workspace-write`;
+ *   - The sandbox value is the hardcoded `workspace-write`;
  *     `danger-full-access` is structurally unreachable.
  *
  * Flag names verified against `codex exec --help`:
  *   `-m, --model <MODEL>`, `-p, --profile <CONFIG_PROFILE_V2>`,
  *   `-c, --config <key=value>`.
  */
-import type { AdapterMode } from "../types.ts";
 
 /** Trusted, pre-validated codex flag configuration (see header). */
 export interface CodexArgvConfig {
@@ -40,10 +39,12 @@ export interface CodexArgvConfig {
   configOverrides?: Record<string, string>;
 }
 
-const SANDBOX_BY_MODE: Record<AdapterMode, "read-only" | "workspace-write"> = {
-  read: "read-only",
-  write: "workspace-write",
-};
+/**
+ * The only sandbox codex is ever launched under: it may edit the tree it runs
+ * in, and nothing outside it. Whether letting a harness edit THIS tree right
+ * now is safe is the caller's call, not the adapter's.
+ */
+const SANDBOX = "workspace-write";
 
 /**
  * Assemble `codex exec` argv: `["codex","exec", ...flags, "--sandbox",
@@ -52,10 +53,10 @@ const SANDBOX_BY_MODE: Record<AdapterMode, "read-only" | "workspace-write"> = {
  * silently absorbed as prompt text (codex still exits 0), so the ordering is
  * encoded structurally here rather than left to callers.
  */
-export function buildCodexArgv(prompt: string, mode: AdapterMode, cfg: CodexArgvConfig = {}): string[] {
+export function buildCodexArgv(prompt: string, cfg: CodexArgvConfig = {}): string[] {
   const flags: string[] = [];
   if (cfg.model) flags.push("-m", cfg.model);
   if (cfg.profile) flags.push("-p", cfg.profile);
   for (const [key, value] of Object.entries(cfg.configOverrides ?? {})) flags.push("-c", `${key}=${value}`);
-  return ["codex", "exec", ...flags, "--sandbox", SANDBOX_BY_MODE[mode], prompt];
+  return ["codex", "exec", ...flags, "--sandbox", SANDBOX, prompt];
 }

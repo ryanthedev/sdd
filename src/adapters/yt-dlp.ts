@@ -26,9 +26,8 @@
  * (`<stem>.f251.webm`), but those never appear as a post_process filepath and
  * basename+join is safe regardless.
  *
- * `mode: "read"` — media lands at an explicit external `opts.outputDir` the
- * caller names, never in the source tree, so this does not count as a
- * working-tree write for the JobStore write-write guard (agy-image precedent).
+ * Media lands at an explicit external `opts.outputDir` the caller names, never
+ * in the source tree (agy-image precedent).
  *
  * IDENTITY CONTRACT: the "prompt" IS the URL, and JobStore applies
  * `injectContract` BEFORE `buildArgs` (src/lib/jobs.ts:242-243) — any
@@ -80,10 +79,9 @@ import { existsSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { lastMarkerMatch } from "./_agy-shared.ts";
 import type { Adapter } from "./types.ts";
-import type { AdapterMode, AdapterResult, DispatchOpts } from "../types.ts";
+import type { AdapterResult, DispatchOpts } from "../types.ts";
 
 export const name = "yt-dlp";
-export const mode: AdapterMode = "read";
 /** Opt OUT of check_adapter's automatic live probe: a probe prompt is not a
  *  URL, supplies no outputDir, and a real run would download from the network. */
 export const probeable = false;
@@ -329,5 +327,5 @@ function stderrTail(stderr: string): string {
   return ` — stderr tail: ${tail.replaceAll("\n", " | ")}`;
 }
 
-const _check: Adapter = { name, probeable, mode, buildArgs, injectContract, parseResult };
+const _check: Adapter = { name, probeable, buildArgs, injectContract, parseResult };
 void _check;

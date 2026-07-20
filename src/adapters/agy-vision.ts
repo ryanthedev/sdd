@@ -49,15 +49,12 @@ import { existsSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { buildAgyArgv, lastMarkerMatch } from "./_agy-shared.ts";
 import type { Adapter } from "./types.ts";
-import type { AdapterMode, AdapterResult, DispatchOpts } from "../types.ts";
+import type { AdapterResult, DispatchOpts } from "../types.ts";
 
 export const name = "agy-vision";
 /** CLI binary is `agy` (same as agy/agy-image); "-vision" is this adapter's
  *  contract, not a separate binary — list_adapters probes `agy` on PATH. */
 export const binary = "agy";
-/** External artifact path, never a working-tree write — read-mode jobs fan
- *  out freely past the write-write guard (agy-image precedent). */
-export const mode: AdapterMode = "read";
 export const probeable = false;
 
 /** See MODEL DEFAULT in the header: strong tier required; Flash-Low loops. */
@@ -204,5 +201,5 @@ function resolveContained(raw: string, opts: DispatchOpts, key: string): string 
   return resolved;
 }
 
-const _check: Adapter = { name, binary, probeable, mode, buildArgs, injectContract, parseResult };
+const _check: Adapter = { name, binary, probeable, buildArgs, injectContract, parseResult };
 void _check;

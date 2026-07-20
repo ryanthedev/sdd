@@ -69,7 +69,6 @@ function structured(result: ToolResult): Record<string, unknown> {
 // A fast adapter that always emits both contract markers and exits 0.
 const OK_ADAPTER = `
 export const name = "ok-adapter";
-export const mode = "read";
 export function injectContract(prompt) { return prompt; }
 export function buildArgs(prompt, opts) {
   return [${JSON.stringify(BUN)}, "-e", "process.stdout.write('VERDICT: fine ## Findings None.')"];
@@ -85,7 +84,6 @@ export function parseResult(stdout, stderr, exitCode) {
 // Exits 0 but never emits a marker — the silent-misparse case.
 const MISPARSE_ADAPTER = `
 export const name = "misparse-adapter";
-export const mode = "read";
 export function injectContract(prompt) { return prompt; }
 export function buildArgs(prompt, opts) {
   return [${JSON.stringify(BUN)}, "-e", "process.stdout.write('did stuff'); process.exit(0)"];
@@ -101,7 +99,6 @@ export function parseResult(stdout, stderr, exitCode) {
 // Never exits on its own — for "still running" assertions.
 const SLOW_ADAPTER = `
 export const name = "slow-adapter";
-export const mode = "read";
 export function injectContract(prompt) { return prompt; }
 export function buildArgs(prompt, opts) {
   return [${JSON.stringify(BUN)}, "-e", "setInterval(()=>{}, 1e9)"];
@@ -110,11 +107,6 @@ export function parseResult(stdout, stderr, exitCode) {
   return { status: "done", summary: stdout, artifacts: [], raw: stdout };
 }
 `;
-
-const SLOW_WRITE_ADAPTER = SLOW_ADAPTER.replace('name = "slow-adapter"', 'name = "slow-write-adapter"').replace(
-  'mode = "read"',
-  'mode = "write"',
-);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DW-3.1: dispatch -> wait -> result round-trip returns a structured result.
@@ -132,6 +124,7 @@ test("test_DW_3_1_dispatch_wait_result_round_trip_returns_structured_result", as
   expect(dispatchRes.isError).toBeUndefined();
   const jobId = structured(dispatchRes).jobId as string;
   expect(typeof jobId).toBe("string");
+  expect(dispatchRes.content[0]!.text).toBe(`dispatched "ok-adapter" as ${jobId}`);
 
   const waitRes = await wait.handler({ jobIds: [jobId], timeoutMs: 5000 });
   expect(structured(waitRes).done).toEqual([jobId]);
@@ -358,24 +351,29 @@ test("test_edge_result_on_running_job_returns_running_not_partial_artifact", asy
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Edge: dispatch a write job blocked by JobStore's write-write guard.
+// Edge: two dispatches into the SAME cwd are both accepted — the tool imposes no
+// concurrency policy (serializing colliding jobs is the caller's job, not ours).
 // ─────────────────────────────────────────────────────────────────────────────
-test("test_edge_dispatch_write_write_conflict_surfaced_as_clean_error", async () => {
+test("test_edge_two_dispatches_into_the_same_cwd_are_both_accepted", async () => {
   const dir = freshDir("sdd-tools-adapters-");
-  writeAdapterFile(dir, "slow-write-adapter.ts", SLOW_WRITE_ADAPTER);
+  writeAdapterFile(dir, "slow-adapter.ts", SLOW_ADAPTER);
   const rt = newRuntime(dir);
   const dispatch = createDispatchTool(rt);
   const cwd = freshDir("sdd-tools-cwd-");
 
-  const first = await dispatch.handler({ adapter: "slow-write-adapter", prompt: "write A", cwd });
+  const first = await dispatch.handler({ adapter: "slow-adapter", prompt: "job A", cwd });
   expect(first.isError).toBeUndefined();
 
-  const second = await dispatch.handler({ adapter: "slow-write-adapter", prompt: "write B", cwd });
-  expect(second.isError).toBe(true);
-  expect(second.content[0]!.text).toContain("write-write conflict");
+  const second = await dispatch.handler({ adapter: "slow-adapter", prompt: "job B", cwd });
+  expect(second.isError).toBeUndefined();
 
   const firstJobId = structured(first).jobId as string;
+  const secondJobId = structured(second).jobId as string;
+  expect(rt.jobStore.get(firstJobId)!.state).toBe("running");
+  expect(rt.jobStore.get(secondJobId)!.state).toBe("running"); // both alive in one cwd
+
   await rt.jobStore.cancel(firstJobId);
+  await rt.jobStore.cancel(secondJobId);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -400,9 +398,9 @@ test("cancel terminates a running job and no-ops on an unknown id", async () => 
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// DW-3.3: list_adapters reports codex (the real, production adapter) with mode
-// and a binaryPresent flag; plus a deterministic PATH-presence check that does
-// not depend on whether the real `codex` binary happens to be installed.
+// DW-3.3: list_adapters reports codex (the real, production adapter) with a
+// binaryPresent flag; plus a deterministic PATH-presence check that does not
+// depend on whether the real `codex` binary happens to be installed.
 // ─────────────────────────────────────────────────────────────────────────────
 test("test_DW_3_3_list_adapters_reports_codex_from_real_adapters_dir", async () => {
   const rt = createRuntime({ jobStoreOptions: { logDir: freshDir("sdd-tools-logs-") } }); // default adaptersDir = src/adapters
@@ -410,12 +408,13 @@ test("test_DW_3_3_list_adapters_reports_codex_from_real_adapters_dir", async () 
   const listAdapters = createListAdaptersTool(rt);
 
   const res = await listAdapters.handler({});
-  const adapters = structured(res).adapters as { name: string; mode: string; binaryPresent: boolean }[];
+  const adapters = structured(res).adapters as { name: string; binaryPresent: boolean }[];
 
   const codexEntry = adapters.find((a) => a.name === "codex");
   expect(codexEntry).toBeDefined();
-  expect(codexEntry!.mode).toBe("write");
   expect(typeof codexEntry!.binaryPresent).toBe("boolean");
+  // The rendered line carries the name + PATH verdict, and nothing else.
+  expect(res.content[0]!.text).toContain(`codex — binary ${codexEntry!.binaryPresent ? "present" : "MISSING"} on PATH`);
 });
 
 test("test_DW_3_3_binaryPresent_true_for_a_real_binary_and_false_for_a_fake_one", async () => {
@@ -424,12 +423,12 @@ test("test_DW_3_3_binaryPresent_true_for_a_real_binary_and_false_for_a_fake_one"
   writeAdapterFile(
     dir,
     "present.ts",
-    `export const name = "${bunBinaryName}"; export const mode = "read"; export function buildArgs(){return ["${bunBinaryName}"]} export function injectContract(p){return p} export function parseResult(o,e,c){return {status:"done",summary:o,artifacts:[],raw:o}}`,
+    `export const name = "${bunBinaryName}"; export function buildArgs(){return ["${bunBinaryName}"]} export function injectContract(p){return p} export function parseResult(o,e,c){return {status:"done",summary:o,artifacts:[],raw:o}}`,
   );
   writeAdapterFile(
     dir,
     "absent.ts",
-    `export const name = "definitely-not-a-real-binary-xyz123"; export const mode = "read"; export function buildArgs(){return ["x"]} export function injectContract(p){return p} export function parseResult(o,e,c){return {status:"done",summary:o,artifacts:[],raw:o}}`,
+    `export const name = "definitely-not-a-real-binary-xyz123"; export function buildArgs(){return ["x"]} export function injectContract(p){return p} export function parseResult(o,e,c){return {status:"done",summary:o,artifacts:[],raw:o}}`,
   );
   const rt = newRuntime(dir);
   const listAdapters = createListAdaptersTool(rt);

@@ -11,7 +11,7 @@ import { err, ok, type ToolModule } from "./shared.ts";
 export const name = "status";
 export const title = "Check a job's lifecycle state";
 export const description =
-  "Returns a job's current state (running | done | failed) plus its adapter, mode, and exit code once " +
+  "Returns a job's current state (running | done | failed) plus its adapter and exit code once " +
   "terminal. done/failed reflects the child's exit code AND the adapter's contract-marker validation — " +
   "never pid-liveness alone. Use result to collect the full structured output once terminal.";
 
@@ -32,10 +32,9 @@ export function createStatusTool(rt: Runtime): ToolModule<typeof inputShape> {
       if (!job) {
         return err(`unknown job id "${args.jobId}"`, { code: "unknown_job" });
       }
-      return ok(`job ${job.id} (${job.adapter}, ${job.mode}): ${job.state}`, {
+      return ok(`job ${job.id} (${job.adapter}): ${job.state}`, {
         jobId: job.id,
         adapter: job.adapter,
-        mode: job.mode,
         state: job.state,
         ...(job.exitCode !== undefined ? { exitCode: job.exitCode } : {}),
       });

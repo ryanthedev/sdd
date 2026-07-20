@@ -15,9 +15,9 @@ import { ok, type ToolModule } from "./shared.ts";
 export const name = "list_adapters";
 export const title = "List discovered adapters";
 export const description =
-  "Lists every adapter discovered under the adapters directory, with its mode (read|write) and a " +
-  "binaryPresent flag: whether the adapter's underlying CLI is on PATH. Call this before dispatch to see " +
-  "what's available and whether the harness is actually installed.";
+  "Lists every adapter discovered under the adapters directory with a binaryPresent flag: whether the " +
+  "adapter's underlying CLI is on PATH. Call this before dispatch to see what's available and whether the " +
+  "harness is actually installed.";
 
 export const inputShape = {};
 
@@ -30,10 +30,9 @@ export function createListAdaptersTool(rt: Runtime): ToolModule<typeof inputShap
     handler: async () => {
       const adapters = listAdapters(rt).map((a) => ({
         name: a.name,
-        mode: a.mode,
         binaryPresent: Bun.which(a.binary ?? a.name) !== null,
       }));
-      const lines = adapters.map((a) => `${a.name} (${a.mode}) — binary ${a.binaryPresent ? "present" : "MISSING"} on PATH`);
+      const lines = adapters.map((a) => `${a.name} — binary ${a.binaryPresent ? "present" : "MISSING"} on PATH`);
       return ok(lines.length > 0 ? lines.join("\n") : "no adapters discovered", { adapters });
     },
   };

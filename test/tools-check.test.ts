@@ -10,7 +10,7 @@
  * on PATH), while its buildArgs still spawns the real BUN child.
  */
 import { afterEach, expect, spyOn, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createCheckTool } from "../src/tools/check.ts";
@@ -64,7 +64,6 @@ function structured(result: ToolResult): Record<string, unknown> {
 const PROBE_OK_ADAPTER = `
 export const name = "probe-ok";
 export const binary = "sh";
-export const mode = "read";
 export function injectContract(prompt) { return prompt; }
 export function buildArgs(prompt, opts) {
   return [${JSON.stringify(BUN)}, "-e", "process.stdout.write('PROBE_OK: operational')"];
@@ -76,20 +75,12 @@ export function parseResult(stdout, stderr, exitCode) {
 }
 `;
 
-// A WRITE-mode adapter whose probe completes — used to prove that write-capable
-// adapters get isolated into a throwaway temp cwd (agy-shaped isolation).
-const PROBE_OK_WRITE_ADAPTER = PROBE_OK_ADAPTER.replace('name = "probe-ok"', 'name = "probe-write"').replace(
-  'mode = "read"',
-  'mode = "write"',
-);
-
 // Writes an auth-like error to STDERR (which lands in the job log, NOT result.raw)
 // and exits 1; parseResult classifies it failed with a generic summary. The detail
 // builder must surface the stderr text by tailing the log.
 const PROBE_FAIL_ADAPTER = `
 export const name = "probe-fail";
 export const binary = "sh";
-export const mode = "read";
 export function injectContract(prompt) { return prompt; }
 export function buildArgs(prompt, opts) {
   return [${JSON.stringify(BUN)}, "-e", "process.stderr.write('Error: not logged in (401)'); process.exit(1)"];
@@ -104,7 +95,6 @@ export function parseResult(stdout, stderr, exitCode) {
 const PROBE_MISSING_ADAPTER = `
 export const name = "probe-missing";
 export const binary = "sdd-definitely-not-installed-xyz";
-export const mode = "read";
 export function injectContract(prompt) { return prompt; }
 export function buildArgs(prompt, opts) { return [${JSON.stringify(BUN)}, "-e", "process.exit(0)"]; }
 export function parseResult(stdout, stderr, exitCode) {
@@ -117,7 +107,6 @@ const PROBE_OPTOUT_ADAPTER = `
 export const name = "probe-optout";
 export const binary = "sh";
 export const probeable = false;
-export const mode = "read";
 export function injectContract(prompt) { return prompt; }
 export function buildArgs(prompt, opts) { return [${JSON.stringify(BUN)}, "-e", "process.exit(0)"]; }
 export function parseResult(stdout, stderr, exitCode) {
@@ -129,7 +118,6 @@ export function parseResult(stdout, stderr, exitCode) {
 const PROBE_HANG_ADAPTER = `
 export const name = "probe-hang";
 export const binary = "sh";
-export const mode = "read";
 export function injectContract(prompt) { return prompt; }
 export function buildArgs(prompt, opts) { return [${JSON.stringify(BUN)}, "-e", "setInterval(()=>{}, 1e9)"]; }
 export function parseResult(stdout, stderr, exitCode) {
@@ -142,7 +130,6 @@ export function parseResult(stdout, stderr, exitCode) {
 const PROBE_DISPATCH_THROW_ADAPTER = `
 export const name = "probe-throw";
 export const binary = "sh";
-export const mode = "read";
 export function injectContract(prompt) { return prompt; }
 export function buildArgs(prompt, opts) { throw new Error("boom building argv"); }
 export function parseResult(stdout, stderr, exitCode) {
@@ -263,31 +250,13 @@ test("check_adapter returns a probe_dispatch_failed error when the probe dispatc
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// isolation (WRITE adapter): with no caller cwd, a write-capable adapter's probe
-// runs in a throwaway temp dir under tmpdir(), never the process cwd — a
-// structural guard (agy ignores opts.mode) independent of prompt compliance.
+// isolation: with no caller cwd, ANY probe runs in a throwaway temp dir under
+// tmpdir(), never the process cwd. Every probeable adapter is an agent harness
+// launched with its approval flag on, so nothing in the prompt can stop it from
+// mutating the tree it lands in — only the cwd we hand it can. Structural, and
+// independent of prompt compliance.
 // ─────────────────────────────────────────────────────────────────────────────
-test("check_adapter isolates a write-mode probe in a disposable temp cwd, not the process cwd", async () => {
-  const dir = freshDir("sdd-check-adapters-");
-  writeAdapterFile(dir, "probe-write.ts", PROBE_OK_WRITE_ADAPTER);
-  const rt = newRuntime(dir);
-  const check = createCheckTool(rt);
-
-  const res = await check.handler({ adapter: "probe-write", timeoutMs: 5000 });
-
-  const jobId = structured(res).jobId as string;
-  const jobCwd = rt.jobStore.get(jobId)?.cwd;
-  expect(jobCwd).toBeDefined();
-  expect(jobCwd).not.toBe(process.cwd()); // NOT the user's tree
-  expect(jobCwd!.startsWith(tmpdir())).toBe(true); // a throwaway temp dir
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-// isolation (READ adapter): read-mode adapters cannot write during a probe and
-// some (codex) REQUIRE a git/trusted cwd — so they run in the server's real cwd,
-// NOT a bare temp dir (which would make codex falsely report `failed`).
-// ─────────────────────────────────────────────────────────────────────────────
-test("check_adapter runs a read-mode probe in the process cwd, not a temp dir, when no cwd is given", async () => {
+test("check_adapter isolates a probe with no caller cwd in a disposable temp cwd, not the process cwd", async () => {
   const dir = freshDir("sdd-check-adapters-");
   writeAdapterFile(dir, "probe-ok.ts", PROBE_OK_ADAPTER);
   const rt = newRuntime(dir);
@@ -297,7 +266,62 @@ test("check_adapter runs a read-mode probe in the process cwd, not a temp dir, w
 
   const jobId = structured(res).jobId as string;
   const jobCwd = rt.jobStore.get(jobId)?.cwd;
-  expect(jobCwd).toBe(process.cwd()); // read adapters run in the real cwd
+  expect(jobCwd).toBeDefined();
+  expect(jobCwd).not.toBe(process.cwd()); // NOT the user's tree
+  expect(jobCwd!.startsWith(tmpdir())).toBe(true); // a throwaway temp dir
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The throwaway probe cwd is a GIT REPO, not a bare temp dir. Load-bearing:
+// codex refuses to run outside a git repo ("Not inside a trusted directory"),
+// exiting before it ever reaches the model — which check_adapter would report as
+// `failed` and a caller would read as "codex is not authenticated". The child
+// below emits its contract marker only when it finds a .git in its own cwd, so a
+// `done` verdict here IS the proof (the dir is deleted on the way out, so this
+// has to be observed from inside the probe).
+// ─────────────────────────────────────────────────────────────────────────────
+const PROBE_NEEDS_GIT_ADAPTER = `
+export const name = "probe-needs-git";
+export const binary = "sh";
+export function injectContract(prompt) { return prompt; }
+export function buildArgs(prompt, opts) {
+  return [${JSON.stringify(BUN)}, "-e",
+    "const {existsSync} = require('node:fs'); if (existsSync('.git')) process.stdout.write('PROBE_OK: git repo');"];
+}
+export function parseResult(stdout, stderr, exitCode) {
+  return stdout.includes("PROBE_OK:")
+    ? { status: "done", summary: stdout, artifacts: [], raw: stdout }
+    : { status: "failed", summary: "probe cwd was not a git repo", artifacts: [], raw: stdout };
+}
+`;
+
+test("check_adapter git-initializes the throwaway probe cwd (codex refuses a non-repo dir)", async () => {
+  const dir = freshDir("sdd-check-adapters-");
+  writeAdapterFile(dir, "probe-needs-git.ts", PROBE_NEEDS_GIT_ADAPTER);
+  const rt = newRuntime(dir);
+  const check = createCheckTool(rt);
+
+  const res = await check.handler({ adapter: "probe-needs-git", timeoutMs: 5000 });
+
+  expect(structured(res).status).toBe("ok");
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// isolation: a caller-supplied cwd is their explicit choice — honored verbatim,
+// with no temp dir created (and none removed) on their behalf.
+// ─────────────────────────────────────────────────────────────────────────────
+test("check_adapter honors a caller-supplied cwd verbatim instead of isolating the probe", async () => {
+  const dir = freshDir("sdd-check-adapters-");
+  writeAdapterFile(dir, "probe-ok.ts", PROBE_OK_ADAPTER);
+  const rt = newRuntime(dir);
+  const check = createCheckTool(rt);
+  const callerCwd = freshDir("sdd-check-cwd-");
+
+  const res = await check.handler({ adapter: "probe-ok", timeoutMs: 5000, cwd: callerCwd });
+
+  const jobId = structured(res).jobId as string;
+  expect(rt.jobStore.get(jobId)?.cwd).toBe(callerCwd);
+  expect(existsSync(callerCwd)).toBe(true); // theirs, so never cleaned up by the tool
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -26,7 +26,7 @@ when_to_use: >-
 
 # Video ingestion
 
-Take a video URL from **YouTube, Instagram, TikTok, or X** and produce one machine-consumable **fused understanding** — the full spoken transcript *plus* the visual content the transcript misses (sight gags, on-screen text, reaction shots, memes) — written as JSON to a caller-named external path. This is the user-facing surface over four thin `read`-mode adapters (`yt-dlp`, `whisper`, `ffmpeg-frames`, `agy-vision`) sequenced through the sdd MCP tools (`dispatch`, `wait`, `result`). Claude is the brain that sequences the dispatches and reads the artifacts off disk; the adapters do the bounded work. This extends the `dispatch → wait → dispatch` doctrine in [`../subagent-driven-development/SKILL.md`](../subagent-driven-development/SKILL.md) — read that for the tool surface and the fan-out-reads/serialize-writes rule.
+Take a video URL from **YouTube, Instagram, TikTok, or X** and produce one machine-consumable **fused understanding** — the full spoken transcript *plus* the visual content the transcript misses (sight gags, on-screen text, reaction shots, memes) — written as JSON to a caller-named external path. This is the user-facing surface over four thin adapters (`yt-dlp`, `whisper`, `ffmpeg-frames`, `agy-vision`) sequenced through the sdd MCP tools (`dispatch`, `wait`, `result`). Claude is the brain that sequences the dispatches and reads the artifacts off disk; the adapters do the bounded work. This extends the `dispatch → wait → dispatch` doctrine in [`../subagent-driven-development/SKILL.md`](../subagent-driven-development/SKILL.md) — read that for the tool surface and the caller-owned concurrency rule (the server serializes nothing; keeping colliding jobs apart is on you).
 
 ## 0. Preflight FIRST — gate before any dispatch
 
@@ -40,7 +40,7 @@ It prints a JSON report and **exits non-zero when any tool is missing or unusabl
 
 ## 1. The external artifact directory
 
-**One directory per video, outside the source tree.** Every adapter takes `outputDir` (or, for the fusion step, `addDir` + `outputPath`) and lands its media there — audio, video, transcript, frames, manifest, and the final `fused.json`. Media never enters the working tree, which is what keeps all these `read`-mode jobs off the JobStore write-write guard so the transcribe ∥ frames pair can fan out. Pick an absolute path (e.g. `/tmp/video-ingest/<id>/`) and reuse it as the single `<artifactDir>` for every step below.
+**One directory per video, outside the source tree.** Every adapter takes `outputDir` (or, for the fusion step, `addDir` + `outputPath`) and lands its media there — audio, video, transcript, frames, manifest, and the final `fused.json`. Media never enters the working tree, and each step writes a distinct set of files in `<artifactDir>` — that separation is what makes the transcribe ∥ frames fan-out safe (the server won't stop two jobs from colliding; only their disjoint outputs will). Pick an absolute path (e.g. `/tmp/video-ingest/<id>/`) and reuse it as the single `<artifactDir>` for every step below.
 
 Because job state is in-memory and session-scoped, a server restart mid-pipeline orphans the steps but leaves the artifacts on disk. **Tolerate re-running from the last completed artifact** — if the wav already exists, you can skip straight to the transcribe/frames fan-out rather than re-fetching.
 

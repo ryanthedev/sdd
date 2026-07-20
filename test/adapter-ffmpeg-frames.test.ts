@@ -252,8 +252,7 @@ test("sceneThreshold boundary values 0 and 1 are accepted", () => {
 
 // ── adapter surface + discovery ─────────────────────────────────────────────
 
-test("mode is read, binary is ffmpeg, and the adapter opts out of live probing", () => {
-  expect(ffmpegFrames.mode).toBe("read");
+test("binary is ffmpeg, and the adapter opts out of live probing", () => {
   expect(ffmpegFrames.binary).toBe("ffmpeg");
   expect(ffmpegFrames.probeable).toBe(false);
 });
@@ -262,7 +261,6 @@ test("ffmpeg-frames is discovered via directory scan, no registry edit", () => {
   const adapters = discoverAdapters(join(import.meta.dir, "..", "src", "adapters"));
   const found = adapters.find((a) => a.name === "ffmpeg-frames");
   expect(found).toBeDefined();
-  expect(found!.mode).toBe("read");
   expect(found!.binary).toBe("ffmpeg");
   expect(typeof found!.buildArgs).toBe("function");
   expect(typeof found!.injectContract).toBe("function");
