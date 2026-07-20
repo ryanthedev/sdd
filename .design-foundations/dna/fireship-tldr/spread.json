@@ -1,0 +1,362 @@
+{
+  "status": "fail",
+  "receiptsOnly": false,
+  "controlVec": {
+    "value": "light",
+    "hue": 290,
+    "chroma": "vivid",
+    "typeClass": "humanist-sans",
+    "density": 8,
+    "layout": [
+      "row-stack",
+      "hairline-rules",
+      "band-fills",
+      "edge-anchored"
+    ]
+  },
+  "perTile": [
+    {
+      "index": 1,
+      "name": "Receipt Roll",
+      "vec": {
+        "value": "split",
+        "hue": 35,
+        "chroma": "muted",
+        "typeClass": "mono",
+        "density": 10,
+        "layout": [
+          "row-stack",
+          "band-fills",
+          "collision-layers"
+        ]
+      },
+      "receipts": {
+        "checks": [
+          {
+            "type": "hue",
+            "value": 35,
+            "verdict": "PASS",
+            "detail": "committed 35°, rendered 35° (gap 0°, tol 20°)"
+          },
+          {
+            "type": "value",
+            "value": "light",
+            "verdict": "FAIL",
+            "detail": "committed light, rendered split"
+          },
+          {
+            "type": "chroma",
+            "value": "muted",
+            "verdict": "PASS",
+            "detail": "committed muted, rendered muted"
+          },
+          {
+            "type": "type-class",
+            "value": "mono",
+            "verdict": "PASS",
+            "detail": "committed mono, rendered mono"
+          },
+          {
+            "type": "layout-move",
+            "value": "single narrow center receipt column with dotted tear rules",
+            "verdict": "PASS",
+            "detail": "check \"band-fills\" fired"
+          },
+          {
+            "type": "detail-move",
+            "verdict": "LLM-ONLY",
+            "note": "verified on pixels by the critique, not arithmetic"
+          }
+        ],
+        "pass": false
+      },
+      "offCenter": {
+        "dist": 0.6472,
+        "threshold": 0.35,
+        "pass": true
+      },
+      "pass": false
+    },
+    {
+      "index": 2,
+      "name": "Ben-Day Comic",
+      "vec": {
+        "value": "split",
+        "hue": 220,
+        "chroma": "balanced",
+        "typeClass": "grotesque",
+        "density": 7,
+        "layout": [
+          "band-fills",
+          "collision-layers"
+        ]
+      },
+      "receipts": {
+        "checks": [
+          {
+            "type": "hue",
+            "value": 220,
+            "verdict": "PASS",
+            "detail": "committed 220°, rendered 220° (gap 0°, tol 20°)"
+          },
+          {
+            "type": "value",
+            "value": "light",
+            "verdict": "FAIL",
+            "detail": "committed light, rendered split"
+          },
+          {
+            "type": "chroma",
+            "value": "vivid",
+            "verdict": "FAIL",
+            "detail": "committed vivid, rendered balanced"
+          },
+          {
+            "type": "type-class",
+            "value": "display-warm",
+            "verdict": "FAIL",
+            "detail": "committed display-warm, rendered grotesque"
+          },
+          {
+            "type": "layout-move",
+            "value": "bordered comic panel grid with caption boxes",
+            "verdict": "PASS",
+            "detail": "check \"band-fills\" fired"
+          },
+          {
+            "type": "detail-move",
+            "verdict": "LLM-ONLY",
+            "note": "verified on pixels by the critique, not arithmetic"
+          }
+        ],
+        "pass": false
+      },
+      "offCenter": {
+        "dist": 0.4278,
+        "threshold": 0.35,
+        "pass": true
+      },
+      "pass": false
+    },
+    {
+      "index": 3,
+      "name": "Phosphor Ticker",
+      "vec": {
+        "value": "split",
+        "hue": 135,
+        "chroma": "balanced",
+        "typeClass": "mono",
+        "density": 10,
+        "layout": [
+          "row-stack",
+          "hairline-rules",
+          "band-fills",
+          "collision-layers",
+          "edge-anchored"
+        ]
+      },
+      "receipts": {
+        "checks": [
+          {
+            "type": "hue",
+            "value": 135,
+            "verdict": "PASS",
+            "detail": "committed 135°, rendered 135° (gap 0°, tol 20°)"
+          },
+          {
+            "type": "value",
+            "value": "dark",
+            "verdict": "FAIL",
+            "detail": "committed dark, rendered split"
+          },
+          {
+            "type": "chroma",
+            "value": "balanced",
+            "verdict": "PASS",
+            "detail": "committed balanced, rendered balanced"
+          },
+          {
+            "type": "type-class",
+            "value": "mono",
+            "verdict": "PASS",
+            "detail": "committed mono, rendered mono"
+          },
+          {
+            "type": "layout-move",
+            "value": "top ticker crawl over stacked terminal log blocks",
+            "verdict": "PASS",
+            "detail": "check \"row-stack\" fired"
+          },
+          {
+            "type": "detail-move",
+            "verdict": "LLM-ONLY",
+            "note": "verified on pixels by the critique, not arithmetic"
+          }
+        ],
+        "pass": false
+      },
+      "offCenter": {
+        "dist": 0.6806,
+        "threshold": 0.35,
+        "pass": true
+      },
+      "pass": false
+    },
+    {
+      "index": 4,
+      "name": "Xerox Zine",
+      "vec": {
+        "value": "light",
+        "hue": 330,
+        "chroma": "vivid",
+        "typeClass": "grotesque-condensed",
+        "density": 8,
+        "layout": [
+          "hard-split",
+          "band-fills",
+          "collision-layers",
+          "edge-anchored"
+        ]
+      },
+      "receipts": {
+        "checks": [
+          {
+            "type": "hue",
+            "value": 330,
+            "verdict": "PASS",
+            "detail": "committed 330°, rendered 330° (gap 0°, tol 20°)"
+          },
+          {
+            "type": "value",
+            "value": "light",
+            "verdict": "PASS",
+            "detail": "committed light, rendered light"
+          },
+          {
+            "type": "chroma",
+            "value": "vivid",
+            "verdict": "PASS",
+            "detail": "committed vivid, rendered vivid"
+          },
+          {
+            "type": "type-class",
+            "value": "grotesque-condensed",
+            "verdict": "PASS",
+            "detail": "committed grotesque-condensed, rendered grotesque-condensed"
+          },
+          {
+            "type": "layout-move",
+            "value": "overlapping torn-edge collage cards over a paper grid",
+            "verdict": "PASS",
+            "detail": "check \"collision-layers\" fired"
+          },
+          {
+            "type": "detail-move",
+            "verdict": "LLM-ONLY",
+            "note": "verified on pixels by the critique, not arithmetic"
+          }
+        ],
+        "pass": true
+      },
+      "offCenter": {
+        "dist": 0.1667,
+        "threshold": 0.35,
+        "pass": false
+      },
+      "pass": false
+    },
+    {
+      "index": 5,
+      "name": "Foil Spec",
+      "vec": {
+        "value": "split",
+        "hue": 190,
+        "chroma": "muted",
+        "typeClass": "grotesque",
+        "density": 10,
+        "layout": [
+          "hard-split",
+          "hairline-rules",
+          "band-fills",
+          "collision-layers",
+          "edge-anchored"
+        ]
+      },
+      "receipts": {
+        "checks": [
+          {
+            "type": "hue",
+            "value": 190,
+            "verdict": "PASS",
+            "detail": "committed 190°, rendered 190° (gap 0°, tol 20°)"
+          },
+          {
+            "type": "value",
+            "value": "split",
+            "verdict": "PASS",
+            "detail": "committed split, rendered split"
+          },
+          {
+            "type": "chroma",
+            "value": "muted",
+            "verdict": "PASS",
+            "detail": "committed muted, rendered muted"
+          },
+          {
+            "type": "type-class",
+            "value": "grotesque",
+            "verdict": "PASS",
+            "detail": "committed grotesque, rendered grotesque"
+          },
+          {
+            "type": "layout-move",
+            "value": "labeled spec panels in a calm two-column rack",
+            "verdict": "PASS",
+            "detail": "check \"hard-split\" fired"
+          },
+          {
+            "type": "detail-move",
+            "verdict": "LLM-ONLY",
+            "note": "verified on pixels by the critique, not arithmetic"
+          }
+        ],
+        "pass": true
+      },
+      "offCenter": {
+        "dist": 0.5389,
+        "threshold": 0.35,
+        "pass": true
+      },
+      "pass": true
+    }
+  ],
+  "spread": {
+    "axes": {
+      "pairwise": {
+        "value": 0.1333,
+        "threshold": 0.25,
+        "verdict": "FAIL"
+      },
+      "hue": {
+        "value": 30,
+        "threshold": 27,
+        "verdict": "PASS"
+      },
+      "typeClass": {
+        "value": 3,
+        "threshold": 3,
+        "verdict": "PASS"
+      },
+      "value": {
+        "value": 2,
+        "verdict": "PASS"
+      },
+      "density": {
+        "value": 3,
+        "verdict": "INFO"
+      }
+    },
+    "pass": false
+  },
+  "anyMissing": false
+}

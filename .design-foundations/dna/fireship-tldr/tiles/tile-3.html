@@ -1,0 +1,248 @@
+<template shadowrootmode="open">
+  <style>
+    :host {
+      display: block;
+      width: 100%;
+      height: 100%;
+      --accent: oklch(0.72 0.115 135);
+      --accent-dim: oklch(0.55 0.10 135);
+      --bg: oklch(0.13 0.02 135);
+      --bg-calm: oklch(0.20 0.028 135);
+      --bg-log: oklch(0.095 0.014 135);
+      --ink: oklch(0.86 0.06 135);
+      --ink-dim: oklch(0.52 0.05 135);
+      --font: ui-monospace, "SF Mono", "Cascadia Mono", "Consolas", monospace;
+      font-family: var(--font);
+      background: var(--bg);
+      overflow: hidden;
+      position: relative;
+      box-sizing: border-box;
+    }
+    *{ box-sizing: border-box; }
+
+    /* ---------- ticker crawl (top band) ---------- */
+    .ticker {
+      position: relative;
+      height: 26px;
+      width: 100%;
+      background: linear-gradient(180deg, oklch(0.16 0.03 135), oklch(0.11 0.02 135));
+      border-bottom: 1px solid var(--accent-dim);
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+    }
+    .ticker::before{
+      content:"";
+      position:absolute; inset:0;
+      background: repeating-linear-gradient(90deg, oklch(0.72 0.115 135 / 0.08) 0 1px, transparent 1px 8px);
+      pointer-events:none;
+    }
+    .ticker-track{
+      display:flex;
+      white-space:nowrap;
+      animation: crawl 14s linear infinite;
+      will-change: transform;
+    }
+    .ticker-track span{
+      display:inline-block;
+      padding: 0 18px;
+      font-size: 9px;
+      letter-spacing: 0.06em;
+      color: var(--accent);
+      text-transform: uppercase;
+      text-shadow: 0 0 6px oklch(0.72 0.115 135 / 0.55);
+    }
+    .ticker-track span.dim{ color: var(--ink-dim); text-shadow:none; }
+    @keyframes crawl{
+      from{ transform: translateX(0%); }
+      to{ transform: translateX(-50%); }
+    }
+
+    /* ---------- split stage ---------- */
+    .stage{
+      display:flex;
+      width:100%;
+      height: calc(100% - 26px);
+    }
+
+    /* calm pane — 38% */
+    .pane-calm{
+      flex: 0 0 38%;
+      max-width: 38%;
+      height:100%;
+      background: var(--bg-calm);
+      border-right: 2px solid var(--accent);
+      box-shadow: 2px 0 14px oklch(0.72 0.115 135 / 0.25);
+      padding: 14px 12px;
+      display:flex;
+      flex-direction:column;
+      gap: 10px;
+    }
+    .calm-head{
+      font-size: 10px;
+      letter-spacing: 0.14em;
+      color: var(--accent);
+      text-shadow: 0 0 8px oklch(0.72 0.115 135 / 0.6);
+      position: relative;
+    }
+    .calm-head::after{
+      content:"";
+      display:block;
+      margin-top:6px;
+      width: 100%;
+      height: 1px;
+      background: repeating-linear-gradient(90deg, var(--accent-dim) 0 4px, transparent 4px 7px);
+      opacity:0.6;
+    }
+    .stat{
+      display:flex;
+      justify-content:space-between;
+      font-size: 8.5px;
+      line-height: 1.6;
+      border-bottom: 1px dashed oklch(0.5 0.03 135 / 0.4);
+      padding-bottom: 4px;
+    }
+    .stat .k{ color: var(--ink-dim); letter-spacing:0.05em; }
+    .stat .v{ color: var(--ink); }
+    .stat .v.ok{ color: var(--accent); }
+    .stat .v.ok::before{
+      content:"";
+      display:inline-block;
+      width:5px; height:5px;
+      margin-right:4px;
+      border-radius:50%;
+      background: var(--accent);
+      box-shadow: 0 0 5px 1px var(--accent);
+      animation: pulse-dot 1.8s ease-in-out infinite;
+    }
+    @keyframes pulse-dot{
+      0%,100%{ opacity:1; }
+      50%{ opacity:0.35; }
+    }
+    .bar{
+      width:100%;
+      height:6px;
+      background: oklch(0.15 0.015 135);
+      border: 1px solid var(--accent-dim);
+      margin-top: auto;
+      position: relative;
+      overflow:hidden;
+    }
+    .bar-fill{
+      position:absolute; inset:0;
+      width:64%;
+      background: var(--accent);
+      box-shadow: 0 0 8px var(--accent);
+    }
+    .bar-label{
+      font-size:7px;
+      color: var(--ink-dim);
+      letter-spacing:0.08em;
+      margin-top:4px;
+    }
+
+    /* log pane — 62%, dominant, packed */
+    .pane-log{
+      flex: 0 0 62%;
+      max-width: 62%;
+      height:100%;
+      background:
+        repeating-linear-gradient(0deg, oklch(1 0 0 / 0.025) 0px, transparent 1px, transparent 3px),
+        var(--bg-log);
+      padding: 10px 12px 8px;
+      display:flex;
+      flex-direction:column;
+      gap: 6px;
+      overflow:hidden;
+      position:relative;
+    }
+    .log-heading{
+      font-size: 10.5px;
+      color: var(--accent);
+      letter-spacing: 0.03em;
+      text-shadow: 0 0 6px oklch(0.72 0.115 135 / 0.55), 0 0 14px oklch(0.72 0.115 135 / 0.25);
+      animation: scan-glow 2.6s ease-in-out infinite;
+      margin-bottom: 2px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    @keyframes scan-glow{
+      0%,100%{ text-shadow: 0 0 6px oklch(0.72 0.115 135 / 0.55), 0 0 14px oklch(0.72 0.115 135 / 0.25); }
+      50%{ text-shadow: 0 0 10px oklch(0.72 0.115 135 / 0.9), 0 0 22px oklch(0.72 0.115 135 / 0.5); }
+    }
+    .block{
+      border-left: 2px solid oklch(0.4 0.05 135 / 0.6);
+      padding-left: 8px;
+      font-size: 8px;
+      line-height: 1.5;
+    }
+    .block .prompt{ color: var(--accent); }
+    .block .prompt::before{ content:"$ "; color: var(--accent-dim); }
+    .block .out{ color: var(--ink-dim); display:block; }
+    .block .out.hi{ color: var(--ink); }
+    .cursor{
+      display:inline-block;
+      width: 6px;
+      height: 9px;
+      background: var(--accent);
+      box-shadow: 0 0 6px var(--accent);
+      margin-left: 2px;
+      vertical-align: -1px;
+      animation: blink 1.05s step-end infinite;
+    }
+    @keyframes blink{
+      0%,49%{ opacity:1; }
+      50%,100%{ opacity:0; }
+    }
+  </style>
+
+  <div class="ticker">
+    <div class="ticker-track">
+      <span>&#9656; GPT-5.6 &quot;SOL&quot; SHIPS AGENTIC CODE MODE</span>
+      <span class="dim">&#9656; CLAUDE FABLE HOLDS SWE-BENCH LEAD</span>
+      <span>&#9656; GROK 4.5 ADDS 2M CONTEXT WINDOW</span>
+      <span class="dim">&#9656; THE CODE REPORT: FULL RECAP</span>
+      <span>&#9656; GPT-5.6 &quot;SOL&quot; SHIPS AGENTIC CODE MODE</span>
+      <span class="dim">&#9656; CLAUDE FABLE HOLDS SWE-BENCH LEAD</span>
+      <span>&#9656; GROK 4.5 ADDS 2M CONTEXT WINDOW</span>
+      <span class="dim">&#9656; THE CODE REPORT: FULL RECAP</span>
+    </div>
+  </div>
+
+  <div class="stage">
+    <div class="pane-calm">
+      <div class="calm-head">SESSION</div>
+      <div class="stat"><span class="k">MODEL</span><span class="v">sol-agentic</span></div>
+      <div class="stat"><span class="k">TASK</span><span class="v">recap.ts</span></div>
+      <div class="stat"><span class="k">TURNS</span><span class="v">14</span></div>
+      <div class="stat"><span class="k">CTX</span><span class="v">2.0M tok</span></div>
+      <div class="stat"><span class="k">STATUS</span><span class="v ok">live</span></div>
+      <div class="bar"><div class="bar-fill"></div></div>
+      <div class="bar-label">RECAP PROGRESS 64%</div>
+    </div>
+
+    <div class="pane-log">
+      <div class="log-heading">$ tldr --episode gpt-5.6-sol-launch</div>
+      <div class="block">
+        <span class="prompt">fireship recap --model sol</span>
+        <span class="out">&gt; parsing episode transcript...</span>
+        <span class="out hi">&gt; extracting agentic diff summary</span>
+      </div>
+      <div class="block">
+        <span class="prompt">diff fable vs sol --bench</span>
+        <span class="out">&gt; +142 -38 swebench cases</span>
+        <span class="out hi">&gt; fable retains refactor lead</span>
+      </div>
+      <div class="block">
+        <span class="prompt">grok-4.5 --agentic-loop</span>
+        <span class="out">&gt; context window: 2,000,000 tok</span>
+        <span class="out hi">&gt; loop stability: nominal</span>
+      </div>
+      <div class="block">
+        <span class="prompt">git log --oneline -1</span>
+        <span class="out hi">&gt; a11c9f2 recap: sol vs fable vs grok<span class="cursor"></span></span>
+      </div>
+    </div>
+  </div>
+</template>

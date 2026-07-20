@@ -1,0 +1,318 @@
+<template shadowrootmode="open">
+  <style>
+    :host{
+      display:block;
+      width:100%;
+      height:100%;
+      --accent: oklch(0.58 0.06 190);
+      --accent-dim: oklch(0.46 0.05 190);
+      --accent-pale: oklch(0.85 0.035 195);
+      --bg-light: oklch(0.95 0.008 190);
+      --bg-dark: oklch(0.19 0.012 190);
+      --bg-dark-2: oklch(0.24 0.014 190);
+      --ink-on-light: oklch(0.24 0.015 190);
+      --ink-on-light-dim: oklch(0.46 0.014 190);
+      --ink-on-dark: oklch(0.90 0.01 190);
+      --ink-on-dark-dim: oklch(0.62 0.014 190);
+      --font: "Helvetica Neue", Helvetica, Arial, sans-serif;
+      font-family: var(--font);
+      background: var(--bg-dark);
+      overflow:hidden;
+      position:relative;
+      box-sizing:border-box;
+    }
+    *{ box-sizing:border-box; }
+
+    .tile{ position:relative; width:100%; height:100%; overflow:hidden; }
+
+    /* ---------- nav strip ---------- */
+    .nav{
+      height:24px;
+      width:100%;
+      background: var(--bg-dark);
+      border-bottom:1px solid var(--accent-dim);
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      padding:0 10px;
+      position:relative;
+      z-index:10;
+    }
+    .nav .mark{
+      font-size:8.5px;
+      font-weight:700;
+      letter-spacing:0.04em;
+      color: var(--ink-on-dark);
+    }
+    .nav .mark span{ color: var(--accent); }
+    .nav .links{
+      font-size:6.5px;
+      letter-spacing:0.1em;
+      text-transform:uppercase;
+      color: var(--ink-on-dark-dim);
+    }
+    .nav .links b{ color: var(--accent-pale); font-weight:600; }
+
+    /* ---------- stage: split ground, diagonal seam ---------- */
+    .stage{
+      position:relative;
+      width:100%;
+      height:calc(100% - 24px);
+      overflow:hidden;
+    }
+    .ground-dark{
+      position:absolute; inset:0;
+      background: var(--bg-dark);
+      z-index:0;
+    }
+    .ground-light{
+      position:absolute; inset:0;
+      background: var(--bg-light);
+      clip-path: polygon(0 0, 62% 0, 46% 100%, 0 100%);
+      z-index:1;
+    }
+    .seam{
+      position:absolute;
+      left:53%; top:-10%;
+      width:2px; height:120%;
+      background: var(--accent-dim);
+      opacity:0.55;
+      transform: rotate(-9deg);
+      z-index:2;
+      animation: seamPulse 5s ease-in-out infinite;
+    }
+    @keyframes seamPulse{
+      0%,100%{ opacity:0.4; }
+      50%{ opacity:0.8; }
+    }
+
+    /* ---------- deck (left, on light ground) ---------- */
+    .deck{
+      position:absolute;
+      left:6%; top:11%;
+      width:35%;
+      z-index:3;
+    }
+    .eyebrow{
+      font-size:6.5px;
+      letter-spacing:0.12em;
+      text-transform:uppercase;
+      color: var(--accent-dim);
+      margin-bottom:5px;
+    }
+    .headline{
+      font-size:14px;
+      line-height:1.15;
+      font-weight:700;
+      color: var(--ink-on-light);
+      margin-bottom:6px;
+    }
+    .headline em{ font-style:normal; color: var(--accent); }
+    .deck p{
+      font-size:6.6px;
+      line-height:1.55;
+      color: var(--ink-on-light-dim);
+      margin:0;
+    }
+    .cta{
+      position:absolute;
+      left:6%; bottom:8%;
+      z-index:3;
+      display:inline-flex;
+      align-items:center;
+      gap:4px;
+      padding:5px 9px;
+      border:1px solid var(--ink-on-light);
+      color: var(--ink-on-light);
+      font-size:6.5px;
+      letter-spacing:0.08em;
+      text-transform:uppercase;
+      font-weight:600;
+      background: transparent;
+    }
+
+    /* ---------- spec rack: calm two-column panel grid ---------- */
+    .rack{
+      position:absolute;
+      right:4%; top:9%;
+      width:55%; height:78%;
+      z-index:3;
+      display:grid;
+      grid-template-columns: 1fr 1fr;
+      grid-auto-rows: min-content;
+      gap:5px;
+    }
+    .panel{
+      border:1px solid var(--accent-dim);
+      background: oklch(0.24 0.014 190 / 0.55);
+      padding:4px 6px;
+      display:flex;
+      flex-direction:column;
+      gap:2px;
+    }
+    .panel.wide{ grid-column: span 2; }
+    .panel.tilt{ transform: rotate(-1.6deg) translateY(1px); }
+    .p-label{
+      font-size:6px;
+      letter-spacing:0.09em;
+      text-transform:uppercase;
+      background: linear-gradient(100deg,
+        var(--accent-dim) 0%, var(--accent-pale) 18%, oklch(1 0 0) 30%,
+        var(--accent-pale) 42%, var(--accent-dim) 60%, var(--accent-dim) 100%);
+      background-size:260% 100%;
+      -webkit-background-clip:text; background-clip:text; color:transparent;
+      animation: foilSweep 5.5s linear infinite;
+    }
+    .p-value{
+      font-size:12px;
+      font-weight:700;
+      color: var(--ink-on-dark);
+      line-height:1.1;
+    }
+    .p-sub{
+      font-size:5.6px;
+      color: var(--ink-on-dark-dim);
+      letter-spacing:0.02em;
+    }
+    @keyframes foilSweep{
+      0%{ background-position: -160% 0; }
+      100%{ background-position: 260% 0; }
+    }
+    .bars{ display:flex; gap:3px; align-items:flex-end; height:14px; margin-top:2px; }
+    .bars i{ display:block; width:6px; background: var(--accent-dim); }
+    .bars i.hi{ background: var(--accent); }
+
+    /* ---------- collision point: hero spec straddling the seam ---------- */
+    .hero{
+      position:absolute;
+      left:23%; top:29%;
+      width:45%; height:38%;
+      z-index:6;
+      background: oklch(0.17 0.014 190 / 0.86);
+      border:2px solid var(--accent);
+      box-shadow: 0 10px 22px oklch(0.1 0.01 190 / 0.45);
+      padding:9px 11px;
+      transform: rotate(-4deg);
+      animation: heroFloat 6.5s ease-in-out infinite;
+    }
+    @keyframes heroFloat{
+      0%,100%{ transform: rotate(-4deg) translateY(0); }
+      50%{ transform: rotate(-4deg) translateY(-3px); }
+    }
+    .hero-eyebrow{
+      font-size:6.5px;
+      letter-spacing:0.1em;
+      text-transform:uppercase;
+      background: linear-gradient(100deg,
+        var(--accent-dim) 0%, oklch(1 0 0) 22%, var(--accent-pale) 40%, var(--accent-dim) 70%, var(--accent-dim) 100%);
+      background-size:240% 100%;
+      -webkit-background-clip:text; background-clip:text; color:transparent;
+      animation: foilSweep 4.5s linear infinite;
+      margin-bottom:3px;
+    }
+    .hero-value{
+      font-size:27px;
+      font-weight:700;
+      color: var(--ink-on-dark);
+      line-height:1;
+    }
+    .hero-label{
+      font-size:7px;
+      letter-spacing:0.08em;
+      text-transform:uppercase;
+      color: var(--accent-pale);
+      margin-top:2px;
+    }
+    .hero-compare{
+      font-size:5.8px;
+      color: var(--ink-on-dark-dim);
+      margin-top:4px;
+    }
+    .chip{
+      position:absolute;
+      right:-8px; top:-8px;
+      z-index:7;
+      background: var(--accent);
+      color: var(--bg-dark);
+      font-size:5.5px;
+      font-weight:700;
+      letter-spacing:0.06em;
+      padding:2px 5px;
+      transform: rotate(7deg);
+    }
+    .chip::before{
+      content:"";
+      display:inline-block;
+      width:3px; height:3px;
+      border-radius:50%;
+      background: var(--bg-dark);
+      margin-right:2px;
+      animation: blink 1.6s step-end infinite;
+    }
+    @keyframes blink{
+      0%,49%{ opacity:1; }
+      50%,100%{ opacity:0.25; }
+    }
+  </style>
+
+  <div class="tile">
+    <div class="nav">
+      <div class="mark">CODE REPORT <span>·</span> TL;DR</div>
+      <div class="links">SPECS &middot; SOURCES &middot; <b>EP.112</b></div>
+    </div>
+
+    <div class="stage">
+      <div class="ground-dark"></div>
+      <div class="ground-light"></div>
+      <div class="seam"></div>
+
+      <div class="deck">
+        <div class="eyebrow">The Code Report &mdash; Recap</div>
+        <div class="headline">Sol vs Fable vs <em>Grok 4.5</em></div>
+        <p>Sol ships an agentic code mode tuned for long-context refactors. Fable holds its repo-scale diff lead. Grok trades context size for raw pass rate.</p>
+      </div>
+      <div class="cta">Full spec sheet &rarr;</div>
+
+      <div class="rack">
+        <div class="panel wide">
+          <span class="p-label">Price / 1M tok</span>
+          <span class="p-value">$2.10</span>
+          <div class="bars">
+            <i class="hi" style="height:60%"></i>
+            <i style="height:100%"></i>
+            <i style="height:78%"></i>
+          </div>
+          <span class="p-sub">Sol &middot; Fable &middot; Grok</span>
+        </div>
+        <div class="panel">
+          <span class="p-label">SWE-bench Pro</span>
+          <span class="p-value">44.2%</span>
+          <span class="p-sub">agentic diff suite</span>
+        </div>
+        <div class="panel tilt">
+          <span class="p-label">Context</span>
+          <span class="p-value">2.0M</span>
+          <span class="p-sub">tokens, sol-agentic</span>
+        </div>
+        <div class="panel">
+          <span class="p-label">Tok / sec</span>
+          <span class="p-value">128</span>
+          <span class="p-sub">sustained decode</span>
+        </div>
+        <div class="panel tilt">
+          <span class="p-label">Latency p50</span>
+          <span class="p-value">340ms</span>
+          <span class="p-sub">first token</span>
+        </div>
+      </div>
+
+      <div class="hero">
+        <div class="chip">LIVE</div>
+        <div class="hero-eyebrow">Headline spec &mdash; Sol 5.6</div>
+        <div class="hero-value">61.4%</div>
+        <div class="hero-label">TerminalBench</div>
+        <div class="hero-compare">vs Fable 58.9 &middot; Grok 55.2</div>
+      </div>
+    </div>
+  </div>
+</template>

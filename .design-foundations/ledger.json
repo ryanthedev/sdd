@@ -1,0 +1,60 @@
+{
+  "version": 2,
+  "entries": [
+    {
+      "seed": "fireship-tldr|2026-07-10|0",
+      "references": [
+        "receipt printer tape",
+        "diner laminated menu"
+      ],
+      "discipline": "frieze-bands",
+      "hueBand": "orange",
+      "date": "2026-07-10",
+      "locked": false
+    },
+    {
+      "seed": "fireship-tldr|2026-07-10|0",
+      "references": [
+        "comic book ben day dots",
+        "reaction image meme panels"
+      ],
+      "discipline": "editorial-spread",
+      "hueBand": "cyan",
+      "date": "2026-07-10",
+      "locked": false
+    },
+    {
+      "seed": "fireship-tldr|2026-07-10|0",
+      "references": [
+        "terminal monospace readout",
+        "stock ticker crawl"
+      ],
+      "discipline": "split-stage",
+      "hueBand": "lime",
+      "date": "2026-07-10",
+      "locked": false
+    },
+    {
+      "seed": "fireship-tldr|2026-07-10|0",
+      "references": [
+        "photocopied gig poster zine",
+        "sticker bombed laptop lid"
+      ],
+      "discipline": "marginalia",
+      "hueBand": "purple",
+      "date": "2026-07-10",
+      "locked": false
+    },
+    {
+      "seed": "fireship-tldr|2026-07-10|0",
+      "references": [
+        "trading card foil stamp",
+        "teenage engineering op 1"
+      ],
+      "discipline": "fractured-grid",
+      "hueBand": "teal",
+      "date": "2026-07-10",
+      "locked": false
+    }
+  ]
+}

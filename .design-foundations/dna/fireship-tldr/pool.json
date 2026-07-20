@@ -1,0 +1,201 @@
+{
+  "product": "a TL;DR recap site for a Fireship tech-news episode on the GPT-5.6 launch",
+  "proposals": [
+    {
+      "name": "Ransom Note",
+      "collision": { "a": { "ref": "ransom-note cut-out letters", "quality": "mismatched cut-and-paste type glued into headlines" }, "b": { "ref": "risograph art print", "quality": "coarse overprinted spot-color texture" } },
+      "whyThisProduct": "a chaotic AI launch deserves a headline that looks assembled from stolen scraps",
+      "commitments": [
+        { "type": "hue", "value": 8, "from": "a" },
+        { "type": "value", "value": "light", "from": "a" },
+        { "type": "chroma", "value": "vivid", "from": "b" },
+        { "type": "type-class", "value": "display-fat", "from": "a" },
+        { "type": "layout-move", "value": "ransom cut-out headline blocks at mixed rotations", "check": "cutout-headline", "from": "a" },
+        { "type": "detail-move", "value": "misregistered riso spot-color halo behind key words", "from": "b" }
+      ],
+      "vector": { "hue": 8, "chroma": "vivid", "value": "light", "type": "display-fat", "density": 6, "temperature": "warm", "energy": 8 }
+    },
+    {
+      "name": "Tale of the Tape",
+      "collision": { "a": { "ref": "boxing tale-of-the-tape poster", "quality": "two fighters squared off with stat columns between them" }, "b": { "ref": "pinball backglass", "quality": "gold-lined illustrated scoreboard glow" } },
+      "whyThisProduct": "Sol vs Fable is literally a title fight the video builds toward",
+      "commitments": [
+        { "type": "hue", "value": 15, "from": "a" },
+        { "type": "value", "value": "dark", "from": "a" },
+        { "type": "chroma", "value": "balanced", "from": "b" },
+        { "type": "type-class", "value": "grotesque-condensed", "from": "a" },
+        { "type": "layout-move", "value": "centered versus ledger, two fighters flanking a stat spine", "check": "versus-ledger", "from": "a" },
+        { "type": "detail-move", "value": "gold hairline rules framing each stat like backglass trim", "from": "b" }
+      ],
+      "vector": { "hue": 15, "chroma": "balanced", "value": "dark", "type": "grotesque-condensed", "density": 7, "temperature": "warm", "energy": 7 }
+    },
+    {
+      "name": "Wax Pack",
+      "collision": { "a": { "ref": "basketball trading cards", "quality": "portrait card with stat line and team color bar" }, "b": { "ref": "vintage Topps 1988 wax pack", "quality": "gum-era pastel borders and grain" } },
+      "whyThisProduct": "the episode ranks models like players; deal them as collectible cards",
+      "commitments": [
+        { "type": "hue", "value": 175, "from": "a" },
+        { "type": "value", "value": "split", "from": "b" },
+        { "type": "chroma", "value": "balanced", "from": "a" },
+        { "type": "type-class", "value": "slab", "from": "b" },
+        { "type": "layout-move", "value": "grid of portrait stat cards with color header bars", "check": "card-grid", "from": "a" },
+        { "type": "detail-move", "value": "chunky pastel wax-pack border around each card", "from": "b" }
+      ],
+      "vector": { "hue": 175, "chroma": "balanced", "value": "split", "type": "slab", "density": 6, "temperature": "cool", "energy": 6 }
+    },
+    {
+      "name": "Phosphor Ticker",
+      "collision": { "a": { "ref": "terminal monospace readout", "quality": "green-on-black glowing fixed-width log" }, "b": { "ref": "stock-ticker crawl", "quality": "horizontal scrolling headline band" } },
+      "whyThisProduct": "an agentic-coding recap should feel piped straight out of a terminal",
+      "commitments": [
+        { "type": "hue", "value": 135, "from": "a" },
+        { "type": "value", "value": "dark", "from": "a" },
+        { "type": "chroma", "value": "balanced", "from": "b" },
+        { "type": "type-class", "value": "mono", "from": "a" },
+        { "type": "layout-move", "value": "top ticker crawl over stacked terminal log blocks", "check": "ticker-crawl", "from": "b" },
+        { "type": "detail-move", "value": "blinking block cursor and scanline glow on headings", "from": "a" }
+      ],
+      "vector": { "hue": 135, "chroma": "balanced", "value": "dark", "type": "mono", "density": 8, "temperature": "cool", "energy": 5 }
+    },
+    {
+      "name": "Xerox Zine",
+      "collision": { "a": { "ref": "photocopied gig-poster zine", "quality": "high-contrast toner collage, cut edges, staple marks" }, "b": { "ref": "sticker-bombed laptop lid", "quality": "overlapping die-cut stickers at every angle" } },
+      "whyThisProduct": "the meme-wall brief wants overlapping cut-out chaos held by a grid",
+      "commitments": [
+        { "type": "hue", "value": 330, "from": "b" },
+        { "type": "value", "value": "light", "from": "a" },
+        { "type": "chroma", "value": "vivid", "from": "b" },
+        { "type": "type-class", "value": "grotesque-condensed", "from": "a" },
+        { "type": "layout-move", "value": "overlapping torn-edge collage cards over a paper grid", "check": "collage-overlap", "from": "a" },
+        { "type": "detail-move", "value": "die-cut sticker frames and staple dots on panels", "from": "b" }
+      ],
+      "vector": { "hue": 330, "chroma": "vivid", "value": "light", "type": "grotesque-condensed", "density": 8, "temperature": "warm", "energy": 9 }
+    },
+    {
+      "name": "Tabloid Splash",
+      "collision": { "a": { "ref": "supermarket-tabloid front page", "quality": "screaming full-bleed headline with a kicker strap" }, "b": { "ref": "highlighter marker annotations", "quality": "hand-swiped fluorescent emphasis over text" } },
+      "whyThisProduct": "Fireship's satire IS tabloid; lead with a screamer headline",
+      "commitments": [
+        { "type": "hue", "value": 52, "from": "b" },
+        { "type": "value", "value": "light", "from": "a" },
+        { "type": "chroma", "value": "vivid", "from": "a" },
+        { "type": "type-class", "value": "display-fat", "from": "a" },
+        { "type": "layout-move", "value": "one oversized full-bleed screamer headline with red kicker strap", "check": "screamer-headline", "from": "a" },
+        { "type": "detail-move", "value": "fluorescent highlighter swipes marking key claims", "from": "b" }
+      ],
+      "vector": { "hue": 52, "chroma": "vivid", "value": "light", "type": "display-fat", "density": 7, "temperature": "warm", "energy": 8 }
+    },
+    {
+      "name": "Tier Board",
+      "collision": { "a": { "ref": "tier-list ranking grid", "quality": "colored S/A/B rows with dragged thumbnails" }, "b": { "ref": "fantasy-league draft board", "quality": "pinned roster grid with pick numbers" } },
+      "whyThisProduct": "the models beg to be S-tiered; make the ranking the spine",
+      "commitments": [
+        { "type": "hue", "value": 25, "from": "a" },
+        { "type": "value", "value": "dark", "from": "b" },
+        { "type": "chroma", "value": "balanced", "from": "a" },
+        { "type": "type-class", "value": "grotesque", "from": "b" },
+        { "type": "layout-move", "value": "horizontal S-A-B tier rows with a colored label gutter", "check": "tier-rows", "from": "a" },
+        { "type": "detail-move", "value": "pinned index-card picks with draft numbers", "from": "b" }
+      ],
+      "vector": { "hue": 25, "chroma": "balanced", "value": "dark", "type": "grotesque", "density": 7, "temperature": "warm", "energy": 6 }
+    },
+    {
+      "name": "Receipt Roll",
+      "collision": { "a": { "ref": "receipt-printer tape", "quality": "narrow thermal column, dotted tear lines, totals" }, "b": { "ref": "diner laminated menu", "quality": "warm laminate, priced line items" } },
+      "whyThisProduct": "a TL;DR is an itemized receipt of what the launch actually costs you",
+      "commitments": [
+        { "type": "hue", "value": 35, "from": "b" },
+        { "type": "value", "value": "light", "from": "a" },
+        { "type": "chroma", "value": "muted", "from": "a" },
+        { "type": "type-class", "value": "mono", "from": "a" },
+        { "type": "layout-move", "value": "single narrow center receipt column with dotted tear rules", "check": "receipt-column", "from": "a" },
+        { "type": "detail-move", "value": "priced line items with a bold TOTAL and lamination sheen", "from": "b" }
+      ],
+      "vector": { "hue": 35, "chroma": "muted", "value": "light", "type": "mono", "density": 5, "temperature": "warm", "energy": 4 }
+    },
+    {
+      "name": "Ben-Day Comic",
+      "collision": { "a": { "ref": "comic-book Ben-Day dots", "quality": "halftone dot fields, heavy panel borders" }, "b": { "ref": "reaction-image meme panels", "quality": "captioned reaction beats in sequence" } },
+      "whyThisProduct": "the video is a sequence of reaction gags; frame it in comic panels",
+      "commitments": [
+        { "type": "hue", "value": 220, "from": "a" },
+        { "type": "value", "value": "light", "from": "a" },
+        { "type": "chroma", "value": "vivid", "from": "a" },
+        { "type": "type-class", "value": "display-warm", "from": "b" },
+        { "type": "layout-move", "value": "bordered comic panel grid with caption boxes", "check": "comic-panels", "from": "b" },
+        { "type": "detail-move", "value": "Ben-Day halftone dot fills behind panels", "from": "a" }
+      ],
+      "vector": { "hue": 220, "chroma": "vivid", "value": "light", "type": "display-warm", "density": 6, "temperature": "cool", "energy": 8 }
+    },
+    {
+      "name": "Infobox Encyclopedia",
+      "collision": { "a": { "ref": "Wikipedia infobox", "quality": "right-rail fact table with labeled rows" }, "b": { "ref": "1970s Penguin paperback spine", "quality": "orange band, measured serif, quiet authority" } },
+      "whyThisProduct": "play the satire straight: an encyclopedic dossier on a fake launch",
+      "commitments": [
+        { "type": "hue", "value": 210, "from": "a" },
+        { "type": "value", "value": "light", "from": "a" },
+        { "type": "chroma", "value": "muted", "from": "b" },
+        { "type": "type-class", "value": "serif-transitional", "from": "b" },
+        { "type": "layout-move", "value": "body column with a pinned right-rail fact infobox", "check": "infobox-rail", "from": "a" },
+        { "type": "detail-move", "value": "orange Penguin band strap across the header", "from": "b" }
+      ],
+      "vector": { "hue": 210, "chroma": "muted", "value": "light", "type": "serif-transitional", "density": 4, "temperature": "cool", "energy": 3 }
+    },
+    {
+      "name": "Price Sticker",
+      "collision": { "a": { "ref": "garage-sale price stickers", "quality": "burst starbursts screaming a number" }, "b": { "ref": "cereal-box back panel", "quality": "playful callouts, mascot energy, nutrition grid" } },
+      "whyThisProduct": "the whole punchline is Sol at half price; make the numbers shout",
+      "commitments": [
+        { "type": "hue", "value": 30, "from": "a" },
+        { "type": "value", "value": "split", "from": "b" },
+        { "type": "chroma", "value": "vivid", "from": "a" },
+        { "type": "type-class", "value": "display-fat", "from": "b" },
+        { "type": "layout-move", "value": "starburst price callouts bursting off a panel grid", "check": "price-bursts", "from": "a" },
+        { "type": "detail-move", "value": "cereal-box nutrition-style spec grid in the corner", "from": "b" }
+      ],
+      "vector": { "hue": 30, "chroma": "vivid", "value": "split", "type": "display-fat", "density": 6, "temperature": "warm", "energy": 7 }
+    },
+    {
+      "name": "Placard March",
+      "collision": { "a": { "ref": "protest placard", "quality": "hand-lettered slogan boards held aloft" }, "b": { "ref": "Letraset dry-transfer sheet", "quality": "precise rub-down display letters in rows" } },
+      "whyThisProduct": "the AI-doom satire wants slogans you could march with",
+      "commitments": [
+        { "type": "hue", "value": 5, "from": "a" },
+        { "type": "value", "value": "dark", "from": "a" },
+        { "type": "chroma", "value": "vivid", "from": "a" },
+        { "type": "type-class", "value": "grotesque-condensed", "from": "b" },
+        { "type": "layout-move", "value": "stacked oversized slogan placards on a hand-held tilt", "check": "placard-stack", "from": "a" },
+        { "type": "detail-move", "value": "slightly uneven rub-down letter baselines", "from": "b" }
+      ],
+      "vector": { "hue": 5, "chroma": "vivid", "value": "dark", "type": "grotesque-condensed", "density": 6, "temperature": "warm", "energy": 8 }
+    },
+    {
+      "name": "CRT Broadcast",
+      "collision": { "a": { "ref": "CRT scanlines and VHS tracking", "quality": "glowing scanlines, chromatic fringe, tracking jitter" }, "b": { "ref": "Nakagin capsule tower", "quality": "stacked modular capsule grid" } },
+      "whyThisProduct": "a fake newscast recap should read like a glitchy broadcast desk",
+      "commitments": [
+        { "type": "hue", "value": 300, "from": "a" },
+        { "type": "value", "value": "dark", "from": "a" },
+        { "type": "chroma", "value": "vivid", "from": "a" },
+        { "type": "type-class", "value": "geometric-sans", "from": "b" },
+        { "type": "layout-move", "value": "modular capsule grid of broadcast lower-third cards", "check": "broadcast-modules", "from": "b" },
+        { "type": "detail-move", "value": "magenta-cyan chromatic fringe and scanline overlay", "from": "a" }
+      ],
+      "vector": { "hue": 300, "chroma": "vivid", "value": "dark", "type": "geometric-sans", "density": 7, "temperature": "cool", "energy": 6 }
+    },
+    {
+      "name": "Foil Spec",
+      "collision": { "a": { "ref": "trading-card foil stamp", "quality": "cold holographic foil catching light" }, "b": { "ref": "Teenage Engineering OP-1", "quality": "clean labeled panel, muted body, precise controls" } },
+      "whyThisProduct": "a restrained spec-sheet read for the benchmark-hungry viewer",
+      "commitments": [
+        { "type": "hue", "value": 190, "from": "a" },
+        { "type": "value", "value": "split", "from": "b" },
+        { "type": "chroma", "value": "muted", "from": "b" },
+        { "type": "type-class", "value": "grotesque", "from": "b" },
+        { "type": "layout-move", "value": "labeled spec panels in a calm two-column rack", "check": "spec-rack", "from": "b" },
+        { "type": "detail-move", "value": "holographic foil sweep on section headers only", "from": "a" }
+      ],
+      "vector": { "hue": 190, "chroma": "muted", "value": "split", "type": "grotesque", "density": 5, "temperature": "cool", "energy": 4 }
+    }
+  ]
+}
