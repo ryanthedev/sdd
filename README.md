@@ -32,8 +32,11 @@ One thing that's on you, not the server: every agent harness runs wide open (it 
 
 ## Install
 
+It ships in the [rtd marketplace](https://github.com/ryanthedev/rtd-claude-inn). Add that once, then install:
+
 ```
-/plugin install sdd
+/plugin marketplace add ryanthedev/rtd-claude-inn
+/plugin install sdd@rtd
 ```
 
 That wires up the MCP server and auto-discovers the `subagent-driven-development` and `video-ingest` skills. You'll need `bun >= 1.3.0`. Run `bun install` for the two deps (`@modelcontextprotocol/sdk`, `zod`).
