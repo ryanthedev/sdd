@@ -16,7 +16,9 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
-import type { Job } from "../types.ts";
+import type { Adapter } from "../adapters/types.ts";
+import { formatSnapshot, readAdapterLimits } from "../lib/limits.ts";
+import type { Job, UsageSnapshot } from "../types.ts";
 import { findAdapter, type Runtime } from "./runtime.ts";
 import { err, friendlyMessage, ok, type ToolModule } from "./shared.ts";
 
@@ -33,6 +35,14 @@ const PROBE_PROMPT =
   "Health check only. Do not read files, run tools, or make changes. " +
   "Reply with a single short sentence confirming you are operational.";
 const DEFAULT_PROBE_TIMEOUT_MS = 60_000;
+
+/**
+ * Ceiling on the account-limits addendum. Deliberately far below the probe
+ * timeout: the limits read is a nice-to-have on a health verdict, so a slow or
+ * broken endpoint must degrade to "unavailable" quickly rather than hold up the
+ * answer the caller actually asked for.
+ */
+const LIMITS_TIMEOUT_MS = 5_000;
 
 export const inputShape = {
   adapter: z.string().min(1).describe("Adapter name as reported by list_adapters, e.g. \"codex\"."),
@@ -72,11 +82,18 @@ export function createCheckTool(rt: Runtime): ToolModule<typeof inputShape> {
         });
       }
 
+      // Read account limits BEFORE the live probe, not after: the probe spends a
+      // real model request, and when it fails, "82% of your weekly window is
+      // gone" is the difference between a useful diagnosis and a guess. Costs no
+      // tokens; a harness that can't report limits contributes nothing here.
+      const limits = await readLimitsAddendum(adapter, args.timeoutMs);
+
       if (adapter.probeable === false) {
         return ok(
           `${adapter.name}: status present_unverified — binary "${binaryName}" is on PATH, but this adapter opts ` +
-            "out of automatic probing (a live probe would incur real cost). Dispatch a real job to confirm it is authenticated.",
-          { adapter: adapter.name, status: "present_unverified", binaryPresent: true },
+            "out of automatic probing (a live probe would incur real cost). Dispatch a real job to confirm it is authenticated." +
+            limits.text,
+          { adapter: adapter.name, status: "present_unverified", binaryPresent: true, ...limits.structured },
         );
       }
 
@@ -111,12 +128,16 @@ export function createCheckTool(rt: Runtime): ToolModule<typeof inputShape> {
         const job = rt.jobStore.get(jobId);
 
         if (job?.state === "done") {
-          return ok(`${adapter.name}: status ok — live probe completed; the harness ran and is authenticated.`, {
-            adapter: adapter.name,
-            status: "ok",
-            binaryPresent: true,
-            jobId,
-          });
+          return ok(
+            `${adapter.name}: status ok — live probe completed; the harness ran and is authenticated.` + limits.text,
+            {
+              adapter: adapter.name,
+              status: "ok",
+              binaryPresent: true,
+              jobId,
+              ...limits.structured,
+            },
+          );
         }
 
         if (job?.state === "failed") {
@@ -124,8 +145,9 @@ export function createCheckTool(rt: Runtime): ToolModule<typeof inputShape> {
           return ok(
             `${adapter.name}: status failed — the CLI is installed but the probe did not succeed. This usually means ` +
               "it is not logged in, the subscription/quota is inactive, or the harness errored. Detail: " +
-              detail,
-            { adapter: adapter.name, status: "failed", binaryPresent: true, jobId, detail },
+              detail +
+              limits.text,
+            { adapter: adapter.name, status: "failed", binaryPresent: true, jobId, detail, ...limits.structured },
           );
         }
 
@@ -134,8 +156,9 @@ export function createCheckTool(rt: Runtime): ToolModule<typeof inputShape> {
         await rt.jobStore.cancel(jobId);
         return ok(
           `${adapter.name}: status timeout — the probe was still running after ${timeoutMs}ms and was cancelled. ` +
-            "Inconclusive (slow model, network, or a hang); retry with a larger timeoutMs.",
-          { adapter: adapter.name, status: "timeout", binaryPresent: true, jobId },
+            "Inconclusive (slow model, network, or a hang); retry with a larger timeoutMs." +
+            limits.text,
+          { adapter: adapter.name, status: "timeout", binaryPresent: true, jobId, ...limits.structured },
         );
       } finally {
         // Best-effort cleanup of the throwaway probe cwd on every exit path
@@ -153,6 +176,33 @@ export function createCheckTool(rt: Runtime): ToolModule<typeof inputShape> {
       }
     },
   };
+}
+
+/**
+ * Best-effort account-limits read, rendered as an addendum to whatever health
+ * verdict the caller gets.
+ *
+ * "Best-effort" is the whole point: check_adapter's job is the health verdict,
+ * and a limits endpoint that is missing, slow, or broken must never change that
+ * verdict or fail the call. A failed read degrades to a short note; an adapter
+ * without the capability adds nothing at all.
+ */
+async function readLimitsAddendum(
+  adapter: Adapter,
+  callerTimeoutMs: number | undefined,
+): Promise<{ text: string; structured: { limits?: UsageSnapshot; limitsError?: string } }> {
+  if (adapter.readLimits === undefined || adapter.parseLimits === undefined) {
+    return { text: "", structured: {} };
+  }
+  // The addendum must never dominate the call it is attached to. It gets its own
+  // short ceiling, further capped by whatever the caller allowed for the health
+  // check itself — otherwise a harness with a broken limits endpoint turns a 3s
+  // check_adapter into a 15s one, because the default read timeout is unrelated
+  // to the caller's budget.
+  const timeoutMs = Math.min(LIMITS_TIMEOUT_MS, callerTimeoutMs ?? LIMITS_TIMEOUT_MS);
+  const result = await readAdapterLimits(adapter, { timeoutMs });
+  if (!result.ok) return { text: ` (account limits unavailable: ${result.error})`, structured: { limitsError: result.error } };
+  return { text: `\nAccount limits — ${formatSnapshot(result.snapshot)}`, structured: { limits: result.snapshot } };
 }
 
 /**

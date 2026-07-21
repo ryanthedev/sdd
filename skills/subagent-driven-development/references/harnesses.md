@@ -1,6 +1,6 @@
 # Harness roster — capabilities & auth
 
-A *harness* here is an external CLI (`codex`, `agy`, and friends) that `sdd` spawns as a child process in the current working tree to do one bounded task — review, second opinion, implementation, image generation, or a step of the video pipeline — and report back a structured `{status, summary, artifacts, raw}` result. Each harness is wrapped by an adapter in `src/adapters/`; `list_adapters` enumerates all fourteen.
+A *harness* here is an external CLI (`codex`, `agy`, and friends) that `sdd` spawns as a child process in the current working tree to do one bounded task — review, second opinion, implementation, image generation, or a step of the video pipeline — and report back a structured `{status, summary, artifacts, raw}` result. Each harness is wrapped by an adapter in `src/adapters/`; `list_adapters` enumerates all eleven.
 
 The load-bearing distinction: **a harness that shows up in `list_adapters` with `binaryPresent: true` is INSTALLED, not necessarily USABLE.** `binaryPresent` is a `Bun.which` PATH check and nothing more — it cannot see whether the CLI is logged in, has an active subscription, or has an API key in the environment. The honest way to tell whether a harness will actually run is `check_adapter(name)`, which runs a real minimal probe through the dispatch path and reports what happened. See [Auth is not presence](#auth-is-not-presence) below.
 
@@ -12,10 +12,7 @@ Every agent harness here runs **unconditionally permissive** — the adapter alw
 
 | Adapter | Provider / CLI | PATH binary | What it's for | Auth requirement |
 |---|---|---|---|---|
-| `codex` | OpenAI Codex, `codex exec` | `codex` | Review / second opinion; runs `--sandbox workspace-write`; does its own web verification when a review needs it | codex's own login flow (a ChatGPT/OpenAI account or key) — not documented in the adapter source; verify with `check_adapter`, don't assert specifics |
-| `codex-high` | OpenAI Codex, pinned `model_reasoning_effort=high` | `codex` | Deep-reasoning review — complex codebases, subtle correctness, security-sensitive code | same as `codex` |
-| `codex-low` | OpenAI Codex, pinned `model_reasoning_effort=low` | `codex` | Fast/cheap spot-checks, lightweight reads | same as `codex` |
-| `codex-sol` | OpenAI Codex, pinned `-m gpt-5.6-sol` at `model_reasoning_effort=high` | `codex` | Hard coding / deep reasoning on the flagship tier | same as `codex` |
+| `codex` | OpenAI Codex, `codex exec` | `codex` | Review / second opinion / implement; runs `--sandbox workspace-write`; does its own web verification when a review needs it. Tier is chosen PER CALL via `model` + `effort` — there are no pinned variants | codex's own login flow (a ChatGPT/OpenAI account or key) — not documented in the adapter source; verify with `check_adapter`, don't assert specifics |
 | `grok` | xAI Grok Build CLI 0.2.93, `grok -p` | `grok` | Review / second opinion | `XAI_API_KEY` (or `GROK_API_KEY` / `GROK_DEPLOYMENT_KEY`) env var |
 | `kimi` | Moonshot Kimi (kimi-code 0.22.3), `kimi -p` | `kimi` | Review / second opinion | `MOONSHOT_API_KEY` env var |
 | `qwen` | Alibaba Qwen Code (gemini-cli lineage), `qwen -p` | `qwen` | Review / second opinion | `DASHSCOPE_API_KEY` env var |
@@ -78,7 +75,7 @@ A job's terminal state is decided by exit code **and** the adapter's `parseResul
 
 | Harness(es) | Required output contract |
 |---|---|
-| `codex`, `codex-high`, `codex-low`, `codex-sol`, `grok`, `kimi`, `qwen`, `mistral` | A `VERDICT:` line **plus** a `## Findings` section. Missing either → `failed`. |
+| `codex`, `grok`, `kimi`, `qwen`, `mistral` | A `VERDICT:` line **plus** a `## Findings` section. Missing either → `failed`. |
 | `agy` | Last line of output exactly `AGY_RESULT: DONE` or `AGY_RESULT: FAILED`. Parsed by **last** match (the harness may echo the injected instruction first). |
 | `agy-image` | `AGY_IMAGE_SAVED: <absolute path>` **and** the file must exist on disk. A marker with no file on disk → `failed`. |
 | `agy-vision` | `AGY_VISION_SAVED: <absolute path>` **and** the JSON must exist on disk. Same last-match rule; a marker with no file → `failed`. |

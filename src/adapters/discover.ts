@@ -19,7 +19,7 @@ import { readdirSync } from "node:fs";
 import { createRequire } from "node:module";
 import { isAbsolute, join, resolve } from "node:path";
 import { log } from "../lib/log.ts";
-import type { Adapter } from "./types.ts";
+import type { Adapter, LimitsProbe } from "./types.ts";
 
 const require = createRequire(import.meta.url);
 
@@ -63,6 +63,18 @@ function toAdapter(mod: Record<string, unknown>): Adapter | { missing: string[] 
   const probeable = mod.probeable;
   if (probeable !== undefined && typeof probeable !== "boolean") missing.push("probeable");
 
+  // The account-limits capability is optional but ALL-OR-NOTHING: a probe
+  // without a parser yields an unusable raw blob, and a parser without a probe
+  // is dead code. Either both are well-formed or neither is present; anything
+  // else is a malformed adapter and the file is skipped with a warning rather
+  // than silently half-loaded.
+  const readLimits = mod.readLimits;
+  const parseLimits = mod.parseLimits;
+  if (readLimits !== undefined || parseLimits !== undefined) {
+    if (!isLimitsProbe(readLimits)) missing.push("readLimits");
+    if (typeof parseLimits !== "function") missing.push("parseLimits");
+  }
+
   if (missing.length > 0) return { missing };
 
   // Assemble a cohesive Adapter object rather than leaking the raw module
@@ -74,7 +86,23 @@ function toAdapter(mod: Record<string, unknown>): Adapter | { missing: string[] 
     buildArgs: mod.buildArgs as Adapter["buildArgs"],
     injectContract: mod.injectContract as Adapter["injectContract"],
     parseResult: mod.parseResult as Adapter["parseResult"],
+    readLimits: isLimitsProbe(readLimits) ? readLimits : undefined,
+    parseLimits: typeof parseLimits === "function" ? (parseLimits as Adapter["parseLimits"]) : undefined,
   };
+}
+
+/**
+ * Structural check for the LimitsProbe literal. Validated here rather than
+ * trusted because `limits.ts` spawns `binary` with `args`: a malformed literal
+ * must be rejected at load time, not discovered at spawn time.
+ */
+function isLimitsProbe(value: unknown): value is LimitsProbe {
+  if (typeof value !== "object" || value === null) return false;
+  const probe = value as Record<string, unknown>;
+  if (probe.transport !== "app-server-jsonrpc") return false;
+  if (typeof probe.binary !== "string" || probe.binary.length === 0) return false;
+  if (typeof probe.method !== "string" || probe.method.length === 0) return false;
+  return Array.isArray(probe.args) && probe.args.every((a) => typeof a === "string");
 }
 
 /**

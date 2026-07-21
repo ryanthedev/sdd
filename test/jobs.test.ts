@@ -408,8 +408,19 @@ test("test_spawn_error_bad_command_is_failed", async () => {
 
 test("test_killed_by_signal_notes_the_signal", async () => {
   const store = newStore();
-  const adapter = stubAdapter({ name: "sig", buildArgs: () => [BUN, "-e", "setInterval(()=>{},1e9)"] });
+  const pidFile = join(freshDir("sdd-sig-"), "started");
+  const adapter = stubAdapter({
+    name: "sig",
+    // The child announces itself before sleeping forever, so the cancel below
+    // always lands on a process that is genuinely RUNNING. Cancelling straight
+    // after dispatch raced the spawn: under load the signal could arrive before
+    // the child existed, and the job then failed for a different reason with no
+    // "signal" in its summary.
+    buildArgs: () => [BUN, "-e", `require("fs").writeFileSync(${JSON.stringify(pidFile)},"1");setInterval(()=>{},1e9)`],
+  });
   const id = store.dispatch(adapter, "x", {});
+  expect(await until(() => existsSync(pidFile), 8000)).toBe(true);
+
   await store.cancel(id);
   const job = store.get(id)!;
   expect(job.state).toBe("failed");

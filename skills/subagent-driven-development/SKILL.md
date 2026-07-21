@@ -2,14 +2,15 @@
 name: subagent-driven-development
 description: >-
   Orchestration doctrine for delegating scoped work units to CLI agent
-  harnesses (codex, agy) through the sdd MCP server's seven tools (dispatch,
-  status, result, wait, list_adapters, cancel, check_adapter). Documents which
-  adapter fits which job, the caller-owned concurrency rule (the server
+  harnesses (codex, agy) through the sdd MCP server's eight tools (dispatch,
+  status, result, wait, list_adapters, cancel, check_adapter, usage). Documents
+  which adapter fits which job, the caller-owned concurrency rule (the server
   serializes nothing), the poll-by-default wait policy, each harness's parsing
   gotchas, and how to health-check a harness's auth/liveness before relying on
   it. Use when delegating a scoped task to a CLI subagent harness, getting a
   second opinion or independent review, generating an image, fanning out
-  parallel jobs, deciding whether to poll or block on a dispatched job, or
+  parallel jobs, checking how much account quota a harness has left before
+  spending it, deciding whether to poll or block on a dispatched job, or
   checking whether a harness is installed and logged in.
   Not for: in-process Agent-tool subagents (use oberskills:agent) or writing
   new MCP tools or adapters (runtime code, out of scope here).
@@ -23,7 +24,7 @@ when_to_use: >-
 
 # Subagent-driven development
 
-The `sdd` MCP server delegates a scoped, fresh-context work unit (review, second opinion, implementation, image generation) to a CLI harness — `codex`, `agy`, or one of their siblings — that runs as a child process in the current working tree. Seven tools: `dispatch`, `status`, `result`, `wait`, `list_adapters`, `cancel`, `check_adapter`. Claude stays the brain and owns the diff; the harness does one bounded task and reports back.
+The `sdd` MCP server delegates a scoped, fresh-context work unit (review, second opinion, implementation, image generation) to a CLI harness — `codex`, `agy`, or one of their siblings — that runs as a child process in the current working tree. Eight tools: `dispatch`, `status`, `result`, `wait`, `list_adapters`, `cancel`, `check_adapter`, `usage`. Claude stays the brain and owns the diff; the harness does one bounded task and reports back.
 
 ## The honest value proposition
 
@@ -59,31 +60,24 @@ What follows is orchestration discipline you must apply yourself — advice, not
 
 ### codex — review / second opinion
 
-**Roster (effort levels):**
-- `codex` — default, `medium` reasoning effort. Balanced for most reviews and second opinions.
-- `codex-high` — default model, `high` reasoning effort. Deep analysis, complex codebases, subtle correctness issues, security-sensitive code.
-- `codex-low` — default model, `low` reasoning effort. Fast spot-checks, lightweight reads, edge cases on known patterns.
-- `codex-sol` — pinned to `gpt-5.6-sol` at `high` effort. Hard coding and deep reasoning on the flagship tier.
+**One adapter, chosen per call.** There is no `codex-high`/`codex-low`/`codex-sol` roster to remember — those pinned variants were removed because `model` and `effort` on the dispatch call reach codex directly (verified against the CLI: an unknown `-c` key is rejected by name under `--strict-config`, so the effort override is genuinely applied, not silently swallowed).
+
+| Want | Call |
+|---|---|
+| Balanced review / second opinion | `dispatch(adapter:"codex", prompt, cwd)` — default model, `medium` effort |
+| Deep analysis, subtle correctness, security-sensitive code | add `effort:"high"` |
+| Fast/cheap spot-check | add `effort:"low"` |
+| Hard coding on the flagship tier | add `model:"gpt-5.6-sol", effort:"high"` |
 
 **Per-call model and effort selection:**
 - Use the base `codex` adapter with `dispatch(adapter:"codex", model:"<name>", effort:"low|medium|high", ...)` to select model and effort at call time.
 - Example: `dispatch(adapter:"codex", model:"o3", effort:"high", prompt, cwd)` runs o3 with high reasoning effort.
 - Per-call `model` and `effort` are **allowlisted** — NOT arbitrary `-c key=value` config. codex always runs `--sandbox workspace-write` (it may edit the tree it is given); arbitrary config could escalate that to `-c sandbox_mode=danger-full-access` and let it out of the workspace entirely. The allowlist is the backstop.
-- Pinned variants (`codex-high`, `codex-low`, `codex-sol`) ignore per-call `model`/`effort` (config is fixed at construction). To choose at call time, use the base `codex` adapter instead.
 
-**Extending the roster with new models:**
-- Add a model-specific variant anytime by dropping `${CLAUDE_PLUGIN_ROOT}/src/adapters/codex-<name>.ts` that calls `makeCodexVariant` from `${CLAUDE_PLUGIN_ROOT}/src/adapters/_codex-factory.ts`. No core plugin change needed — discovery auto-registers it on the next dispatch.
-- The factory accepts `{name, model?, profile?, configOverrides?}` and returns an object of the port members; re-export them as **named** exports (discovery validates named exports, not a default). Mirror `codex-high.ts`:
-  ```ts
-  import { makeCodexVariant } from "./_codex-factory.ts";
-  const variant = makeCodexVariant({ name: "codex-o3", model: "o3", configOverrides: { model_reasoning_effort: "high" } });
-  export const name = variant.name;
-  export const binary = variant.binary;
-  export const buildArgs = variant.buildArgs;
-  export const injectContract = variant.injectContract;
-  export const parseResult = variant.parseResult;
-  ```
-- `injectContract`/`parseResult` come straight from the base codex (single source of the output contract) — never re-implemented.
+**Checking quota before you spend it:**
+- `usage(adapter:"codex")` reports the plan tier, each metered window's percent used, when it resets, and credit state. It reads codex's own account endpoint over the app-server protocol — **no model call, no tokens, no work unit** — so it is cheap to call before a fan-out.
+- `check_adapter("codex")` now includes the same block, read *before* its live probe: when the probe fails, you see whether quota is the reason instead of guessing between "not logged in" and "out of quota".
+- Snapshots are cached ~60s so a fan-out doesn't spawn one app-server per job; pass `refresh:true` when you need certainty.
 
 **Output contract & gotchas:**
 - stdout carries the final answer; stderr carries progress. `summary`/`raw` are built from stdout only — never treat stderr text as the result.
@@ -108,8 +102,9 @@ What follows is orchestration discipline you must apply yourself — advice, not
 | Job | Adapter |
 |---|---|
 | Code review, second opinion | `codex` or the review roster (`grok`, `kimi`, `qwen`, `mistral`) |
-| Deep review — subtle correctness, security-sensitive code | `codex-high`, or `codex-sol` for the flagship tier |
-| Fast/cheap spot-check | `codex-low` |
+| Deep review — subtle correctness, security-sensitive code | `codex` with `effort:"high"` (add `model:"gpt-5.6-sol"` for the flagship tier) |
+| Fast/cheap spot-check | `codex` with `effort:"low"` |
+| Am I about to hit a quota wall? | `usage` — no tokens, no work unit |
 | Ensemble review (multi-model, parallel) | fan out `codex` + `grok`/`kimi`/`qwen`/`mistral` |
 | Implement a change in the working tree | `agy` or `codex` |
 | Generate an image | `agy-image` |
@@ -136,4 +131,4 @@ Full per-harness capability + auth table: [`references/harnesses.md`](references
 
 ## 5. Tool surface
 
-`dispatch(adapter, prompt, cwd?, timeoutMs?) → jobId`, `status(jobId)`, `result(jobId)`, `wait(jobIds, timeoutMs?)`, `list_adapters()`, `cancel(jobId)`, `check_adapter(adapter, timeoutMs?, cwd?)`. Seven tools total. Full parameter and return-shape reference: the project [README](../../README.md).
+`dispatch(adapter, prompt, cwd?, timeoutMs?) → jobId`, `status(jobId)`, `result(jobId)`, `wait(jobIds, timeoutMs?)`, `list_adapters()`, `cancel(jobId)`, `check_adapter(adapter, timeoutMs?, cwd?)`, `usage(adapter?, refresh?)`. Eight tools total. Full parameter and return-shape reference: the project [README](../../README.md).

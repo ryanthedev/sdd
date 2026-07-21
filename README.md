@@ -15,7 +15,8 @@ It's one Claude Code plugin: an MCP server plus a couple of Skills.
 - **Transcribe an Instagram reel.** Point the video pipeline at a URL (YouTube, Instagram, TikTok, X) and get back the audio, a transcript, and scene-cut keyframes. Great for "what's actually in this video" without watching it.
 - **Get a second opinion on your code.** Hand your diff to `codex`, `grok`, `kimi`, `qwen`, or `mistral` and get an independent review back, verdict and findings, while Claude keeps driving.
 - **Generate an image.** Ask the `agy-image` harness (Nano Banana) for a PNG. That's how the banner above got made.
-- **Hand off the hard stuff.** Give a gnarly refactor or a deep-reasoning task to `codex-sol` on the flagship tier and let it churn in the background.
+- **Hand off the hard stuff.** Give a gnarly refactor a flagship model and high reasoning effort (`dispatch codex` with `model` + `effort`) and let it churn in the background.
+- **Check what's left in the tank.** `usage` tells you how much of your codex quota you've burned and when it resets. Costs no tokens — it reads the CLI's own account endpoint, no model call.
 - **Fan out.** Kick off a bunch of these at once. Each dispatch runs in parallel and returns right away, so Claude can start three reviews and collect them as they land.
 
 ## How it works
@@ -26,7 +27,7 @@ Three moves, and the first one never blocks:
 2. Check in with `status`, or block on `wait` until it's done.
 3. Collect the structured result with `result`.
 
-Seven MCP tools drive the whole thing: `dispatch`, `status`, `result`, `wait`, `cancel`, `list_adapters`, and `check_adapter`. Job state lives in memory for the session, so a server restart clears it (that's fine for v1, no disk persistence yet).
+Eight MCP tools drive the whole thing: `dispatch`, `status`, `result`, `wait`, `cancel`, `list_adapters`, `check_adapter`, and `usage`. Job state lives in memory for the session, so a server restart clears it (that's fine for v1, no disk persistence yet).
 
 One thing that's on you, not the server: every agent harness runs wide open (it can edit the tree you hand it), and every dispatch runs in parallel. So if two jobs would write the same directory, keeping them apart is the caller's job. sdd serializes nothing.
 
@@ -44,18 +45,21 @@ That wires up the MCP server and auto-discovers the `subagent-driven-development
 The video pipeline also shells out to three tools that `bun install` doesn't manage. Grab them and run the preflight:
 
 ```
-brew install yt-dlp ffmpeg
+brew install yt-dlp
+brew install ffmpeg
 pip install -U mlx-whisper      # Apple Silicon speech-to-text
 bun run src/lib/preflight.ts    # tells you what's present, what's missing
 ```
 
+**Instagram is the awkward one.** It rate-limits and often demands a login, unlike YouTube, TikTok, or X. Two things help: pass a logged-in session's cookies file (`dispatch yt-dlp` with `cookies`) — use a burner account, never your primary, and never commit or log that file. And run yt-dlp's nightly channel (`pip install -U --pre "yt-dlp[default]"`), since Instagram breaks the extractor often and nightly ships the fixes first. Pair it with `sleepRequests` to throttle.
+
 ## The adapters
 
-Fourteen ship today. `list_adapters` shows you which ones are installed, and `check_adapter` tells you whether one is actually logged in and usable (installed isn't the same as usable).
+Eleven ship today. `list_adapters` shows you which ones are installed, `check_adapter` tells you whether one is actually logged in and usable (installed isn't the same as usable), and `usage` tells you how much quota is left.
 
 | Group | Adapters | For |
 |---|---|---|
-| Agent harnesses | `codex`, `codex-high`, `codex-low`, `codex-sol` | Review, second opinions, implementation across Codex reasoning tiers |
+| Agent harnesses | `codex` | Review, second opinions, implementation. Pick the tier per call with `model` + `effort` — there are no pinned variants to remember |
 | | `agy` | Review / implement |
 | | `grok`, `kimi`, `qwen`, `mistral` | Second opinions from xAI, Moonshot, Alibaba, and Mistral |
 | Image + vision | `agy-image` | Text to a PNG (Nano Banana) |

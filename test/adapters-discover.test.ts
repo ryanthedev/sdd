@@ -181,3 +181,76 @@ test("test_DW_1_4_duplicate_adapter_name_is_skipped_with_warning", () => {
   expect(adapters!.length).toBe(1); // only the first wins
   expect(logs.some((l) => l.includes("duplicate adapter name"))).toBe(true);
 });
+
+const VALID_PROBE = 'export const readLimits = { transport: "app-server-jsonrpc", binary: "x", args: [], method: "m" };';
+const VALID_PARSE = "export function parseLimits() { return { plan: null, windows: [], credits: null, limitReached: null }; }";
+
+test("the account-limits capability loads when both halves are well-formed", () => {
+  const dir = freshDir();
+  writeAdapterFile(dir, "with-limits.ts", `${VALID_ADAPTER}\n${VALID_PROBE}\n${VALID_PARSE}\n`);
+
+  const adapters = discoverAdapters(dir);
+  expect(adapters.length).toBe(1);
+  expect(adapters[0]!.readLimits?.method).toBe("m");
+  expect(typeof adapters[0]!.parseLimits).toBe("function");
+});
+
+test("an adapter with neither half is valid and simply reports no limits", () => {
+  const dir = freshDir();
+  writeAdapterFile(dir, "plain.ts", VALID_ADAPTER);
+
+  const adapters = discoverAdapters(dir);
+  expect(adapters.length).toBe(1);
+  expect(adapters[0]!.readLimits).toBeUndefined();
+  expect(adapters[0]!.parseLimits).toBeUndefined();
+});
+
+test("readLimits without parseLimits is rejected — a probe with no parser is unusable", () => {
+  const dir = freshDir();
+  writeAdapterFile(dir, "half-limits.ts", `${VALID_ADAPTER}\n${VALID_PROBE}\n`);
+
+  let adapters: Adapter[] | undefined;
+  const logs = captureStderr(() => {
+    adapters = discoverAdapters(dir);
+  });
+
+  expect(adapters).toEqual([]);
+  expect(logs.find((l) => l.includes("half-limits.ts"))).toContain("parseLimits");
+});
+
+test("parseLimits without readLimits is rejected — a parser with no probe is dead code", () => {
+  const dir = freshDir();
+  writeAdapterFile(dir, "orphan-parse.ts", `${VALID_ADAPTER}\n${VALID_PARSE}\n`);
+
+  let adapters: Adapter[] | undefined;
+  const logs = captureStderr(() => {
+    adapters = discoverAdapters(dir);
+  });
+
+  expect(adapters).toEqual([]);
+  expect(logs.find((l) => l.includes("orphan-parse.ts"))).toContain("readLimits");
+});
+
+test("a malformed readLimits literal is rejected before anything can spawn it", () => {
+  const dir = freshDir();
+  // Unknown transport: limits.ts would have no branch for it, so reject at load.
+  const bad = 'export const readLimits = { transport: "carrier-pigeon", binary: "x", args: [], method: "m" };';
+  writeAdapterFile(dir, "bad-transport.ts", `${VALID_ADAPTER}\n${bad}\n${VALID_PARSE}\n`);
+
+  let adapters: Adapter[] | undefined;
+  const logs = captureStderr(() => {
+    adapters = discoverAdapters(dir);
+  });
+
+  expect(adapters).toEqual([]);
+  expect(logs.find((l) => l.includes("bad-transport.ts"))).toContain("readLimits");
+});
+
+test("a readLimits with a non-string arg is rejected — argv must be all strings", () => {
+  const dir = freshDir();
+  const bad = 'export const readLimits = { transport: "app-server-jsonrpc", binary: "x", args: [1], method: "m" };';
+  writeAdapterFile(dir, "bad-args.ts", `${VALID_ADAPTER}\n${bad}\n${VALID_PARSE}\n`);
+
+  const logs = captureStderr(() => discoverAdapters(dir));
+  expect(logs.find((l) => l.includes("bad-args.ts"))).toContain("readLimits");
+});

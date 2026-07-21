@@ -167,7 +167,7 @@ Every new adapter gets a `test/adapter-<name>.test.ts` covering: argv shape/flag
 
 - Adapter module exports: `name`, `buildArgs`, `injectContract`, `parseResult` — always these exact identifiers as plain top-level `export`s (duck-typed by `discover.ts`, not a class).
 - Tool factories: `createXTool(rt: Runtime)`, e.g. `createDispatchTool` (src/tools/dispatch.ts:54). One per file, named to match the file (`dispatch.ts` → `createDispatchTool`).
-- Files that are helpers, not adapters: leading underscore — `_codex-shared.ts`, `_codex-factory.ts`. `discover.ts`'s `isCandidate` skips any `_`-prefixed or `.`-prefixed file, so this is how you keep a shared helper out of the adapter registry without an allowlist edit.
+- Files that are helpers, not adapters: leading underscore — `_codex-shared.ts`, `_agy-shared.ts`. `discover.ts`'s `isCandidate` skips any `_`-prefixed or `.`-prefixed file, so this is how you keep a shared helper out of the adapter registry without an allowlist edit.
 - Contract markers are `SCREAMING_SNAKE:` line prefixes unique per adapter — `AGY_RESULT:`, `AGY_IMAGE_SAVED:`, `AGY_VISION_SAVED:`, `SDD_VIDEO_PATH:` (yt-dlp), `VERDICT:`/`## Findings` (the review roster, shared via `src/lib/review-contract.ts`). Never reuse another adapter's marker name.
 - Private class fields use `#` (ECMAScript private, not `_`-prefix convention) — see every method on `JobStore` in src/lib/jobs.ts (`#jobs`, `#assertValidAdapter`, ...).
 - Domain term "job", never "task" or "run" — matches `Job`, `JobStore`, `JobState`, `jobId` throughout.
@@ -177,23 +177,23 @@ Every new adapter gets a `test/adapter-<name>.test.ts` covering: argv shape/flag
 ```
 src/
 ├── types.ts              # Core domain types — the innermost layer, no outward imports
-├── lib/                  # jobs.ts (the one spawn/lifecycle capability), log.ts, ids.ts,
-│                         #   review-contract.ts, preflight.ts (video-pipeline CLI gate)
-├── adapters/             # Fourteen adapters + infra
+├── lib/                  # jobs.ts (the one spawn/lifecycle capability), limits.ts (account
+│                         #   quota reads), log.ts, ids.ts, review-contract.ts,
+│                         #   preflight.ts (video-pipeline CLI gate)
+├── adapters/             # Eleven adapters + infra
 │   ├── types.ts           # The Adapter port (interface) — infra, skipped by discovery
 │   ├── discover.ts        # Directory-scan registry — infra, skipped by discovery
 │   ├── _codex-shared.ts   # Underscore = helper, not an adapter — skipped by discovery
-│   ├── _codex-factory.ts  # Underscore = helper, not an adapter — skipped by discovery
 │   ├── _agy-shared.ts     # Underscore = helper (buildAgyArgv, lastMarkerMatch) — skipped
-│   ├── codex.ts            # Concrete adapter (per-call model/effort)
-│   ├── codex-high.ts / codex-low.ts / codex-sol.ts   # Pinned variants, via _codex-factory.ts
+│   ├── codex.ts            # Concrete adapter — ONE codex; model/effort are per-call opts,
+│   │                       #   and it declares the readLimits/parseLimits quota capability
 │   ├── agy.ts / grok.ts / kimi.ts / mistral.ts / qwen.ts      # Agent harnesses
 │   ├── agy-image.ts / agy-vision.ts                          # Artifact producers
 │   ├── yt-dlp.ts / whisper.ts / ffmpeg-frames.ts             # Video pipeline (real CLIs, identity injectContract)
 └── tools/
     ├── runtime.ts          # Shared Runtime (JobStore + adaptersDir), no methods
     ├── shared.ts           # ToolModule type, ok()/err()/friendlyMessage()
-    └── dispatch.ts / status.ts / result.ts / wait.ts / cancel.ts / list-adapters.ts / check.ts
+    └── dispatch.ts / status.ts / result.ts / wait.ts / cancel.ts / list-adapters.ts / check.ts / usage.ts
 test/
 ├── adapter-<name>.test.ts   # One per adapter, stdout/stderr/exitCode triples into parseResult
 │                            #   (the four review CLIs share adapters-review.test.ts)
@@ -209,7 +209,8 @@ New adapter → `src/adapters/<name>.ts` + `test/adapter-<name>.test.ts`. New to
 - **Bun runtime, `bun test` only** — no Jest/Vitest/ts-node. `.ts` files run directly, no build step.
 - **Adapter discovery is a directory scan (`readdirSync` + synchronous `createRequire`), not a hand-maintained registry.** Adding an adapter is dropping a file, never editing a list. `discover.ts` never throws — a malformed adapter file is a stderr warning and a skip, because a bad third-party-ish adapter file must never crash the MCP server.
 - **The JobStore imposes no concurrency policy — every dispatch runs immediately, in parallel.** No job is refused because another is already running in the same `cwd`; the server does not model which jobs read and which write. Agent harnesses are unconditionally permissive (codex `--sandbox workspace-write`, agy `--dangerously-skip-permissions`, grok `--always-approve`, kimi/qwen `--yolo`, mistral `--auto-approve`), so any dispatched harness may edit the tree it is handed. Serializing jobs that would collide on one tree — or handing them separate `cwd`s — is the caller's decision. See `src/lib/jobs.ts:15`.
-- **Pinned codex variants ignore `opts` on `buildArgs` entirely** (`_codex-factory.ts:58`) — the pin is a security/determinism feature, not a default that can be overridden by a caller passing `model`/`effort`.
+- **One adapter per harness; tiers are per-call opts, not variant files.** codex's model and reasoning effort come from `opts.model`/`opts.effort` on the dispatch call, allowlisted in `codex.ts` so a caller can never reach an arbitrary `-c key=value` (which could escalate `--sandbox workspace-write`). Pinned variant adapters were removed — a file per model/effort combination is a roster to maintain, not a capability.
+- **An adapter DECLARES I/O, it never performs it.** The account-limits capability is the pattern: `readLimits` is a pure literal describing a JSON-RPC call and `parseLimits` is a pure normalizer, while `src/lib/limits.ts` does the spawning. Both halves or neither — discovery rejects a file that exports only one.
 - **External artifact paths (e.g. agy-image PNG output) land outside the source tree**, at an absolute path the caller names — `buildArgs` resolves it to an absolute path itself rather than delegating that resolution to the harness. See `src/adapters/agy-image.ts`.
 - Zod for MCP tool input validation (`src/tools/dispatch.ts` `inputShape`) — this is the schema boundary a raw MCP client actually hits; TypeScript types alone don't validate JSON-RPC payloads at runtime.
 
@@ -221,10 +222,16 @@ New adapter → `src/adapters/<name>.ts` + `test/adapter-<name>.test.ts`. New to
 - Untrusted-opts validation that throws instead of silently coercing
 - The `_check: Adapter = {...}` compile-time port-conformance proof pattern
 
-**`src/adapters/_codex-factory.ts` + `src/adapters/codex-high.ts`** — demonstrates:
-- The shared-extraction pattern: a factory (`makeCodexVariant`) owns argv assembly once; a variant file is a ~15-line config-only call
-- `injectContract`/`parseResult` reused by identity, never re-implemented per variant
+**`src/adapters/_codex-shared.ts` + `src/adapters/codex.ts`** — demonstrates:
+- The shared-extraction pattern: one helper (`buildCodexArgv`) owns flag spelling, flag ORDER, and the sandbox barricade, so the ordering invariant exists in exactly one place
+- The declared-capability pattern: `readLimits` (data) + `parseLimits` (pure function), performed elsewhere
+- Payload normalizers that DEGRADE rather than throw, and never report an unquantified window as `0%`
 - `_`-prefix convention keeping a helper out of adapter discovery
+
+**`src/lib/limits.ts`** — demonstrates:
+- Deadline as a RACE, not a hopeful `kill()`: the call settles on time even when the child ignores SIGTERM
+- Escalating reap (SIGTERM → grace → SIGKILL) on every exit path, success included
+- Cache identity that includes the probe, plus in-flight coalescing so a fan-out spawns one child, not N
 
 **`src/lib/jobs.ts`** — demonstrates:
 - The barricade pattern: all untrusted input (`prompt`, `opts`) validated before any side effect

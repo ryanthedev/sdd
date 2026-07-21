@@ -42,6 +42,48 @@ export interface DispatchOpts {
 }
 
 /**
+ * One metered quota window reported by a harness's account (e.g. codex's
+ * rolling 7-day `codex` bucket). `usedPercent` is the only field a harness is
+ * required to know; window length and reset time are nullable because not every
+ * backend reports them, and a missing value must read as "unknown" rather than
+ * as zero.
+ */
+export interface UsageWindow {
+  /** Bucket label — the harness's own limit id/name, e.g. "codex". */
+  name: string;
+  /** Percent of the window's allowance consumed, 0-100. */
+  usedPercent: number;
+  /** Window length in minutes, or null when the harness doesn't report one. */
+  windowMinutes: number | null;
+  /** Unix epoch SECONDS at which the window resets, or null when unreported. */
+  resetsAt: number | null;
+}
+
+/**
+ * A normalized point-in-time read of one harness's account limits — the shape
+ * `usage` and `check_adapter` return, identical across harnesses so a caller
+ * never has to learn a per-vendor payload. Each harness's own payload is mapped
+ * into this by its adapter's pure `parseLimits`.
+ *
+ * This is a SNAPSHOT, not a subscription: `fetchedAt` is when it was read, and
+ * a cached snapshot may be up to the cache TTL stale.
+ */
+export interface UsageSnapshot {
+  /** Adapter the snapshot was read for. */
+  adapter: string;
+  /** Plan tier as the harness names it (e.g. "plus"), or null if unreported. */
+  plan: string | null;
+  /** Every metered window the harness reports. May be empty. */
+  windows: UsageWindow[];
+  /** Pay-as-you-go credit state, when the harness has such a concept. */
+  credits: { hasCredits: boolean; unlimited: boolean; balance: string | null } | null;
+  /** Non-null when the harness reports a limit is CURRENTLY exceeded. */
+  limitReached: string | null;
+  /** Unix epoch MILLISECONDS when this snapshot was read. */
+  fetchedAt: number;
+}
+
+/**
  * A dispatched work unit tracked by the JobStore (Phase 2). Identifies the
  * adapter that ran it, where it ran (cwd), its lifecycle state, and the path to
  * its per-job log. `exitCode` and `result` are populated once the child exits.

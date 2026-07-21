@@ -22,8 +22,9 @@
  * same silent-misparse guard Phase 2 established for JobStore, applied here to
  * codex's own output contract.
  */
-import type { AdapterResult, DispatchOpts } from "../types.ts";
+import type { AdapterResult, DispatchOpts, UsageSnapshot, UsageWindow } from "../types.ts";
 import { buildCodexArgv, type CodexArgvConfig } from "./_codex-shared.ts";
+import type { LimitsProbe } from "./types.ts";
 
 export const name = "codex";
 
@@ -94,6 +95,58 @@ export function buildArgs(prompt: string, opts: DispatchOpts): string[] {
 const GIT_REPO_REFUSAL_RE = /not inside a trusted directory|skip-git-repo-check/i;
 
 /**
+ * Last chunk of CONTRACT_SUFFIX, used to find where codex's echo of the prompt
+ * ends. Derived from the constant rather than hardcoded so it can never drift
+ * out of sync when the contract wording changes.
+ */
+const CONTRACT_ECHO_TAIL = CONTRACT_SUFFIX.trimEnd().slice(-40);
+
+/**
+ * Strip codex's echo of the prompt from stderr.
+ *
+ * codex writes the full prompt it was handed — INCLUDING our injected contract
+ * suffix — to stderr before it runs. Tailing raw stderr therefore spends the
+ * bounded budget on our own instruction text and yields a summary that opens
+ * mid-sentence ("codex exited 1: -line verdict, then a ...") with the real error
+ * pushed toward the end. Cutting at the LAST occurrence of the echo tail leaves
+ * only what codex emitted after the echo, which is where diagnostics live.
+ *
+ * LAST occurrence, not first — the same rule agy.ts documents: the prompt itself
+ * may legitimately quote the contract text, so an early match is the quote and
+ * the real end-of-echo is the final one. When the echo is absent (codex failed
+ * before echoing, e.g. the git-repo refusal) stderr is returned untouched.
+ *
+ * NEVER discards everything: if nothing follows the echo, the diagnostics must
+ * have preceded it, so the original stderr is returned. Losing the only error
+ * text would be strictly worse than printing our own instruction back.
+ */
+function stripContractEcho(stderr: string): string {
+  const idx = stderr.lastIndexOf(CONTRACT_ECHO_TAIL);
+  if (idx === -1) return stderr;
+  const after = stderr.slice(idx + CONTRACT_ECHO_TAIL.length);
+  return after.trim() ? after : stderr;
+}
+
+/**
+ * Bounded stderr tail, cut on a line boundary so a summary never opens mid-word.
+ *
+ * The line-boundary trim is cosmetic and must never cost content: when the
+ * leading partial line is most of the window (one very long error line followed
+ * by a short one), dropping it would throw the error away to gain tidiness. In
+ * that case the raw tail wins — a summary that starts mid-word still carries the
+ * diagnostic, and a tidy one that lost it does not.
+ */
+function stderrTail(stderr: string, cap: number): string {
+  const trimmed = stderr.trim();
+  if (trimmed.length <= cap) return trimmed;
+  const tail = trimmed.slice(-cap);
+  const nl = tail.indexOf("\n");
+  if (nl === -1) return tail.trim();
+  const trimmedTail = tail.slice(nl + 1).trim();
+  return trimmedTail.length >= cap / 2 ? trimmedTail : tail.trim();
+}
+
+/**
  * Human-readable summary for a non-zero codex exit. stderr is where codex's real
  * diagnostics live, so we surface them here (summary only — never `raw`). A
  * recognized signature gets an actionable message; anything else gets a bounded
@@ -108,7 +161,7 @@ function codexFailureSummary(stderr: string, exitCode: number): string {
       "dispatch codex with a git-repo cwd, or have the caller allow --skip-git-repo-check."
     );
   }
-  const tail = stderr.trim().slice(-600).trim();
+  const tail = stderrTail(stripContractEcho(stderr), 600);
   return tail ? `codex exited ${exitCode}: ${tail}` : `codex exited ${exitCode}`;
 }
 
@@ -126,4 +179,114 @@ export function parseResult(stdout: string, stderr: string, exitCode: number): A
     };
   }
   return { status: "done", summary: stdout.trim(), artifacts: [], raw: stdout };
+}
+
+/**
+ * Account-limits capability (see `LimitsProbe` and `src/lib/limits.ts`).
+ *
+ * `codex exec --json` reports per-turn TOKEN counts only — it carries no plan
+ * quota — so usage cannot be scraped off a dispatch. The app-server protocol is
+ * the only surface that exposes it: `account/rateLimits/read` takes null params,
+ * runs no model, and costs nothing. Method name and payload shape verified
+ * against `codex app-server generate-json-schema --experimental` (codex-cli
+ * 0.144.1) and against a live call.
+ */
+export const readLimits: LimitsProbe = {
+  transport: "app-server-jsonrpc",
+  binary: "codex",
+  args: ["app-server"],
+  method: "account/rateLimits/read",
+};
+
+/** Narrow an unknown to an indexable record without asserting its contents. */
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
+
+function asString(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function asNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+/**
+ * Map one codex `RateLimitWindow` into a UsageWindow. Returns null when the
+ * window is absent or carries no `usedPercent` — the one field that makes a
+ * window meaningful. A window we cannot quantify is dropped rather than reported
+ * as 0% used, which would read as "plenty left" on a payload we didn't understand.
+ */
+function toWindow(raw: unknown, name: string): UsageWindow | null {
+  const w = asRecord(raw);
+  if (!w) return null;
+  const usedPercent = asNumber(w.usedPercent);
+  if (usedPercent === null) return null;
+  return {
+    name,
+    usedPercent,
+    windowMinutes: asNumber(w.windowDurationMins),
+    resetsAt: asNumber(w.resetsAt),
+  };
+}
+
+/**
+ * Normalize codex's `GetAccountRateLimitsResponse` into a UsageSnapshot.
+ *
+ * Two views of the same data come back: `rateLimits` (a single backward-compatible
+ * bucket) and `rateLimitsByLimitId` (per-model buckets, e.g. `codex` and
+ * `codex_bengalfox`). The multi-bucket view is preferred because it is strictly
+ * more informative — an account can be fine on one model's quota and exhausted on
+ * another — falling back to the single bucket when the map is absent.
+ *
+ * Tolerant by contract: every field is probed, never asserted. An unrecognized
+ * payload yields an empty-window snapshot, not a throw.
+ */
+export function parseLimits(raw: unknown): Omit<UsageSnapshot, "adapter" | "fetchedAt"> {
+  const root = asRecord(raw);
+  const primaryBucket = asRecord(root?.rateLimits);
+  const byId = asRecord(root?.rateLimitsByLimitId);
+
+  // The MAP KEY is the bucket's identity, so it is carried alongside the value
+  // and used as the last-resort label. Dropping it (Object.values) means two
+  // buckets whose payload omits limitName/limitId both render as "codex" — two
+  // identically-named windows with contradictory percentages, and no way to tell
+  // which model is nearly exhausted. That is exactly the degraded-payload path
+  // this normalizer exists to survive.
+  const buckets: { bucket: Record<string, unknown>; key: string | null }[] = [];
+  if (byId) {
+    for (const [key, value] of Object.entries(byId)) {
+      const bucket = asRecord(value);
+      if (bucket) buckets.push({ bucket, key });
+    }
+  }
+  if (buckets.length === 0 && primaryBucket) buckets.push({ bucket: primaryBucket, key: null });
+
+  const windows: UsageWindow[] = [];
+  for (const { bucket, key } of buckets) {
+    const label = asString(bucket.limitName) ?? asString(bucket.limitId) ?? asString(key) ?? "codex";
+    const primary = toWindow(bucket.primary, label);
+    if (primary) windows.push(primary);
+    const secondary = toWindow(bucket.secondary, `${label} (secondary)`);
+    if (secondary) windows.push(secondary);
+  }
+
+  const creditsRaw = asRecord(primaryBucket?.credits) ?? asRecord(buckets[0]?.bucket.credits);
+  const credits =
+    creditsRaw && typeof creditsRaw.hasCredits === "boolean"
+      ? {
+          hasCredits: creditsRaw.hasCredits,
+          unlimited: creditsRaw.unlimited === true,
+          balance: asString(creditsRaw.balance),
+        }
+      : null;
+
+  const reachedSource = buckets.find((b) => asString(b.bucket.rateLimitReachedType) !== null)?.bucket ?? primaryBucket;
+
+  return {
+    plan: asString(primaryBucket?.planType) ?? asString(buckets[0]?.bucket.planType),
+    windows,
+    credits,
+    limitReached: asString(reachedSource?.rateLimitReachedType),
+  };
 }
