@@ -70,8 +70,11 @@ export const injectContract = injectReviewContract;      // shared helper, not r
 export function parseResult(stdout: string, _stderr: string, exitCode: number): AdapterResult {
   return parseReviewResult(name, stdout, exitCode);
 }
-const _check: Adapter = { name, buildArgs, injectContract, parseResult };
+const _check: FlatAdapterModule = { name, buildArgs, injectContract, parseResult };
 void _check;
+// A harness that does MORE than one thing exports a `capabilities` record instead
+// (see src/adapters/agy.ts) and proves against MultiAdapterModule. Discovery
+// normalizes the flat shape above into a single "default" capability.
 
 // DON'T — no compile-time port check, opts read without validation, no contract marker
 export function buildArgs(prompt, opts) {
@@ -157,7 +160,7 @@ test("test_DW_4_4_agy_discovered_via_directory_scan", () => {
   const adapters = discoverAdapters(join(import.meta.dir, "..", "src", "adapters"));
   const found = adapters.find((a) => a.name === "agy");
   expect(found).toBeDefined();
-  expect(typeof found!.buildArgs).toBe("function");
+  expect(typeof found!.capabilities[DEFAULT_KIND]!.buildArgs).toBe("function");
 });
 ```
 
@@ -180,7 +183,7 @@ src/
 ├── lib/                  # jobs.ts (the one spawn/lifecycle capability), limits.ts (account
 │                         #   quota reads), log.ts, ids.ts, review-contract.ts,
 │                         #   preflight.ts (video-pipeline CLI gate)
-├── adapters/             # Eleven adapters + infra
+├── adapters/             # Nine harnesses + infra
 │   ├── types.ts           # The Adapter port (interface) — infra, skipped by discovery
 │   ├── discover.ts        # Directory-scan registry — infra, skipped by discovery
 │   ├── _codex-shared.ts   # Underscore = helper, not an adapter — skipped by discovery
@@ -188,7 +191,7 @@ src/
 │   ├── codex.ts            # Concrete adapter — ONE codex; model/effort are per-call opts,
 │   │                       #   and it declares the readLimits/parseLimits quota capability
 │   ├── agy.ts / grok.ts / kimi.ts / mistral.ts / qwen.ts      # Agent harnesses
-│   ├── agy-image.ts / agy-vision.ts                          # Artifact producers
+│   ├── _agy-image.ts / _agy-vision.ts                        # agy's image/vision KINDS (not adapters)
 │   ├── yt-dlp.ts / whisper.ts / ffmpeg-frames.ts             # Video pipeline (real CLIs, identity injectContract)
 └── tools/
     ├── runtime.ts          # Shared Runtime (JobStore + adaptersDir), no methods
@@ -211,7 +214,7 @@ New adapter → `src/adapters/<name>.ts` + `test/adapter-<name>.test.ts`. New to
 - **The JobStore imposes no concurrency policy — every dispatch runs immediately, in parallel.** No job is refused because another is already running in the same `cwd`; the server does not model which jobs read and which write. Agent harnesses are unconditionally permissive (codex `--sandbox workspace-write`, agy `--dangerously-skip-permissions`, grok `--always-approve`, qwen `--yolo`, mistral `--auto-approve`; kimi emits none — it refuses one alongside `-p` — yet its one-shot mode is permissive regardless), so any dispatched harness may edit the tree it is handed. Serializing jobs that would collide on one tree — or handing them separate `cwd`s — is the caller's decision. See `src/lib/jobs.ts:15`.
 - **One adapter per harness; tiers are per-call opts, not variant files.** codex's model and reasoning effort come from `opts.model`/`opts.effort` on the dispatch call, allowlisted in `codex.ts` so a caller can never reach an arbitrary `-c key=value` (which could escalate `--sandbox workspace-write`). Pinned variant adapters were removed — a file per model/effort combination is a roster to maintain, not a capability.
 - **An adapter DECLARES I/O, it never performs it.** The account-limits capability is the pattern: `readLimits` is a pure literal describing a JSON-RPC call and `parseLimits` is a pure normalizer, while `src/lib/limits.ts` does the spawning. Both halves or neither — discovery rejects a file that exports only one.
-- **External artifact paths (e.g. agy-image PNG output) land outside the source tree**, at an absolute path the caller names — `buildArgs` resolves it to an absolute path itself rather than delegating that resolution to the harness. See `src/adapters/agy-image.ts`.
+- **External artifact paths (e.g. an `image` kind's PNG output) land outside the source tree**, at an absolute path the caller names — `buildArgs` resolves it to an absolute path itself rather than delegating that resolution to the harness. See `src/lib/image-contract.ts`.
 - Zod for MCP tool input validation (`src/tools/dispatch.ts` `inputShape`) — this is the schema boundary a raw MCP client actually hits; TypeScript types alone don't validate JSON-RPC payloads at runtime.
 
 ## 9. Exemplar Files

@@ -279,3 +279,50 @@ test("parseResult falls back to the bare exit code when stderr is empty", () => 
   const result = codex.parseResult("", "   \n  ", 137);
   expect(result.summary).toBe("codex exited 137");
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The `image` kind. codex was documented as text-only on the strength of
+// `codex --help` (whose only image flag is `-i/--image`, images IN) — but it
+// ships an `imagegen` SYSTEM SKILL that `--help` never shows. Verified live on
+// codex-cli 0.145.0: headless `codex exec` wrote a real PNG to the absolute
+// path named in the prompt and echoed the marker back.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test("codex exposes exactly two kinds, defaulting to review", () => {
+  expect(Object.keys(codex.capabilities).sort()).toEqual(["default", "image"]);
+  expect(codex.defaultKind).toBe("default");
+});
+
+test("the image kind puts the save path in the prompt and keeps it last in argv", () => {
+  const argv = codex.capabilities.image!.buildArgs("a red circle", { outputPath: "/abs/out.png" });
+  expect(argv[0]).toBe("codex");
+  expect(argv[1]).toBe("exec");
+  // No --image/--out flag exists on codex; the destination rides in the prompt.
+  expect(argv).not.toContain("--out");
+  expect(argv[argv.length - 1]).toContain("/abs/out.png");
+  // The sandbox barricade is not weakened for image work.
+  expect(argv).toContain("--sandbox");
+  expect(argv).toContain("workspace-write");
+});
+
+test("the image kind still honors the model/effort allowlist, and still rejects bad values", () => {
+  const argv = codex.capabilities.image!.buildArgs("x", { outputPath: "/abs/o.png", model: "gpt-5.6-sol" });
+  expect(argv).toContain("-m");
+  expect(argv).toContain("gpt-5.6-sol");
+  // Same trust boundary as the default kind — one shared allowlist, not a copy.
+  expect(() => codex.capabilities.image!.buildArgs("x", { outputPath: "/abs/o.png", effort: "max" })).toThrow(TypeError);
+});
+
+test("the image kind requires an outputPath rather than inventing one", () => {
+  expect(() => codex.capabilities.image!.buildArgs("x", {})).toThrow(TypeError);
+});
+
+test("the image kind fails a job whose claimed file is absent, even on exit 0", () => {
+  const r = codex.capabilities.image!.parseResult("CODEX_IMAGE_SAVED: /nope/missing.png", "", 0);
+  expect(r.status).toBe("failed");
+});
+
+test("the default kind is unchanged by the image kind existing", () => {
+  expect(codex.capabilities.default!.buildArgs).toBe(codex.buildArgs);
+  expect(codex.capabilities.default!.parseResult).toBe(codex.parseResult);
+});

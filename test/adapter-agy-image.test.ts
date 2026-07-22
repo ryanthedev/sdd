@@ -13,7 +13,7 @@ import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { DEFAULT_KIND } from "../src/adapters/types.ts";
 import { discoverAdapters } from "../src/adapters/discover.ts";
-import * as agyImage from "../src/adapters/agy-image.ts";
+import * as agyImage from "../src/adapters/_agy-image.ts";
 
 const tmpDirs: string[] = [];
 function freshDir(): string {
@@ -178,10 +178,18 @@ test("injectContract instructs the harness to echo the AGY_IMAGE_SAVED marker", 
 // ── DW-4.4: discovered via directory scan, no central registry edit. ───────
 
 test("test_DW_4_4_agy_image_discovered_via_directory_scan", () => {
+  // Image generation is reached as agy's "image" KIND, not as a second adapter
+  // name. `_agy-image.ts` keeps the implementation (path barricades, marker
+  // parsing) in its own file — the leading underscore is what keeps discovery
+  // from re-exposing it as a harness of its own.
   const adapters = discoverAdapters(join(import.meta.dir, "..", "src", "adapters"));
-  const found = adapters.find((a) => a.name === "agy-image");
+  expect(adapters.map((a) => a.name)).not.toContain("agy-image");
+
+  const found = adapters.find((a) => a.name === "agy");
   expect(found).toBeDefined();
-  expect(typeof found!.capabilities[DEFAULT_KIND]!.buildArgs).toBe("function");
-  expect(typeof found!.capabilities[DEFAULT_KIND]!.injectContract).toBe("function");
-  expect(typeof found!.capabilities[DEFAULT_KIND]!.parseResult).toBe("function");
+  const image = found!.capabilities.image;
+  expect(image).toBeDefined();
+  expect(typeof image!.buildArgs).toBe("function");
+  expect(typeof image!.injectContract).toBe("function");
+  expect(typeof image!.parseResult).toBe("function");
 });

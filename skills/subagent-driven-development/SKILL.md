@@ -39,7 +39,7 @@ Don't oversell it as "async that Bash can't do" — that claim doesn't survive s
 
 `dispatch` returns a `jobId` immediately; it never blocks, and it **never refuses a job for concurrency reasons**. Every dispatch runs, right now, in parallel with everything else already running. There is no write-write guard, no read-during-write interlock, no mode: the server does not model which jobs read the tree and which write it. **You do.**
 
-Assume every agent harness can edit the tree you hand it. They all run unconditionally permissive — codex under `--sandbox workspace-write`, agy under `--dangerously-skip-permissions`, grok `--always-approve`, kimi/qwen `--yolo`, mistral `--auto-approve`. There is no review-only, read-only, or sandboxed-from-the-tree dispatch. A prompt that says "just review, don't change anything" is a request, not a constraint.
+Assume every agent harness can edit the tree you hand it. They all run unconditionally permissive — codex under `--sandbox workspace-write`, agy under `--dangerously-skip-permissions`, grok `--always-approve`, qwen `--yolo`, mistral `--auto-approve`, and kimi's `-p` mode forcing its own `auto` permission. sdd exposes no review-only, read-only, or sandboxed-from-the-tree dispatch. A prompt that says "just review, don't change anything" is a request, not a constraint.
 
 What follows is orchestration discipline you must apply yourself — advice, not a guarantee:
 
@@ -90,7 +90,7 @@ What follows is orchestration discipline you must apply yourself — advice, not
 - Output contract: the last line of output must be exactly `AGY_RESULT: DONE` or `AGY_RESULT: FAILED`. Parsing takes the **last** matching line, not the first — a harness that echoes the instruction back before its real verdict would otherwise fool a first-match parse.
 - agy runs with `--dangerously-skip-permissions` on **every** dispatch, including one you prompt as review-only. It will edit the tree if it decides to. Never dispatch it alongside another tree-writing job in the same `cwd`, and don't rely on a "just review" prompt to keep the tree clean.
 
-### agy-image — image generation (Nano Banana)
+### image generation — `kind: "image"` on agy or codex
 - Always pass an absolute `outputPath` (or one that resolves inside the job cwd) ending in `.png`. A bare relative filename risks the harness searching broadly for a match instead of writing where you meant.
 - The PNG lands at an explicit external artifact path, not inside the source tree — so it doesn't collide with a job working in the tree.
 - The reported path is only trusted once the file's existence is verified on disk; a marker claiming success with no file on disk is `failed`.
@@ -108,9 +108,9 @@ What follows is orchestration discipline you must apply yourself — advice, not
 | Am I about to hit a quota wall? | `usage` — no tokens, no work unit |
 | Ensemble review (multi-model, parallel) | fan out `codex` + `grok`/`kimi`/`qwen`/`mistral` |
 | Implement a change in the working tree | `agy` or `codex` |
-| Generate an image | `agy-image` |
-| Fuse a transcript + keyframes into one understanding JSON | `agy-vision` |
-| Ingest a video from a URL | the `video-ingest` skill (`yt-dlp` → `whisper` ∥ `ffmpeg-frames` → `agy-vision`) |
+| Generate an image | `agy` or `codex` with `kind: "image"` + `outputPath` |
+| Fuse a transcript + keyframes into one understanding JSON | `agy` with `kind: "vision"` |
+| Ingest a video from a URL | the `video-ingest` skill (`yt-dlp` → `whisper` ∥ `ffmpeg-frames` → agy `kind:"vision"`) |
 
 The review roster (`codex`, `grok`, `kimi`, `qwen`, `mistral`) are interchangeable second-opinion harnesses sharing one output contract (`VERDICT:` + `## Findings`) — fan them out in parallel for an ensemble review. They are *scoped* to reviewing by their prompt, not sandboxed to it: each still runs permissively and could touch the tree, so don't overlap them with an implementation job in the same `cwd`. Full per-harness capability + auth detail: [`references/harnesses.md`](references/harnesses.md).
 
@@ -125,7 +125,7 @@ Call `list_adapters` before dispatching to confirm the adapter's underlying CLI 
 - `ok` — installed **and** authenticated; the reliable green light.
 - `failed` — installed but the probe failed; `detail` carries the CLI's own auth/quota/subscription error text.
 - `timeout` — inconclusive (slow model, network, or hang); the probe job is cancelled — retry with a larger `timeoutMs`.
-- `present_unverified` — the adapter opts out of automatic probing (`probeable: false`): `agy-image`, `agy-vision`, `yt-dlp`, `whisper`, `ffmpeg-frames`, because a probe would bill a real generation, hit the network, or run a slow transcode — and a generic health-check prompt can't supply the `outputPath`/`outputDir`/`addDir` they require. Confirm these by dispatching a real job. Every agent harness is probeable and gets the real liveness+auth probe.
+- `present_unverified` — the adapter opts out of automatic probing (`probeable: false`): `yt-dlp`, `whisper`, `ffmpeg-frames`, because a probe would bill a real generation, hit the network, or run a slow transcode — and a generic health-check prompt can't supply the `outputPath`/`outputDir`/`addDir` they require. Confirm these by dispatching a real job. Every agent harness is probeable and gets the real liveness+auth probe.
 - `missing` — binary not on `PATH`; not installed.
 
 Full per-harness capability + auth table: [`references/harnesses.md`](references/harnesses.md).

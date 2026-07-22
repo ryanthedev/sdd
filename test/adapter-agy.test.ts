@@ -143,4 +143,8 @@ test("test_DW_4_4_agy_discovered_via_directory_scan", () => {
   expect(typeof found!.capabilities[DEFAULT_KIND]!.buildArgs).toBe("function");
   expect(typeof found!.capabilities[DEFAULT_KIND]!.injectContract).toBe("function");
   expect(typeof found!.capabilities[DEFAULT_KIND]!.parseResult).toBe("function");
+  // One harness, three kinds — image/vision are reached here, not via a
+  // separate adapter name.
+  expect(Object.keys(found!.capabilities).sort()).toEqual([DEFAULT_KIND, "image", "vision"].sort());
+  expect(found!.defaultKind).toBe(DEFAULT_KIND);
 });

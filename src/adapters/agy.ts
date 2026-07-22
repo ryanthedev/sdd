@@ -38,8 +38,11 @@
  * (shared with `agy-image.ts`) so the flag-order and marker-collision fixes
  * exist exactly once.
  */
+import * as agyImage from "./_agy-image.ts";
+import * as agyVision from "./_agy-vision.ts";
 import { buildAgyArgv, lastMarkerMatch } from "./_agy-shared.ts";
-import type { FlatAdapterModule } from "./types.ts";
+import { DEFAULT_KIND } from "./types.ts";
+import type { Capability, MultiAdapterModule } from "./types.ts";
 import type { AdapterResult, DispatchOpts } from "../types.ts";
 
 export const name = "agy";
@@ -113,11 +116,6 @@ export function parseResult(stdout: string, stderr: string, exitCode: number): A
 }
 
 /**
- * Append `flag <value>` to `flags` when `opts[key]` is present. Present but
- * malformed (non-string / empty) throws — this is untrusted external input
- * (an MCP client's opts), validated at entry rather than silently ignored.
- */
-/**
  * Append `--effort <level>` when `opts.effort` is present. agy 1.1.5 accepts
  * `--effort low|medium|high`; this adapter previously ignored `opts.effort`
  * entirely, so a caller asking for high effort silently got the default. An
@@ -136,6 +134,11 @@ function pushEffortFlag(flags: string[], opts: DispatchOpts): void {
 /** Mirrors agy 1.1.5's `--effort` allowlist (low|medium|high), verified via `agy --help`. */
 const AGY_EFFORT_LEVELS: ReadonlySet<string> = new Set(["low", "medium", "high"]);
 
+/**
+ * Append `flag <value>` to `flags` when `opts[key]` is present. Present but
+ * malformed (non-string / empty) throws — this is untrusted external input
+ * (an MCP client's opts), validated at entry rather than silently ignored.
+ */
 function pushOptionalStringFlag(flags: string[], opts: DispatchOpts, key: string, flag: string): void {
   const value = opts[key];
   if (value === undefined) return;
@@ -145,8 +148,36 @@ function pushOptionalStringFlag(flags: string[], opts: DispatchOpts, key: string
   flags.push(flag, value);
 }
 
-// Compile-time-only proof that this module's plain exports satisfy the
-// Adapter port — discoverAdapters duck-types at runtime, so this is the only
-// place a signature drift would be caught by tsc.
-const _check: FlatAdapterModule = { name, buildArgs, injectContract, parseResult };
+/**
+ * Everything agy can be asked for, under ONE adapter name.
+ *
+ * These used to be three separate adapters — `agy`, `agy-image`, `agy-vision` —
+ * which meant a caller had to know that "generate a picture with agy" was
+ * spelled as a different harness. That is an internal file-layout detail, not
+ * something the caller should carry. Same binary, same auth, same account: one
+ * name, three kinds.
+ *
+ * The implementations still live in their own modules (`_agy-image.ts`,
+ * `_agy-vision.ts`) — each is a few hundred lines of path barricades and
+ * contract parsing, and the leading `_` keeps discovery from loading them as
+ * adapters in their own right. Splitting the FILES was never the problem;
+ * splitting the NAMES was.
+ */
+export const capabilities: Record<string, Capability> = {
+  [DEFAULT_KIND]: { buildArgs, injectContract, parseResult },
+  image: { buildArgs: agyImage.buildArgs, injectContract: agyImage.injectContract, parseResult: agyImage.parseResult },
+  vision: {
+    buildArgs: agyVision.buildArgs,
+    injectContract: agyVision.injectContract,
+    parseResult: agyVision.parseResult,
+  },
+};
+
+/** Review/implement is what `agy` means with no `kind` — the other two are opt-in. */
+export const defaultKind = DEFAULT_KIND;
+
+// Compile-time-only proof that this module's exports satisfy the multi-
+// capability port shape — discoverAdapters duck-types at runtime, so this is
+// the only place a signature drift would be caught by tsc.
+const _check: MultiAdapterModule = { name, capabilities, defaultKind };
 void _check;

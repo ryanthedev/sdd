@@ -1,6 +1,6 @@
 # Harness roster — capabilities & auth
 
-A *harness* here is an external CLI (`codex`, `agy`, and friends) that `sdd` spawns as a child process in the current working tree to do one bounded task — review, second opinion, implementation, image generation, or a step of the video pipeline — and report back a structured `{status, summary, artifacts, raw}` result. Each harness is wrapped by an adapter in `src/adapters/`; `list_adapters` enumerates all eleven.
+A *harness* here is an external CLI (`codex`, `agy`, and friends) that `sdd` spawns as a child process in the current working tree to do one bounded task — review, second opinion, implementation, image generation, or a step of the video pipeline — and report back a structured `{status, summary, artifacts, raw}` result. Each harness is wrapped by an adapter in `src/adapters/`; `list_adapters` enumerates all nine, and reports a `kinds` list for any harness that does more than one thing.
 
 The load-bearing distinction: **a harness that shows up in `list_adapters` with `binaryPresent: true` is INSTALLED, not necessarily USABLE.** `binaryPresent` is a `Bun.which` PATH check and nothing more — it cannot see whether the CLI is logged in, has an active subscription, or has an API key in the environment. The honest way to tell whether a harness will actually run is `check_adapter(name)`, which runs a real minimal probe through the dispatch path and reports what happened. See [Auth is not presence](#auth-is-not-presence) below.
 
@@ -23,8 +23,9 @@ Every agent harness here runs **unconditionally permissive** — the adapter alw
 
 | Adapter | Provider / CLI | PATH binary | What it's for | Auth requirement |
 |---|---|---|---|---|
-| `agy-image` | Nano Banana image generation (built into agy), `agy --print` | `agy` | Text prompt → exactly one PNG saved to an explicit absolute path | agy's own login flow (same as `agy`) |
-| `agy-vision` | agy's vision model (default `Gemini 3.1 Pro (High)`), `agy --print --sandbox` | `agy` | Transcript + keyframes (`addDir`, read-only) → one fused-understanding JSON at `outputPath` | agy's own login flow (same as `agy`) |
+| `agy` + `kind:"image"` | Nano Banana image generation (built into agy), `agy --print` | `agy` | Text prompt → exactly one PNG saved to an explicit absolute path | agy's own login flow (same as `agy`) |
+| `codex` + `kind:"image"` | codex's `imagegen` system skill → built-in `image_gen` tool, `codex exec` | `codex` | Text prompt → exactly one PNG saved to an explicit absolute path | codex's own login flow (same as `codex`) |
+| `agy` + `kind:"vision"` | agy's vision model (default `Gemini 3.1 Pro (High)`), `agy --print --sandbox` | `agy` | Transcript + keyframes (`addDir`, read-only) → one fused-understanding JSON at `outputPath` | agy's own login flow (same as `agy`) |
 
 ### Video pipeline
 
@@ -54,7 +55,7 @@ They differ along two axes:
 `binaryPresent` answers exactly one question: is the CLI binary on `PATH`? It says nothing about whether a dispatch will succeed, because every harness has a second gate that PATH can't see:
 
 - **Env-key adapters** (`grok`, `kimi`, `qwen`, `mistral`) fail at spawn time if their key (`XAI_API_KEY`/`GROK_API_KEY`/`GROK_DEPLOYMENT_KEY`, `MOONSHOT_API_KEY`, `DASHSCOPE_API_KEY`, `MISTRAL_API_KEY`) is unset in the environment the server inherited.
-- **Login-flow adapters** (`codex` and its pinned variants, `agy`, and by extension `agy-image` / `agy-vision`) fail if the underlying CLI isn't logged in or the subscription/quota is inactive.
+- **Login-flow harnesses** (`codex`, `agy` — including their `image`/`vision` kinds, which share the same binary and account) fail if the underlying CLI isn't logged in or the subscription/quota is inactive.
 - **The video-pipeline adapters** (`yt-dlp`, `whisper`, `ffmpeg-frames`) have no auth gate at all — but they are also not managed by `bun install`, so their gate is the preflight check (`bun run src/lib/preflight.ts`), not `check_adapter`.
 
 None of this is visible to `list_adapters`. The honest verification is **`check_adapter(name)`** — it runs a minimal live probe through the normal dispatch path and reports what actually happened, surfacing the CLI's own auth/quota error text on failure. Because the probe runs a real (permissive) harness, it defaults to a **fresh throwaway temp cwd** when the caller names no `cwd`, so any write it makes lands off-tree; a caller-supplied `cwd` is honored as-is. Its status ladder:
@@ -64,7 +65,7 @@ None of this is visible to `list_adapters`. The honest verification is **`check_
 | `ok` | Binary present **and** the live probe completed — the harness ran and is authenticated. The reliable signal. |
 | `failed` | Binary present but the probe failed; `detail` carries the CLI's own error text (typically an auth / subscription / quota message, tailed from the job log where stderr lands). |
 | `timeout` | Probe still running at the timeout — inconclusive (slow model, network, or a hang); the probe job is cancelled. Retry with a larger `timeoutMs`. |
-| `present_unverified` | Binary present but the adapter opts out of automatic probing (`probeable: false`): `agy-image`, `agy-vision`, `yt-dlp`, `whisper`, `ffmpeg-frames` — a probe would bill a real generation, hit the network, or run a slow transcode, and a generic health-check prompt can't supply the `outputPath`/`outputDir`/`addDir` their `buildArgs` demand. Dispatch a real job to confirm. Every agent harness is probeable. |
+| `present_unverified` | Binary present but the adapter opts out of automatic probing (`probeable: false`): `yt-dlp`, `whisper`, `ffmpeg-frames` — a probe would bill a real generation, hit the network, or run a slow transcode, and a generic health-check prompt can't supply the `outputPath`/`outputDir`/`addDir` their `buildArgs` demand. Dispatch a real job to confirm. Every agent harness is probeable. |
 | `missing` | Binary not on `PATH` — not installed. |
 
 `check_adapter(adapter, timeoutMs?, cwd?)` defaults to a 60s probe timeout (clamped to the JobStore wait cap). Before you rely on a harness you have **not** already exercised this session, check it.
@@ -77,8 +78,9 @@ A job's terminal state is decided by exit code **and** the adapter's `parseResul
 |---|---|
 | `codex`, `grok`, `kimi`, `qwen`, `mistral` | A `VERDICT:` line **plus** a `## Findings` section. Missing either → `failed`. |
 | `agy` | Last line of output exactly `AGY_RESULT: DONE` or `AGY_RESULT: FAILED`. Parsed by **last** match (the harness may echo the injected instruction first). |
-| `agy-image` | `AGY_IMAGE_SAVED: <absolute path>` **and** the file must exist on disk. A marker with no file on disk → `failed`. |
-| `agy-vision` | `AGY_VISION_SAVED: <absolute path>` **and** the JSON must exist on disk. Same last-match rule; a marker with no file → `failed`. |
+| `agy` `kind:"image"` | `AGY_IMAGE_SAVED: <absolute path>` **and** the file must exist on disk. A marker with no file on disk → `failed`. |
+| `codex` `kind:"image"` | `CODEX_IMAGE_SAVED: <absolute path>` **and** the file must exist on disk. Same shared contract (`src/lib/image-contract.ts`), same on-disk proof. |
+| `agy` `kind:"vision"` | `AGY_VISION_SAVED: <absolute path>` **and** the JSON must exist on disk. Same last-match rule; a marker with no file → `failed`. |
 | `yt-dlp` | An absolute `.wav` path on yt-dlp's own `--print after_move:filepath` line (plus a labelled `SDD_VIDEO_PATH:` line for the retained video), and the file must exist on disk. No path line → `failed` even on exit 0. |
 | `whisper` | An `output_dir` scraped from mlx-whisper's `Args: {...}` line, with **both** `transcript.srt` and `transcript.txt` present on disk. Missing either → `failed`. |
 | `ffmpeg-frames` | An output dir recovered from ffmpeg's own `Output #0, …, to '<path>':` line, with the frames + `manifest.json` present on disk. |

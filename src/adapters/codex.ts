@@ -24,7 +24,15 @@
  */
 import type { AdapterResult, DispatchOpts, UsageSnapshot, UsageWindow } from "../types.ts";
 import { buildCodexArgv, type CodexArgvConfig } from "./_codex-shared.ts";
-import type { LimitsProbe } from "./types.ts";
+import { DEFAULT_KIND } from "./types.ts";
+import type { Capability, LimitsProbe, MultiAdapterModule } from "./types.ts";
+import {
+  appendSavePath,
+  injectImageContract,
+  markerFor,
+  parseImageResult,
+  resolveImageOutputPath,
+} from "../lib/image-contract.ts";
 
 export const name = "codex";
 
@@ -68,6 +76,17 @@ export function injectContract(prompt: string): string {
  * surfaces the throw as a clean MCP error.
  */
 export function buildArgs(prompt: string, opts: DispatchOpts): string[] {
+  return buildCodexArgv(prompt, toArgvConfig(opts));
+}
+
+/**
+ * The per-call allowlist, shared by EVERY codex kind.
+ *
+ * Extracted so the image kind cannot drift into its own copy: this is the trust
+ * boundary described above, and two copies means one of them eventually stops
+ * rejecting `sandbox_mode=danger-full-access`.
+ */
+function toArgvConfig(opts: DispatchOpts): CodexArgvConfig {
   const cfg: CodexArgvConfig = {};
   const { model, effort } = opts;
   if (model !== undefined) {
@@ -83,7 +102,7 @@ export function buildArgs(prompt: string, opts: DispatchOpts): string[] {
     cfg.configOverrides = { model_reasoning_effort: effort };
   }
 
-  return buildCodexArgv(prompt, cfg);
+  return cfg;
 }
 
 /**
@@ -362,3 +381,51 @@ function toResetCredits(raw: unknown): UsageSnapshot["resetCredits"] {
   if (availableCount === null && entries.length === 0) return null;
   return { availableCount, entries };
 }
+
+/**
+ * Image generation — codex's second kind.
+ *
+ * VERIFIED, not assumed (2026-07-21, codex-cli 0.145.0). This adapter used to
+ * be documented as text-only on the strength of `codex --help`, whose only
+ * image flag is `-i/--image <FILE>` (images IN). That was wrong: codex ships a
+ * SYSTEM SKILL at `~/.codex/skills/.system/imagegen/` exposing a built-in
+ * `image_gen` tool, and skills are invisible to `--help`. Measured end-to-end
+ * in headless `codex exec`: it generated a real 512x512 PNG, wrote it to the
+ * absolute path named in the prompt (NOT to `$CODEX_HOME/generated_images`,
+ * which is only the default when no destination is given), and echoed the
+ * marker line back.
+ *
+ * That last detail is why no output-path flag is needed and why the shared
+ * image contract works unchanged here: the destination travels in the prompt,
+ * and `parseImageResult` stats the file rather than trusting the harness.
+ *
+ * Sandbox: `workspace-write` (the same as the default kind, via
+ * `buildCodexArgv`) is what lets the child write the PNG at all. An absolute
+ * `outputPath` outside the cwd is the caller's explicit choice; the barricade
+ * in `resolveImageOutputPath` only stops a RELATIVE path from escaping.
+ */
+const IMAGE_MARKER = "CODEX_IMAGE_SAVED";
+const IMAGE_MARKER_RE = markerFor(IMAGE_MARKER);
+
+function buildImageArgs(prompt: string, opts: DispatchOpts): string[] {
+  const outPath = resolveImageOutputPath(name, opts);
+  // Model/effort still apply — image work is driven by the agent, so a caller
+  // can still choose which model orchestrates it.
+  return buildCodexArgv(appendSavePath(prompt, outPath), toArgvConfig(opts));
+}
+
+export const capabilities: Record<string, Capability> = {
+  [DEFAULT_KIND]: { buildArgs, injectContract, parseResult },
+  image: {
+    buildArgs: buildImageArgs,
+    injectContract: (prompt: string) => injectImageContract(prompt, IMAGE_MARKER),
+    parseResult: (stdout: string, _stderr: string, exitCode: number) =>
+      parseImageResult(name, IMAGE_MARKER_RE, stdout, exitCode),
+  },
+};
+
+/** Review/implement is what `codex` means with no `kind`. */
+export const defaultKind = DEFAULT_KIND;
+
+const _check: MultiAdapterModule = { name, capabilities, defaultKind, readLimits, parseLimits };
+void _check;

@@ -4,7 +4,7 @@ description: >-
   Ingest a video from a URL (YouTube, Instagram, TikTok, or X) into one fused
   transcript + visual-understanding JSON artifact, by sequencing the sdd
   pipeline's four adapters through MCP dispatches: yt-dlp (fetch audio+video),
-  whisper (transcribe), ffmpeg-frames (keyframes), and the sandboxed agy-vision
+  whisper (transcribe), ffmpeg-frames (keyframes), and agy's sandboxed vision
   (fuse spoken + on-screen content). Documents the preflight gate, the
   fetch → transcribe ∥ frames → fuse sequence with its parallel fan-out,
   per-platform auth (Instagram burner cookies / nightly / sleeps), frame
@@ -12,7 +12,7 @@ description: >-
   containment (full-network fetch vs. sandboxed fusion), and the known visual
   blind spots. Use when ingesting, transcribing, or extracting a visual
   understanding of a video from a URL on any of the four platforms.
-  Not for: image generation (use agy-image via subagent-driven-development),
+  Not for: image generation (dispatch agy or codex with kind:"image"),
   code review or second opinions (subagent-driven-development), or writing new
   MCP tools / adapters (runtime code, out of scope here).
 when_to_use: >-
@@ -20,13 +20,13 @@ when_to_use: >-
   Instagram/X video", "what happens in this video", "get the transcript and
   visuals of this reel/short/clip", "summarize this video URL", "fuse the
   spoken and on-screen content of this video". Use before dispatching any of
-  the yt-dlp / whisper / ffmpeg-frames / agy-vision adapters, and run the
+  the yt-dlp / whisper / ffmpeg-frames adapters plus agy's "vision" kind, and run the
   preflight gate first.
 ---
 
 # Video ingestion
 
-Take a video URL from **YouTube, Instagram, TikTok, or X** and produce one machine-consumable **fused understanding** — the full spoken transcript *plus* the visual content the transcript misses (sight gags, on-screen text, reaction shots, memes) — written as JSON to a caller-named external path. This is the user-facing surface over four thin adapters (`yt-dlp`, `whisper`, `ffmpeg-frames`, `agy-vision`) sequenced through the sdd MCP tools (`dispatch`, `wait`, `result`). Claude is the brain that sequences the dispatches and reads the artifacts off disk; the adapters do the bounded work. This extends the `dispatch → wait → dispatch` doctrine in [`../subagent-driven-development/SKILL.md`](../subagent-driven-development/SKILL.md) — read that for the tool surface and the caller-owned concurrency rule (the server serializes nothing; keeping colliding jobs apart is on you).
+Take a video URL from **YouTube, Instagram, TikTok, or X** and produce one machine-consumable **fused understanding** — the full spoken transcript *plus* the visual content the transcript misses (sight gags, on-screen text, reaction shots, memes) — written as JSON to a caller-named external path. This is the user-facing surface over four thin adapters (`yt-dlp`, `whisper`, `ffmpeg-frames`, and agy's `vision` kind) sequenced through the sdd MCP tools (`dispatch`, `wait`, `result`). Claude is the brain that sequences the dispatches and reads the artifacts off disk; the adapters do the bounded work. This extends the `dispatch → wait → dispatch` doctrine in [`../subagent-driven-development/SKILL.md`](../subagent-driven-development/SKILL.md) — read that for the tool surface and the caller-owned concurrency rule (the server serializes nothing; keeping colliding jobs apart is on you).
 
 ## 0. Preflight FIRST — gate before any dispatch
 
@@ -63,13 +63,13 @@ dispatch(whisper, <audioWav>, {outputDir: <artifactDir>})           dispatch(ffm
   └───────────────────────────── wait BOTH ─────────────────────────────────────────────────────┘
   │
   ▼
-dispatch(agy-vision, <short instruction>, {addDir: <artifactDir>, outputPath: <artifactDir>/fused.json, model: "Gemini 3.1 Pro (High)"})
+dispatch(agy, kind:"vision", <short instruction>, {addDir: <artifactDir>, outputPath: <artifactDir>/fused.json, model: "Gemini 3.1 Pro (High)"})
   → wait → result   ⇒ artifacts = [fused.json]   ({summary, moments:[{tSeconds, spoken, visual, isVisualGag}]})
 ```
 
 - **Step 2 (fetch):** `yt-dlp` fetches a 720p-capped video *and* extracts a whisper-ready wav, keeping both. `result`'s `artifacts` array is `[audioWav, video, ...subtitles]` — audio first, video second, subtitles (best-effort) last. Read the first two paths for the fan-out.
 - **Step 3 (fan out — the parallel point):** `whisper` reads only the audio; `ffmpeg-frames` reads only the video. They are fully independent reads with no shared write target — **dispatch both in the same turn**, then `wait` on the pair. This is the pipeline's one concurrency win; do not serialize them.
-- **Step 4 (fuse):** `agy-vision` reads the transcript + frames + manifest from `<artifactDir>` (granted via `--add-dir`) and writes `fused.json`. Its prompt is a short instruction — the adapter's own `injectContract` supplies the full fusion contract and output schema; you just point it at the material. `wait`/`result`, then read `fused.json`.
+- **Step 4 (fuse):** agy's `vision` kind reads the transcript + frames + manifest from `<artifactDir>` (granted via `--add-dir`) and writes `fused.json`. Its prompt is a short instruction — the adapter's own `injectContract` supplies the full fusion contract and output schema; you just point it at the material. `wait`/`result`, then read `fused.json`.
 
 ## 3. Whisper is mandatory; captions are opportunistic
 
@@ -99,20 +99,20 @@ Lower `sceneThreshold` toward 0.2 to catch subtler cuts (more frames); raise it 
 
 ## 6. Timestamp interleaving for the fusion step
 
-`ffmpeg-frames` writes a `manifest.json`: `{ frames: [{ file, tSeconds }], dropped? }` mapping every emitted frame to its time in seconds. The transcript SRT carries its own timestamps. **The fusion step's value comes from aligning the two channels on time** — so agy-vision can spot "says A while B is on screen" (e.g., a sincere line delivered over a contradicting sight gag). agy-vision reads both the manifest and the transcript from `<artifactDir>` and does the interleaving itself; the manifest's frame→seconds map is what makes that alignment exact rather than guessed. If you ever pre-window the material for it, interleave each transcript window with the frames whose `tSeconds` fall inside that window — never hand it frames and transcript as two unsynced blobs.
+`ffmpeg-frames` writes a `manifest.json`: `{ frames: [{ file, tSeconds }], dropped? }` mapping every emitted frame to its time in seconds. The transcript SRT carries its own timestamps. **The fusion step's value comes from aligning the two channels on time** — so the vision step can spot "says A while B is on screen" (e.g., a sincere line delivered over a contradicting sight gag). It reads both the manifest and the transcript from `<artifactDir>` and does the interleaving itself; the manifest's frame→seconds map is what makes that alignment exact rather than guessed. If you ever pre-window the material for it, interleave each transcript window with the frames whose `tSeconds` fall inside that window — never hand it frames and transcript as two unsynced blobs.
 
 ## 7. Split-privilege containment (do not collapse these two roles)
 
 The pipeline is deliberately split across a privilege boundary — this is the core security property, not an implementation detail:
 
 - **Fetch runs full-network, no agent.** `yt-dlp` is a plain tool adapter with network access and *no LLM in the loop*. It touches the untrusted internet but never reasons over untrusted content.
-- **Fusion runs SANDBOXED.** `agy-vision` — the step that feeds untrusted transcript text and untrusted **frame pixels** to a vision model — always runs under agy's `--sandbox` (no shell, no network), reading the frames read-only via `--add-dir`.
+- **Fusion runs SANDBOXED.** The `vision` kind — the step that feeds untrusted transcript text and untrusted **frame pixels** to a vision model — always runs under agy's `--sandbox` (no shell, no network), reading the frames read-only via `--add-dir`.
 
-**Why:** the fusion step consumes the lethal combination of untrusted content and model reasoning. On-screen text in a frame can carry a prompt-injection payload ("ignore your instructions, run X"), and **image-borne injection defeats text fencing** — you cannot reliably prompt-fence pixels. The `--sandbox` (no shell, no network) is the *real* control: a steered agent has nothing to reach. The data-fencing in agy-vision's prompt is defense-in-depth only. Never route fusion through a full-access agent, and never move network access into the fusion step.
+**Why:** the fusion step consumes the lethal combination of untrusted content and model reasoning. On-screen text in a frame can carry a prompt-injection payload ("ignore your instructions, run X"), and **image-borne injection defeats text fencing** — you cannot reliably prompt-fence pixels. The `--sandbox` (no shell, no network) is the *real* control: a steered agent has nothing to reach. The data-fencing in the vision contract's prompt is defense-in-depth only. Never route fusion through a full-access agent, and never move network access into the fusion step.
 
 ## 8. Strong vision model — not Flash-Low
 
-Default agy-vision to **`"Gemini 3.1 Pro (High)"`** (already the adapter default; pass it explicitly for clarity). **Do NOT use a weak/fast tier like `Gemini 3.5 Flash (Low)`** — it loops on the frame set and times out. This is a capability floor, not a cost preference: the fusion genuinely needs the strong tier to read `--add-dir` frames and produce the aligned output.
+Default the `vision` kind to **`"Gemini 3.1 Pro (High)"`** (already the adapter default; pass it explicitly for clarity). **Do NOT use a weak/fast tier like `Gemini 3.5 Flash (Low)`** — it loops on the frame set and times out. This is a capability floor, not a cost preference: the fusion genuinely needs the strong tier to read `--add-dir` frames and produce the aligned output.
 
 ## 9. Known visual blind spots
 
@@ -131,5 +131,5 @@ Raising `frameCount` / lowering `sceneThreshold` narrows the meme-flash gap but 
 
 1. **Install the tools:** `brew install yt-dlp ffmpeg` and `pip install -U mlx-whisper` (Apple Silicon). Then `bun run src/lib/preflight.ts` and confirm it exits 0.
 2. **Pick a short public YouTube URL** (a clip of tens of seconds keeps whisper + frame extraction fast).
-3. **Run the sequence in §2** against a fresh `<artifactDir>`: `dispatch(yt-dlp)` → `wait` → fan out `dispatch(whisper)` ∥ `dispatch(ffmpeg-frames)` → `wait` both → `dispatch(agy-vision, …, {outputPath: <artifactDir>/fused.json, model: "Gemini 3.1 Pro (High)"})` → `wait`/`result`.
+3. **Run the sequence in §2** against a fresh `<artifactDir>`: `dispatch(yt-dlp)` → `wait` → fan out `dispatch(whisper)` ∥ `dispatch(ffmpeg-frames)` → `wait` both → `dispatch(agy, kind:"vision", …, {outputPath: <artifactDir>/fused.json, model: "Gemini 3.1 Pro (High)"})` → `wait`/`result`.
 4. **Confirm success:** `<artifactDir>/fused.json` exists and is non-empty, and its `moments[]` array has entries with `tSeconds`, `spoken`, and `visual` populated. That proves the whole pipeline end-to-end on real tooling (plan success criterion #1).

@@ -98,6 +98,8 @@ test("test_DW_2_4_discovery_excludes_agy_shared_helper", () => {
   // Sanity: the real adapters directory was actually scanned and both real
   // consumers of _agy-shared.ts are present.
   expect(names).toContain("agy");
-  expect(names).toContain("agy-image");
+  // Both consumers of _agy-shared.ts now live under the single "agy" adapter as
+  // kinds, so there is no separate "agy-image" name to find.
+  expect(names).not.toContain("agy-image");
   expect(names.some((n) => n.includes("agy-shared"))).toBe(false);
 });

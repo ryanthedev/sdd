@@ -6,7 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `sdd` (Subagent-Driven Development) is a Claude Code **plugin**: an MCP server plus a Skills layer. It lets Claude delegate scoped, fresh-context work units to external CLI harnesses that run as child processes in the current working tree. Claude stays the brain and owns the diff; a harness does one bounded task (review, second opinion, implementation, image generation, video ingestion) and reports back a structured `{status, summary, artifacts, raw}` result.
 
-Eleven adapters ship today: the agent harnesses `codex`, `agy`, `grok`, `kimi`, `qwen`, `mistral`; the artifact producers `agy-image`, `agy-vision`; and the video pipeline `yt-dlp`, `whisper`, `ffmpeg-frames`. There is deliberately **one** codex adapter — reasoning tier and model are per-call `dispatch` opts, not pinned variant files. See the README for the per-adapter gotcha table.
+Nine harnesses ship today: the agent harnesses `codex`, `agy`, `grok`, `kimi`, `qwen`, `mistral`, and the video pipeline `yt-dlp`, `whisper`, `ffmpeg-frames`.
+
+One adapter = one HARNESS, not one contract. A harness that does several things exposes them as **kinds** on a single name: `agy` has `default`/`image`/`vision`, `codex` has `default`/`image`. This replaced the old `agy-image`/`agy-vision` adapter names, which forced the caller to learn an internal file layout to ask agy for a picture. Same reasoning as the single codex adapter — reasoning tier and model are per-call `dispatch` opts, not pinned variant files. See the README for the per-harness gotcha table.
 
 Runtime is **Bun** (`>=1.3.0`), TypeScript, strict mode, ESM. No build step — `.ts` runs directly.
 
@@ -31,7 +33,7 @@ Hexagonal / Clean Architecture. Dependencies point inward toward the core types;
 |---|---|---|
 | Core domain types | `src/types.ts` | `Job`, `AdapterResult`, `DispatchOpts` — imported inward by everything. |
 | The one dangerous capability | `src/lib/jobs.ts` (`JobStore`) | Owns spawning caller-controlled work units as child processes, streaming to per-job logs, pid/process-group reaping, and classifying done vs failed. Every other component stays pure/thin. |
-| Outbound port | `src/adapters/types.ts` (`Adapter`) | A harness = pure data + pure functions (`buildArgs`, `injectContract`, `parseResult`). **No I/O, no spawning** — that's why adapters are unit-testable by feeding stdout/stderr/exitCode straight into `parseResult`. |
+| Outbound port | `src/adapters/types.ts` (`Adapter`, `Capability`, `WorkUnit`) | A `Capability` is ONE contract (`buildArgs`, `injectContract`, `parseResult`); an `Adapter` is a harness holding a `capabilities` record. **No I/O, no spawning** — that's why they are unit-testable by feeding stdout/stderr/exitCode straight into `parseResult`. `resolveWorkUnit(adapter, kind)` collapses the two into the single `WorkUnit` the JobStore runs. |
 | Adapter discovery | `src/adapters/discover.ts` | Scans `src/adapters/*.ts` at call time. There is **no central registry** — dropping a valid file in is enough. Malformed/incomplete files are skipped with a stderr warning, never a crash. `discover.ts`/`types.ts`/`*.test.ts`/`*.d.ts`, plus any `_`- or `.`-prefixed file (`_codex-shared.ts`, `_agy-shared.ts`, …), are treated as infra and never loaded as adapters. |
 | MCP tools | `src/tools/*.ts` | Eight tool factories: `dispatch`, `status`, `result`, `wait`, `cancel`, `list_adapters`, `check_adapter`, `usage`. Each takes a shared `Runtime` (`src/tools/runtime.ts` = one `JobStore` + adapters dir). |
 | Account limits | `src/lib/limits.ts` | The second (and only other) piece that spawns: performs the `LimitsProbe` an adapter *declares*, over stdio JSON-RPC, and caches the snapshot ~60s. Unlike JobStore its argv contains **no caller input at all**. |
@@ -51,7 +53,7 @@ Async spine: `dispatch` returns a job id **synchronously and never blocks**; the
 
 ## Adding an adapter
 
-Create `src/adapters/<name>.ts` exporting the `Adapter` shape (`name`, `buildArgs`, `injectContract`, `parseResult`). No registration needed — discovery picks it up. Put all CLI flags before any positional prompt arg (a flag placed after the prompt gets absorbed as prompt text by some harnesses; encode the ordering structurally in `buildArgs`). `injectContract` must append a marker the harness will emit; `parseResult` must extract and validate it, returning `failed` when the marker is absent. Add a `test/adapter-<name>.test.ts` that drives `parseResult` with representative stdout/stderr/exitCode triples.
+Create `src/adapters/<name>.ts` exporting `name`, `buildArgs`, `injectContract`, `parseResult` flat — discovery normalizes that into a single `default` capability, so a one-job harness needs no extra ceremony and no registration. To add a SECOND thing an existing harness can do, export a `capabilities` record from that harness's file instead (see `agy.ts` / `codex.ts`) and put the implementation in a `_`-prefixed module so discovery doesn't load it as a harness of its own — never a new adapter name. Put all CLI flags before any positional prompt arg (a flag placed after the prompt gets absorbed as prompt text by some harnesses; encode the ordering structurally in `buildArgs`). `injectContract` must append a marker the harness will emit; `parseResult` must extract and validate it, returning `failed` when the marker is absent. Add a `test/adapter-<name>.test.ts` that drives `parseResult` with representative stdout/stderr/exitCode triples.
 
 ## Orchestration doctrine
 

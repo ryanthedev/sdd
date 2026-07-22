@@ -18,7 +18,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { discoverAdapters } from "../src/adapters/discover.ts";
-import * as agyVision from "../src/adapters/agy-vision.ts";
+import * as agyVision from "../src/adapters/_agy-vision.ts";
 
 const tmpDirs: string[] = [];
 function freshDir(): string {
@@ -228,6 +228,14 @@ test("adapter_surface_is_agy_binary_not_probeable", () => {
 });
 
 test("discovery_loads_agy_vision", async () => {
+  // agy-vision is no longer its own adapter NAME — it is agy's "vision" kind.
+  // The caller asks agy for vision work; they never learn a second harness name
+  // for what is the same binary, auth, and account.
   const adapters = await discoverAdapters(join(import.meta.dir, "../src/adapters"));
-  expect(adapters.map((a) => a.name)).toContain("agy-vision");
+  expect(adapters.map((a) => a.name)).not.toContain("agy-vision");
+
+  const agy = adapters.find((a) => a.name === "agy");
+  expect(agy).toBeDefined();
+  expect(Object.keys(agy!.capabilities)).toContain("vision");
+  expect(agy!.capabilities.vision!.buildArgs).toBe(agyVision.buildArgs);
 });

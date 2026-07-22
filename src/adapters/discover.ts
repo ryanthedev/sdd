@@ -56,18 +56,14 @@ function toAdapter(mod: Record<string, unknown>): Adapter | { missing: string[] 
   // capability here so the rest of the system only ever sees `capabilities` —
   // one code path downstream, no per-adapter special-casing.
   //
-  // Declaring BOTH is rejected rather than silently preferring one: which
-  // contract actually runs would then depend on a resolution order nobody can
-  // see from the adapter file.
-  const hasFlat =
-    typeof mod.buildArgs === "function" ||
-    typeof mod.injectContract === "function" ||
-    typeof mod.parseResult === "function";
+  // When BOTH are present, `capabilities` wins and the flat exports are just
+  // ordinary module functions. There is no ambiguity to protect against: the
+  // record explicitly names what runs, and a multi-capability adapter naturally
+  // wants `export function buildArgs` for its own default kind (agy does) plus
+  // the ability to unit-test that function by name.
   const capabilities = toCapabilities(mod.capabilities);
 
-  if (mod.capabilities !== undefined && hasFlat) {
-    missing.push("capabilities (cannot be combined with flat buildArgs/injectContract/parseResult)");
-  } else if (mod.capabilities !== undefined) {
+  if (mod.capabilities !== undefined) {
     if (!capabilities) missing.push("capabilities");
   } else {
     if (typeof mod.buildArgs !== "function") missing.push("buildArgs");
