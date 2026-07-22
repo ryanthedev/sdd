@@ -20,7 +20,9 @@ import * as qwen from "../src/adapters/qwen.ts";
 const REVIEW_ADAPTERS = [
   { mod: grok, name: "grok", binary: "grok", approve: "--always-approve" },
   { mod: qwen, name: "qwen", binary: "qwen", approve: "--yolo" },
-  { mod: kimi, name: "kimi", binary: "kimi", approve: "--yolo" },
+  // kimi alone takes NO approval flag — kimi-code 0.22.3 exits 1 on
+  // `--yolo`/`--auto` combined with `-p` ("Cannot combine --prompt with --yolo").
+  { mod: kimi, name: "kimi", binary: "kimi", approve: null },
   { mod: mistral, name: "mistral", binary: "vibe", approve: "--auto-approve" },
 ] as const;
 
@@ -28,7 +30,10 @@ for (const { mod, name, binary, approve } of REVIEW_ADAPTERS) {
   test(`${name}: emits the approval flag before -p, prompt is last`, () => {
     expect(mod.name).toBe(name);
     const argv = mod.buildArgs("review this diff", {});
-    expect(argv).toEqual([binary, approve, "-p", "review this diff"]);
+    const expected = approve
+      ? [binary, approve, "-p", "review this diff"]
+      : [binary, "-p", "review this diff"];
+    expect(argv).toEqual(expected);
     expect(argv[argv.length - 1]).toBe("review this diff"); // prompt is LAST
     expect(argv[argv.length - 2]).toBe("-p"); // immediately after the one-shot flag
   });
@@ -36,8 +41,12 @@ for (const { mod, name, binary, approve } of REVIEW_ADAPTERS) {
   test(`${name}: the approval flag is ALWAYS emitted, whatever the opts`, () => {
     // Unconditionally permissive: no opt drops the approval flag. Deciding
     // whether the harness may edit this tree is the caller's job, not ours.
+    // kimi is the exception — it REFUSES an approval flag in `-p` mode, so the
+    // invariant there is the inverse: no approval flag is ever smuggled in.
     for (const opts of [{}, { timeoutMs: 1000 }, { cwd: "/tmp" }, { effort: "high" }]) {
-      expect(mod.buildArgs("review this diff", opts)).toContain(approve);
+      const argv = mod.buildArgs("review this diff", opts);
+      if (approve) expect(argv).toContain(approve);
+      else expect(argv.some((a) => /^--(yolo|auto|always-approve|auto-approve)$/.test(a))).toBe(false);
     }
   });
 

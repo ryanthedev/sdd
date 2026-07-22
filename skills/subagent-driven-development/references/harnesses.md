@@ -6,7 +6,7 @@ The load-bearing distinction: **a harness that shows up in `list_adapters` with 
 
 ## Capability table
 
-Every agent harness here runs **unconditionally permissive** — the adapter always emits the harness's own act-headlessly flag (codex `--sandbox workspace-write`, agy `--dangerously-skip-permissions`, grok `--always-approve`, kimi/qwen `--yolo`, mistral `--auto-approve`). There is no read-only or review-only dispatch: **any agent harness you dispatch may edit the tree you hand it**, whatever the prompt asks of it. Whether two jobs can safely share a `cwd` is the caller's call — the server serializes nothing.
+Every agent harness here runs **unconditionally permissive** — the adapter always emits the harness's own act-headlessly flag (codex `--sandbox workspace-write`, agy `--dangerously-skip-permissions`, grok `--always-approve`, qwen `--yolo`, mistral `--auto-approve`). kimi is the lone exception, and not a safer one: kimi-code *rejects* an approval flag alongside `-p` ("Cannot combine --prompt with --yolo"), so the adapter emits none while its one-shot mode still runs whatever tools it decides to run. There is no read-only or review-only dispatch: **any agent harness you dispatch may edit the tree you hand it**, whatever the prompt asks of it. Whether two jobs can safely share a `cwd` is the caller's call — the server serializes nothing.
 
 ### Agent harnesses
 
