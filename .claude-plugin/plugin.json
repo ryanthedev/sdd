@@ -1,6 +1,6 @@
 {
   "name": "sdd",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Subagent-Driven Development — delegate scoped work units to CLI agent harnesses (codex, agy, grok, kimi, qwen, mistral) as fresh-context subagents, fan out, collect structured results, and check account quota before you spend it",
   "author": {
     "name": "r"

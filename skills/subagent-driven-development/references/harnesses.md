@@ -25,6 +25,7 @@ Every agent harness here runs **unconditionally permissive** — the adapter alw
 |---|---|---|---|---|
 | `agy` + `kind:"image"` | Nano Banana image generation (built into agy), `agy --print` | `agy` | Text prompt → exactly one PNG saved to an explicit absolute path | agy's own login flow (same as `agy`) |
 | `codex` + `kind:"image"` | codex's `imagegen` system skill → built-in `image_gen` tool, `codex exec` | `codex` | Text prompt → exactly one PNG saved to an explicit absolute path | codex's own login flow (same as `codex`) |
+| `grok` + `kind:"image"` | grok's `imagine` skill → built-in `image_gen`/`image_edit`, `grok -p` | `grok` | Text prompt → exactly one PNG saved to an explicit absolute path | same env key as `grok` |
 | `agy` + `kind:"vision"` | agy's vision model (default `Gemini 3.1 Pro (High)`), `agy --print --sandbox` | `agy` | Transcript + keyframes (`addDir`, read-only) → one fused-understanding JSON at `outputPath` | agy's own login flow (same as `agy`) |
 
 ### Video pipeline

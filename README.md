@@ -14,7 +14,7 @@ It's one Claude Code plugin: an MCP server plus a couple of Skills.
 
 - **Transcribe an Instagram reel.** Point the video pipeline at a URL (YouTube, Instagram, TikTok, X) and get back the audio, a transcript, and scene-cut keyframes. Great for "what's actually in this video" without watching it.
 - **Get a second opinion on your code.** Hand your diff to `codex`, `grok`, `kimi`, `qwen`, or `mistral` and get an independent review back, verdict and findings, while Claude keeps driving.
-- **Generate an image.** Ask `agy` or `codex` for a PNG with `kind: "image"`. That's how the banner above got made.
+- **Generate an image.** Ask `agy`, `codex`, or `grok` for a PNG with `kind: "image"`. That's how the banner above got made.
 - **Hand off the hard stuff.** Give a gnarly refactor a flagship model and high reasoning effort (`dispatch codex` with `model` + `effort`) and let it churn in the background.
 - **Check what's left in the tank.** `usage` tells you how much of your codex quota you've burned and when it resets. Costs no tokens — it reads the CLI's own account endpoint, no model call.
 - **Fan out.** Kick off a bunch of these at once. Each dispatch runs in parallel and returns right away, so Claude can start three reviews and collect them as they land.
@@ -62,7 +62,7 @@ Eleven ship today. `list_adapters` shows you which ones are installed, `check_ad
 | Agent harnesses | `codex` | Review, second opinions, implementation. Pick the tier per call with `model` + `effort` — there are no pinned variants to remember |
 | | `agy` | Review / implement |
 | | `grok`, `kimi`, `qwen`, `mistral` | Second opinions from xAI, Moonshot, Alibaba, and Mistral |
-| Image + vision | `agy` / `codex` + `kind: "image"` | Text to a PNG (agy: Nano Banana; codex: its imagegen skill) |
+| Image + vision | `agy` / `codex` / `grok` + `kind: "image"` | Text to a PNG (agy: Nano Banana; codex: imagegen skill; grok: imagine skill) |
 | | `agy` + `kind: "vision"` | Fuse a transcript + keyframes into one understanding JSON |
 | Video pipeline | `yt-dlp`, `whisper`, `ffmpeg-frames` | Pull a video, transcribe it, extract scene-cut keyframes |
 

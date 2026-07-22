@@ -108,3 +108,46 @@ test("all four code-agent adapters are discovered via directory scan, binary ove
   }
   expect(found.find((x) => x.name === "mistral")!.binary).toBe("vibe");
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// grok's `image` kind. grok ships an `imagine` SKILL documenting compiled
+// `image_gen`/`image_edit` tools — invisible to `grok --help`, which is why an
+// earlier survey of this repo concluded grok couldn't make pictures. Verified
+// live on grok 0.2.93: headless `-p` wrote a real 1024x1024 PNG to the absolute
+// path named in the prompt and echoed the marker back.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test("grok exposes a default and an image kind, defaulting to review", () => {
+  expect(Object.keys(grok.capabilities).sort()).toEqual(["default", "image"]);
+  expect(grok.defaultKind).toBe("default");
+});
+
+test("grok's image kind keeps the approval flag and the prompt-last guarantee", () => {
+  const argv = grok.capabilities.image!.buildArgs("a green square", { outputPath: "/abs/out.png" });
+  expect(argv[0]).toBe("grok");
+  expect(argv).toContain("--always-approve");
+  expect(argv[argv.length - 2]).toBe("-p");
+  // The destination rides in the prompt — grok has no --out flag either.
+  expect(argv[argv.length - 1]).toContain("/abs/out.png");
+});
+
+test("grok's image kind reuses the default kind's model validation", () => {
+  const argv = grok.capabilities.image!.buildArgs("x", { outputPath: "/abs/o.png", model: "grok-4.5" });
+  expect(argv).toContain("-m");
+  expect(argv).toContain("grok-4.5");
+  expect(() => grok.capabilities.image!.buildArgs("x", { outputPath: "/abs/o.png", model: "" })).toThrow(TypeError);
+});
+
+test("grok's image kind requires an outputPath and proves the file exists", () => {
+  expect(() => grok.capabilities.image!.buildArgs("x", {})).toThrow(TypeError);
+  expect(grok.capabilities.image!.parseResult("GROK_IMAGE_SAVED: /nope/missing.png", "", 0).status).toBe("failed");
+});
+
+test("grok still ignores effort — it does not validate the value, so a passthrough would lie", () => {
+  // Measured: `grok --reasoning-effort definitely-not-valid -p "x"` is ACCEPTED
+  // and runs. Forwarding would make the opt look honored while changing nothing.
+  expect(grok.buildArgs("p", { effort: "high" })).toEqual(grok.buildArgs("p", {}));
+  expect(grok.capabilities.image!.buildArgs("p", { outputPath: "/a/b.png", effort: "high" })).toEqual(
+    grok.capabilities.image!.buildArgs("p", { outputPath: "/a/b.png" }),
+  );
+});

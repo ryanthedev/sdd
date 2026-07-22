@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Nine harnesses ship today: the agent harnesses `codex`, `agy`, `grok`, `kimi`, `qwen`, `mistral`, and the video pipeline `yt-dlp`, `whisper`, `ffmpeg-frames`.
 
-One adapter = one HARNESS, not one contract. A harness that does several things exposes them as **kinds** on a single name: `agy` has `default`/`image`/`vision`, `codex` has `default`/`image`. This replaced the old `agy-image`/`agy-vision` adapter names, which forced the caller to learn an internal file layout to ask agy for a picture. Same reasoning as the single codex adapter — reasoning tier and model are per-call `dispatch` opts, not pinned variant files. See the README for the per-harness gotcha table.
+One adapter = one HARNESS, not one contract. A harness that does several things exposes them as **kinds** on a single name: `agy` has `default`/`image`/`vision`, `codex` and `grok` have `default`/`image`. This replaced the old `agy-image`/`agy-vision` adapter names, which forced the caller to learn an internal file layout to ask agy for a picture. Same reasoning as the single codex adapter — reasoning tier and model are per-call `dispatch` opts, not pinned variant files. See the README for the per-harness gotcha table.
 
 Runtime is **Bun** (`>=1.3.0`), TypeScript, strict mode, ESM. No build step — `.ts` runs directly.
 

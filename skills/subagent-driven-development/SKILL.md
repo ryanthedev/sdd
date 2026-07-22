@@ -108,7 +108,7 @@ What follows is orchestration discipline you must apply yourself — advice, not
 | Am I about to hit a quota wall? | `usage` — no tokens, no work unit |
 | Ensemble review (multi-model, parallel) | fan out `codex` + `grok`/`kimi`/`qwen`/`mistral` |
 | Implement a change in the working tree | `agy` or `codex` |
-| Generate an image | `agy` or `codex` with `kind: "image"` + `outputPath` |
+| Generate an image | `agy`, `codex`, or `grok` with `kind: "image"` + `outputPath` |
 | Fuse a transcript + keyframes into one understanding JSON | `agy` with `kind: "vision"` |
 | Ingest a video from a URL | the `video-ingest` skill (`yt-dlp` → `whisper` ∥ `ffmpeg-frames` → agy `kind:"vision"`) |
 
