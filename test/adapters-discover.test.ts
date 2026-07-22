@@ -11,6 +11,7 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DEFAULT_KIND } from "../src/adapters/types.ts";
 import { discoverAdapters } from "../src/adapters/discover.ts";
 import type { Adapter } from "../src/adapters/types.ts";
 
@@ -100,9 +101,9 @@ test("test_DW_1_4_valid_adapter_is_discovered", () => {
   expect(adapters.length).toBe(1);
   const a = adapters[0]!;
   expect(a.name).toBe("fixture");
-  expect(a.buildArgs("hello", {})).toEqual(["exec", "hello"]);
-  expect(a.injectContract("hi")).toContain("VERDICT:");
-  expect(a.parseResult("out", "", 0)).toEqual({ status: "done", summary: "out", artifacts: [], raw: "out" });
+  expect(a.capabilities[DEFAULT_KIND]!.buildArgs("hello", {})).toEqual(["exec", "hello"]);
+  expect(a.capabilities[DEFAULT_KIND]!.injectContract("hi")).toContain("VERDICT:");
+  expect(a.capabilities[DEFAULT_KIND]!.parseResult("out", "", 0)).toEqual({ status: "done", summary: "out", artifacts: [], raw: "out" });
 });
 
 test("test_DW_1_4_infra_files_skipped_silently", () => {

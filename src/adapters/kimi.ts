@@ -28,7 +28,7 @@
  * `danger-full-access`/full-access knob is ever emitted.
  */
 import type { AdapterResult, DispatchOpts } from "../types.ts";
-import type { Adapter } from "./types.ts";
+import type { FlatAdapterModule } from "./types.ts";
 import { injectReviewContract, parseReviewResult } from "../lib/review-contract.ts";
 
 export const name = "kimi";
@@ -45,5 +45,5 @@ export function parseResult(stdout: string, _stderr: string, exitCode: number): 
   return parseReviewResult(name, stdout, exitCode);
 }
 
-const _check: Adapter = { name, buildArgs, injectContract, parseResult };
+const _check: FlatAdapterModule = { name, buildArgs, injectContract, parseResult };
 void _check;

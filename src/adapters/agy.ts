@@ -39,7 +39,7 @@
  * exist exactly once.
  */
 import { buildAgyArgv, lastMarkerMatch } from "./_agy-shared.ts";
-import type { Adapter } from "./types.ts";
+import type { FlatAdapterModule } from "./types.ts";
 import type { AdapterResult, DispatchOpts } from "../types.ts";
 
 export const name = "agy";
@@ -148,5 +148,5 @@ function pushOptionalStringFlag(flags: string[], opts: DispatchOpts, key: string
 // Compile-time-only proof that this module's plain exports satisfy the
 // Adapter port — discoverAdapters duck-types at runtime, so this is the only
 // place a signature drift would be caught by tsc.
-const _check: Adapter = { name, buildArgs, injectContract, parseResult };
+const _check: FlatAdapterModule = { name, buildArgs, injectContract, parseResult };
 void _check;

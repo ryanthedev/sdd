@@ -19,7 +19,8 @@ import { readdirSync } from "node:fs";
 import { createRequire } from "node:module";
 import { isAbsolute, join, resolve } from "node:path";
 import { log } from "../lib/log.ts";
-import type { Adapter, LimitsProbe } from "./types.ts";
+import { DEFAULT_KIND } from "./types.ts";
+import type { Adapter, Capability, LimitsProbe } from "./types.ts";
 
 const require = createRequire(import.meta.url);
 
@@ -49,9 +50,40 @@ function toAdapter(mod: Record<string, unknown>): Adapter | { missing: string[] 
   const name = mod.name;
   if (typeof name !== "string" || name.length === 0) missing.push("name");
 
-  if (typeof mod.buildArgs !== "function") missing.push("buildArgs");
-  if (typeof mod.injectContract !== "function") missing.push("injectContract");
-  if (typeof mod.parseResult !== "function") missing.push("parseResult");
+  // Two accepted module shapes (see AdapterModule in types.ts): a `capabilities`
+  // record for a harness that does several things, or the three port functions
+  // flat for one that does one. Flat is normalized into a single DEFAULT_KIND
+  // capability here so the rest of the system only ever sees `capabilities` —
+  // one code path downstream, no per-adapter special-casing.
+  //
+  // Declaring BOTH is rejected rather than silently preferring one: which
+  // contract actually runs would then depend on a resolution order nobody can
+  // see from the adapter file.
+  const hasFlat =
+    typeof mod.buildArgs === "function" ||
+    typeof mod.injectContract === "function" ||
+    typeof mod.parseResult === "function";
+  const capabilities = toCapabilities(mod.capabilities);
+
+  if (mod.capabilities !== undefined && hasFlat) {
+    missing.push("capabilities (cannot be combined with flat buildArgs/injectContract/parseResult)");
+  } else if (mod.capabilities !== undefined) {
+    if (!capabilities) missing.push("capabilities");
+  } else {
+    if (typeof mod.buildArgs !== "function") missing.push("buildArgs");
+    if (typeof mod.injectContract !== "function") missing.push("injectContract");
+    if (typeof mod.parseResult !== "function") missing.push("parseResult");
+  }
+
+  // A declared default that names a capability the adapter doesn't have would
+  // fail only at dispatch time, on a caller who omitted `kind` — reject at load.
+  const defaultKind = mod.defaultKind;
+  if (defaultKind !== undefined) {
+    if (typeof defaultKind !== "string" || defaultKind.length === 0) missing.push("defaultKind");
+    else if (capabilities && !capabilities[defaultKind]) {
+      missing.push(`defaultKind ("${defaultKind}" is not one of: ${Object.keys(capabilities).join(", ")})`);
+    }
+  }
 
   // `binary` is optional, but if a module exports it, it must be a non-empty
   // string — a malformed override is a bug worth rejecting, not silently ignoring.
@@ -83,12 +115,46 @@ function toAdapter(mod: Record<string, unknown>): Adapter | { missing: string[] 
     name: name as string,
     binary: typeof binary === "string" ? binary : undefined,
     probeable: typeof probeable === "boolean" ? probeable : undefined,
-    buildArgs: mod.buildArgs as Adapter["buildArgs"],
-    injectContract: mod.injectContract as Adapter["injectContract"],
-    parseResult: mod.parseResult as Adapter["parseResult"],
+    capabilities: capabilities ?? {
+      [DEFAULT_KIND]: {
+        buildArgs: mod.buildArgs as Capability["buildArgs"],
+        injectContract: mod.injectContract as Capability["injectContract"],
+        parseResult: mod.parseResult as Capability["parseResult"],
+      },
+    },
+    defaultKind: typeof defaultKind === "string" ? defaultKind : undefined,
     readLimits: isLimitsProbe(readLimits) ? readLimits : undefined,
     parseLimits: typeof parseLimits === "function" ? (parseLimits as Adapter["parseLimits"]) : undefined,
   };
+}
+
+/**
+ * Structural check for a `capabilities` export. Every value must carry all
+ * three port functions — a half-declared capability would pass discovery and
+ * then throw inside the JobStore, turning an authoring mistake into a runtime
+ * crash on a caller's dispatch. Returns null when the export is present but
+ * malformed, so `toAdapter` can report it as missing.
+ */
+function toCapabilities(value: unknown): Record<string, Capability> | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  const entries = Object.entries(value as Record<string, unknown>);
+  if (entries.length === 0) return null;
+
+  const out: Record<string, Capability> = {};
+  for (const [kind, raw] of entries) {
+    if (kind.length === 0) return null;
+    if (typeof raw !== "object" || raw === null) return null;
+    const cap = raw as Record<string, unknown>;
+    if (typeof cap.buildArgs !== "function") return null;
+    if (typeof cap.injectContract !== "function") return null;
+    if (typeof cap.parseResult !== "function") return null;
+    out[kind] = {
+      buildArgs: cap.buildArgs as Capability["buildArgs"],
+      injectContract: cap.injectContract as Capability["injectContract"],
+      parseResult: cap.parseResult as Capability["parseResult"],
+    };
+  }
+  return out;
 }
 
 /**

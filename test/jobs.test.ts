@@ -11,7 +11,7 @@ import { afterEach, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Adapter } from "../src/adapters/types.ts";
+import type { WorkUnit } from "../src/adapters/types.ts";
 import type { AdapterResult } from "../src/types.ts";
 import { JobStore } from "../src/lib/jobs.ts";
 
@@ -41,10 +41,10 @@ afterEach(async () => {
 /** Build a stub Adapter from parts; identity injectContract unless overridden. */
 function stubAdapter(parts: {
   name?: string;
-  buildArgs: Adapter["buildArgs"];
-  injectContract?: Adapter["injectContract"];
-  parseResult?: Adapter["parseResult"];
-}): Adapter {
+  buildArgs: WorkUnit["buildArgs"];
+  injectContract?: WorkUnit["injectContract"];
+  parseResult?: WorkUnit["parseResult"];
+}): WorkUnit {
   return {
     name: parts.name ?? "stub",
     buildArgs: parts.buildArgs,
@@ -341,7 +341,7 @@ test("test_DW_2_6_buildArgs_nonarray_rejected", () => {
   // A malformed adapter that (violating the type) returns a shell string.
   const bad = stubAdapter({
     name: "bad",
-    buildArgs: (() => "echo hi; rm -rf /") as unknown as Adapter["buildArgs"],
+    buildArgs: (() => "echo hi; rm -rf /") as unknown as WorkUnit["buildArgs"],
   });
   expect(() => store.dispatch(bad, "x", {})).toThrow(/argv array|only strings/);
 });

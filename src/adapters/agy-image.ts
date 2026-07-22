@@ -56,7 +56,7 @@
 import { existsSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { buildAgyArgv, lastMarkerMatch } from "./_agy-shared.ts";
-import type { Adapter } from "./types.ts";
+import type { FlatAdapterModule } from "./types.ts";
 import type { AdapterResult, DispatchOpts } from "../types.ts";
 
 export const name = "agy-image";
@@ -192,5 +192,5 @@ function assertContained(resolved: string, base: string, raw: string): void {
   }
 }
 
-const _check: Adapter = { name, binary, probeable, buildArgs, injectContract, parseResult };
+const _check: FlatAdapterModule = { name, binary, probeable, buildArgs, injectContract, parseResult };
 void _check;

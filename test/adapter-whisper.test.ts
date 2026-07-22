@@ -14,6 +14,7 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
+import { DEFAULT_KIND } from "../src/adapters/types.ts";
 import { discoverAdapters } from "../src/adapters/discover.ts";
 import * as whisper from "../src/adapters/whisper.ts";
 
@@ -207,7 +208,7 @@ test("whisper is discovered via directory scan, no registry edit", () => {
   const found = adapters.find((a) => a.name === "whisper");
   expect(found).toBeDefined();
   expect(found!.binary).toBe("mlx_whisper");
-  expect(typeof found!.buildArgs).toBe("function");
-  expect(typeof found!.injectContract).toBe("function");
-  expect(typeof found!.parseResult).toBe("function");
+  expect(typeof found!.capabilities[DEFAULT_KIND]!.buildArgs).toBe("function");
+  expect(typeof found!.capabilities[DEFAULT_KIND]!.injectContract).toBe("function");
+  expect(typeof found!.capabilities[DEFAULT_KIND]!.parseResult).toBe("function");
 });

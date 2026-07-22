@@ -80,7 +80,7 @@
  */
 import { existsSync } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
-import type { Adapter } from "./types.ts";
+import type { FlatAdapterModule } from "./types.ts";
 import type { AdapterResult, DispatchOpts } from "../types.ts";
 
 export const name = "whisper";
@@ -251,5 +251,5 @@ function stderrTail(stderr: string): string {
   return ` — stderr tail: ${tail.replaceAll("\n", " | ")}`;
 }
 
-const _check: Adapter = { name, binary, probeable, buildArgs, injectContract, parseResult };
+const _check: FlatAdapterModule = { name, binary, probeable, buildArgs, injectContract, parseResult };
 void _check;

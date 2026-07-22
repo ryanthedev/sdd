@@ -16,6 +16,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
+import { resolveWorkUnit } from "../adapters/types.ts";
 import type { Adapter } from "../adapters/types.ts";
 import { formatSnapshot, readAdapterLimits } from "../lib/limits.ts";
 import type { Job, UsageSnapshot } from "../types.ts";
@@ -113,7 +114,20 @@ export function createCheckTool(rt: Runtime): ToolModule<typeof inputShape> {
       try {
         let jobId: string;
         try {
-          jobId = rt.jobStore.dispatch(adapter, PROBE_PROMPT, { cwd: probeCwd });
+          // Probe the harness's DEFAULT capability. A liveness check answers
+          // "is this harness installed and authenticated", which any capability
+          // would prove — so use the cheapest, and never a side-effecting one
+          // like image generation.
+          const unit = resolveWorkUnit(adapter);
+          if ("error" in unit) {
+            return err(`${adapter.name}: ${unit.error}`, {
+              adapter: adapter.name,
+              status: "failed",
+              binaryPresent: true,
+              code: "probe_dispatch_failed",
+            });
+          }
+          jobId = rt.jobStore.dispatch(unit, PROBE_PROMPT, { cwd: probeCwd });
         } catch (e) {
           return err(`${adapter.name}: probe dispatch failed: ${friendlyMessage(e)}`, {
             adapter: adapter.name,

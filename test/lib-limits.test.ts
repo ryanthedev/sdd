@@ -11,7 +11,7 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Adapter } from "../src/adapters/types.ts";
+import type { FlatAdapterModule } from "../src/adapters/types.ts";
 import { clearLimitsCache, formatSnapshot, readAdapterLimits } from "../src/lib/limits.ts";
 import type { UsageSnapshot } from "../src/types.ts";
 
@@ -24,7 +24,7 @@ afterEach(() => {
 });
 
 /** Minimal valid Adapter, with the limits capability pointed at a fake server. */
-function fakeAdapter(serverScript: string, over: Partial<Adapter> = {}): Adapter {
+function fakeAdapter(serverScript: string, over: Partial<FlatAdapterModule> = {}): FlatAdapterModule {
   return {
     name: "fake",
     buildArgs: () => ["true"],

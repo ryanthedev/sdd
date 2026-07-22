@@ -78,7 +78,7 @@
 import { existsSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { lastMarkerMatch } from "./_agy-shared.ts";
-import type { Adapter } from "./types.ts";
+import type { FlatAdapterModule } from "./types.ts";
 import type { AdapterResult, DispatchOpts } from "../types.ts";
 
 export const name = "yt-dlp";
@@ -327,5 +327,5 @@ function stderrTail(stderr: string): string {
   return ` — stderr tail: ${tail.replaceAll("\n", " | ")}`;
 }
 
-const _check: Adapter = { name, probeable, buildArgs, injectContract, parseResult };
+const _check: FlatAdapterModule = { name, probeable, buildArgs, injectContract, parseResult };
 void _check;

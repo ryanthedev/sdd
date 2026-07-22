@@ -102,7 +102,7 @@
  */
 import { readdirSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import type { Adapter } from "./types.ts";
+import type { FlatAdapterModule } from "./types.ts";
 import type { AdapterResult, DispatchOpts } from "../types.ts";
 
 export const name = "ffmpeg-frames";
@@ -353,5 +353,5 @@ function errMessage(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
-const _check: Adapter = { name, binary, probeable, buildArgs, injectContract, parseResult };
+const _check: FlatAdapterModule = { name, binary, probeable, buildArgs, injectContract, parseResult };
 void _check;

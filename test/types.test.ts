@@ -7,11 +7,11 @@
  * describe — in particular that buildArgs returns an argv array of strings.
  */
 import { test, expect } from "bun:test";
-import type { Adapter } from "../src/adapters/types.ts";
+import type { FlatAdapterModule } from "../src/adapters/types.ts";
 import type { AdapterResult, DispatchOpts, Job, JobState } from "../src/types.ts";
 
 test("test_DW_1_3_adapter_port_conforms_and_buildArgs_returns_string_array", () => {
-  const adapter: Adapter = {
+  const adapter: FlatAdapterModule = {
     name: "sample",
     buildArgs: (prompt: string, opts: DispatchOpts): string[] => {
       const sandbox = typeof opts.sandbox === "string" ? opts.sandbox : "read-only";
@@ -35,7 +35,7 @@ test("test_DW_1_3_adapter_port_conforms_and_buildArgs_returns_string_array", () 
 });
 
 test("test_DW_1_3_adapter_parseResult_fails_when_marker_absent", () => {
-  const adapter: Adapter = {
+  const adapter: FlatAdapterModule = {
     name: "sample",
     buildArgs: () => [],
     injectContract: (p) => p,

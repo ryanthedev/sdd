@@ -14,6 +14,7 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
+import { DEFAULT_KIND } from "../src/adapters/types.ts";
 import { discoverAdapters } from "../src/adapters/discover.ts";
 import * as ytdlp from "../src/adapters/yt-dlp.ts";
 
@@ -341,7 +342,7 @@ test("yt-dlp is discovered via directory scan, no registry edit", () => {
   const adapters = discoverAdapters(join(import.meta.dir, "..", "src", "adapters"));
   const found = adapters.find((a) => a.name === "yt-dlp");
   expect(found).toBeDefined();
-  expect(typeof found!.buildArgs).toBe("function");
-  expect(typeof found!.injectContract).toBe("function");
-  expect(typeof found!.parseResult).toBe("function");
+  expect(typeof found!.capabilities[DEFAULT_KIND]!.buildArgs).toBe("function");
+  expect(typeof found!.capabilities[DEFAULT_KIND]!.injectContract).toBe("function");
+  expect(typeof found!.capabilities[DEFAULT_KIND]!.parseResult).toBe("function");
 });

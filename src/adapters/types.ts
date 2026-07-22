@@ -37,6 +37,62 @@ export interface LimitsProbe {
   method: string;
 }
 
+/**
+ * ONE thing a harness can be asked to do — the triple that turns a prompt into
+ * an argv, wraps it in an output contract, and validates what comes back.
+ *
+ * A capability is the unit the JobStore runs. Splitting it out from `Adapter`
+ * is what lets one harness expose several contracts (agy reviews, generates
+ * images, and fuses video frames; codex reviews and generates images) WITHOUT
+ * the caller having to know which file implements which — previously that was
+ * encoded as separate adapter names (`agy-image`, `agy-vision`), leaking an
+ * internal taxonomy into the public dispatch surface.
+ *
+ * Marker validation stays exactly as strict as before: each capability owns its
+ * own contract and parser, so "one output contract per unit" still holds. That
+ * invariant lives here now instead of in the filename.
+ */
+export interface Capability {
+  /**
+   * Build the child-process argv for this work unit.
+   *
+   * MUST return a `string[]` (argv array), never a shell string. This is the
+   * type-level guardrail against command injection: because the JobStore spawns
+   * this array directly with no shell, a prompt containing shell metacharacters
+   * is passed as literal argument text and can never be evaluated.
+   */
+  buildArgs(prompt: string, opts: DispatchOpts): string[];
+
+  /**
+   * Wrap the caller's prompt with this capability's output-contract markers so
+   * the harness is instructed to emit a parseable, validatable response.
+   */
+  injectContract(prompt: string): string;
+
+  /**
+   * Turn a finished child's output into a structured AdapterResult. Extracts and
+   * VALIDATES the contract markers: a missing marker yields `status: "failed"`
+   * regardless of exitCode (the backstop for a harness that exits 0 but never
+   * actually did the work).
+   */
+  parseResult(stdout: string, stderr: string, exitCode: number): AdapterResult;
+}
+
+/**
+ * A capability bound to the harness that runs it — the only shape the JobStore
+ * ever sees. Keeping this narrower than `Adapter` means the spawning layer has
+ * no notion of capability selection at all: resolution happens once, at the
+ * tool boundary, and the dangerous component keeps receiving exactly what it
+ * always received.
+ */
+export interface WorkUnit extends Capability {
+  /** Harness name, for job records and error messages. */
+  name: string;
+}
+
+/** Capability key used when an adapter exposes a single, unnamed capability. */
+export const DEFAULT_KIND = "default";
+
 export interface Adapter {
   /** Unique adapter name — also the on-disk filename stem and the dispatch key. */
   name: string;
@@ -61,29 +117,20 @@ export interface Adapter {
   probeable?: boolean;
 
   /**
-   * Build the child-process argv for this work unit.
-   *
-   * MUST return a `string[]` (argv array), never a shell string. This is the
-   * type-level guardrail against command injection: because the JobStore spawns
-   * this array directly with no shell, a prompt containing shell metacharacters
-   * is passed as literal argument text and can never be evaluated.
+   * Everything this harness can be asked to do, keyed by `kind` — the value a
+   * caller passes to `dispatch`. A harness that does one thing exposes a single
+   * `DEFAULT_KIND` entry (discovery builds that automatically from a module
+   * that exports `buildArgs`/`injectContract`/`parseResult` flat, so simple
+   * adapters stay one-file-drop-in with no extra ceremony).
    */
-  buildArgs(prompt: string, opts: DispatchOpts): string[];
+  capabilities: Record<string, Capability>;
 
   /**
-   * Wrap the caller's prompt with this adapter's output-contract markers so the
-   * harness is instructed to emit a parseable, validatable response. The result
-   * is what actually gets sent to the harness.
+   * Which `kind` to run when the caller doesn't name one. Optional: with a
+   * single capability that one is the default, so this only matters for a
+   * multi-capability harness.
    */
-  injectContract(prompt: string): string;
-
-  /**
-   * Turn a finished child's output into a structured AdapterResult. Extracts and
-   * VALIDATES the contract markers: a missing marker yields `status: "failed"`
-   * regardless of exitCode (the backstop for a harness that exits 0 but never
-   * actually did the work).
-   */
-  parseResult(stdout: string, stderr: string, exitCode: number): AdapterResult;
+  defaultKind?: string;
 
   /**
    * OPTIONAL account-limits capability, declared as pure data (see LimitsProbe).
@@ -109,4 +156,76 @@ export interface Adapter {
    * `adapter` and `fetchedAt` are stamped by limits.ts, not by this function.
    */
   parseLimits?(raw: unknown): Omit<UsageSnapshot, "adapter" | "fetchedAt">;
+}
+
+/**
+ * What an adapter FILE exports, for the compile-time `_check` proof each one
+ * carries. Two accepted shapes, both normalized into `Adapter` by discovery:
+ *
+ *   - FLAT — export `buildArgs`/`injectContract`/`parseResult` at module level.
+ *     The one-thing-one-harness case (grok, kimi, qwen, yt-dlp, …). Discovery
+ *     wraps them as a single `DEFAULT_KIND` capability, so a simple adapter is
+ *     still a single file with no extra ceremony.
+ *   - MULTI — export a `capabilities` record. For a harness that genuinely does
+ *     more than one thing under one binary (agy, codex).
+ *
+ * Both are valid; neither is preferred. Adding a second capability to a flat
+ * adapter is a local edit to that file, not a migration.
+ */
+export interface FlatAdapterModule extends Capability {
+  name: string;
+  binary?: string;
+  probeable?: boolean;
+  readLimits?: LimitsProbe;
+  parseLimits?(raw: unknown): Omit<UsageSnapshot, "adapter" | "fetchedAt">;
+}
+
+export interface MultiAdapterModule {
+  name: string;
+  capabilities: Record<string, Capability>;
+  defaultKind?: string;
+  binary?: string;
+  probeable?: boolean;
+  readLimits?: LimitsProbe;
+  parseLimits?(raw: unknown): Omit<UsageSnapshot, "adapter" | "fetchedAt">;
+}
+
+export type AdapterModule = FlatAdapterModule | MultiAdapterModule;
+
+/**
+ * Resolve `adapter` + an optional caller-supplied `kind` into the single
+ * WorkUnit the JobStore will run. Returns a plain error string rather than
+ * throwing, because "you asked for a kind this harness doesn't have" is a
+ * routine caller mistake that deserves a listing of the real options, not a
+ * stack trace.
+ *
+ * Resolution order:
+ *   1. an explicit `kind` — must exist, no silent fallback to the default. A
+ *      typo'd kind quietly running the review contract instead of generating
+ *      an image is exactly the class of failure this port exists to prevent.
+ *   2. no kind, exactly one capability — that one.
+ *   3. no kind, `defaultKind` declared — that one.
+ *   4. otherwise — ambiguous; make the caller choose.
+ */
+export function resolveWorkUnit(adapter: Adapter, kind?: string): WorkUnit | { error: string } {
+  const kinds = Object.keys(adapter.capabilities);
+  const listing = kinds.length > 0 ? kinds.join(", ") : "(none)";
+
+  if (kind !== undefined) {
+    const chosen = adapter.capabilities[kind];
+    if (!chosen) {
+      return { error: `adapter "${adapter.name}" has no kind "${kind}" — available: ${listing}` };
+    }
+    return { name: adapter.name, ...chosen };
+  }
+
+  if (kinds.length === 1) {
+    const only = adapter.capabilities[kinds[0]!]!;
+    return { name: adapter.name, ...only };
+  }
+
+  const fallback = adapter.defaultKind !== undefined ? adapter.capabilities[adapter.defaultKind] : undefined;
+  if (fallback) return { name: adapter.name, ...fallback };
+
+  return { error: `adapter "${adapter.name}" needs an explicit kind — available: ${listing}` };
 }

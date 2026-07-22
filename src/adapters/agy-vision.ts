@@ -48,7 +48,7 @@
 import { existsSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { buildAgyArgv, lastMarkerMatch } from "./_agy-shared.ts";
-import type { Adapter } from "./types.ts";
+import type { FlatAdapterModule } from "./types.ts";
 import type { AdapterResult, DispatchOpts } from "../types.ts";
 
 export const name = "agy-vision";
@@ -201,5 +201,5 @@ function resolveContained(raw: string, opts: DispatchOpts, key: string): string 
   return resolved;
 }
 
-const _check: Adapter = { name, binary, probeable, buildArgs, injectContract, parseResult };
+const _check: FlatAdapterModule = { name, binary, probeable, buildArgs, injectContract, parseResult };
 void _check;

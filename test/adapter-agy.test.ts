@@ -8,6 +8,7 @@
  */
 import { expect, test } from "bun:test";
 import { join } from "node:path";
+import { DEFAULT_KIND } from "../src/adapters/types.ts";
 import { discoverAdapters } from "../src/adapters/discover.ts";
 import * as agy from "../src/adapters/agy.ts";
 
@@ -139,7 +140,7 @@ test("test_DW_4_4_agy_discovered_via_directory_scan", () => {
   const adapters = discoverAdapters(join(import.meta.dir, "..", "src", "adapters"));
   const found = adapters.find((a) => a.name === "agy");
   expect(found).toBeDefined();
-  expect(typeof found!.buildArgs).toBe("function");
-  expect(typeof found!.injectContract).toBe("function");
-  expect(typeof found!.parseResult).toBe("function");
+  expect(typeof found!.capabilities[DEFAULT_KIND]!.buildArgs).toBe("function");
+  expect(typeof found!.capabilities[DEFAULT_KIND]!.injectContract).toBe("function");
+  expect(typeof found!.capabilities[DEFAULT_KIND]!.parseResult).toBe("function");
 });

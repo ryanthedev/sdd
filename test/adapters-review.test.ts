@@ -11,6 +11,7 @@
  */
 import { expect, test } from "bun:test";
 import { join } from "node:path";
+import { DEFAULT_KIND } from "../src/adapters/types.ts";
 import { discoverAdapters } from "../src/adapters/discover.ts";
 import * as grok from "../src/adapters/grok.ts";
 import * as kimi from "../src/adapters/kimi.ts";
@@ -103,7 +104,7 @@ test("all four code-agent adapters are discovered via directory scan, binary ove
   for (const { name } of REVIEW_ADAPTERS) {
     const a = found.find((x) => x.name === name);
     expect(a).toBeDefined();
-    expect(typeof a!.buildArgs).toBe("function");
+    expect(typeof a!.capabilities[DEFAULT_KIND]!.buildArgs).toBe("function");
   }
   expect(found.find((x) => x.name === "mistral")!.binary).toBe("vibe");
 });

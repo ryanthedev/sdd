@@ -7,6 +7,7 @@
  */
 import { z } from "zod";
 import type { DispatchOpts } from "../types.ts";
+import { resolveWorkUnit } from "../adapters/types.ts";
 import { findAdapter, type Runtime } from "./runtime.ts";
 import { err, friendlyMessage, ok, type ToolModule } from "./shared.ts";
 
@@ -21,6 +22,15 @@ export const description =
 export const inputShape = {
   adapter: z.string().min(1).describe('Adapter name as reported by list_adapters, e.g. "codex".'),
   prompt: z.string().min(1).describe("The work-unit prompt sent to the harness."),
+  kind: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      "What to ask this harness for, when it can do more than one thing — e.g. \"image\" to generate a PNG " +
+        '(pair it with outputPath). Omit for the harness\'s normal job. Use list_adapters to see each ' +
+        "harness's kinds; asking for one it doesn't have is an error, never a silent fallback.",
+    ),
   cwd: z.string().optional().describe("Working directory for the child process. Defaults to the server's cwd."),
   timeoutMs: z.number().int().positive().optional().describe("Adapter-specific advisory timeout in ms."),
   model: z
@@ -132,8 +142,15 @@ export function createDispatchTool(rt: Runtime): ToolModule<typeof inputShape> {
         ...(args.sleepRequests !== undefined ? { sleepRequests: args.sleepRequests } : {}),
       };
 
+      // Capability resolution happens HERE and nowhere else: the JobStore
+      // receives an already-resolved WorkUnit and has no notion of `kind`, so
+      // the one component that spawns processes stays exactly as narrow as it
+      // was before capabilities existed.
+      const unit = resolveWorkUnit(adapter, args.kind);
+      if ("error" in unit) return err(unit.error, { code: "unknown_kind" });
+
       try {
-        const jobId = rt.jobStore.dispatch(adapter, args.prompt, opts);
+        const jobId = rt.jobStore.dispatch(unit, args.prompt, opts);
         return ok(`dispatched "${adapter.name}" as ${jobId}`, { jobId });
       } catch (e) {
         return err(`dispatch failed: ${friendlyMessage(e)}`, { code: "dispatch_failed" });

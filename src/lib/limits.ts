@@ -27,6 +27,14 @@
 import type { Adapter } from "../adapters/types.ts";
 import type { UsageSnapshot } from "../types.ts";
 
+/**
+ * The only part of an adapter the limits path needs. Deliberately narrower than
+ * `Adapter`: this file never dispatches a work unit, so it has no business
+ * seeing `capabilities`. Keeping the parameter narrow is what lets a limits
+ * test build a fixture without inventing a capability it will never run.
+ */
+export type LimitsCapableAdapter = Pick<Adapter, "name" | "readLimits" | "parseLimits">;
+
 /** Outcome of a limits read: never throws to the caller, always classified. */
 export type LimitsResult = { ok: true; snapshot: UsageSnapshot } | { ok: false; error: string };
 
@@ -100,7 +108,7 @@ const inFlight = new Map<string, Promise<LimitsResult>>();
  * serve one adapter's quota as another's. The probe is what actually determines
  * the answer, so it belongs in the key.
  */
-function cacheKey(adapter: Adapter): string {
+function cacheKey(adapter: LimitsCapableAdapter): string {
   const p = adapter.readLimits;
   return [adapter.name, p?.binary ?? "", (p?.args ?? []).join(ARG_SEP), p?.method ?? ""].join(FIELD_SEP);
 }
@@ -121,7 +129,7 @@ export function clearLimitsCache(): void {
  * every failure mode (no capability, binary missing, handshake refused, timeout,
  * unparseable payload) so a usage read can never take down a tool handler.
  */
-export async function readAdapterLimits(adapter: Adapter, opts: ReadLimitsOptions = {}): Promise<LimitsResult> {
+export async function readAdapterLimits(adapter: LimitsCapableAdapter, opts: ReadLimitsOptions = {}): Promise<LimitsResult> {
   const probe = adapter.readLimits;
   const parse = adapter.parseLimits;
   if (!probe || !parse) {
@@ -157,7 +165,7 @@ function entryTtl(result: LimitsResult, opts: ReadLimitsOptions): number {
 
 /** The uncached read. Split out so `readAdapterLimits` owns cache/coalescing only. */
 async function performRead(
-  adapter: Adapter,
+  adapter: LimitsCapableAdapter,
   probe: NonNullable<Adapter["readLimits"]>,
   parse: NonNullable<Adapter["parseLimits"]>,
   timeoutMs: number,

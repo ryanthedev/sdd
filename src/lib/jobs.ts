@@ -30,7 +30,7 @@ import { type ChildProcess, spawn } from "node:child_process";
 import { type WriteStream, closeSync, createWriteStream, mkdirSync, mkdtempSync, openSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
-import type { Adapter } from "../adapters/types.ts";
+import type { WorkUnit } from "../adapters/types.ts";
 import type { AdapterResult, DispatchOpts, Job } from "../types.ts";
 import { newJobId } from "./ids.ts";
 import { log } from "./log.ts";
@@ -66,7 +66,7 @@ export interface WaitResult {
  */
 interface TrackedJob {
   job: Job;
-  adapter: Adapter;
+  adapter: WorkUnit;
   child: ChildProcess;
   logStream: WriteStream;
   stdout: string[];
@@ -103,7 +103,7 @@ export class JobStore {
    * concurrency reasons: serializing jobs that would collide is the caller's
    * call, not the store's.
    */
-  dispatch(adapter: Adapter, prompt: string, opts: DispatchOpts = {}): string {
+  dispatch(adapter: WorkUnit, prompt: string, opts: DispatchOpts = {}): string {
     // Barricade: validate all untrusted/boundary input before doing anything.
     this.#assertValidAdapter(adapter);
     if (typeof prompt !== "string") throw new TypeError("dispatch: prompt must be a string");
@@ -195,7 +195,7 @@ export class JobStore {
 
   // ── Dispatch helpers (each one operation; callers pass validated data) ────
 
-  #assertValidAdapter(adapter: Adapter): void {
+  #assertValidAdapter(adapter: WorkUnit): void {
     if (!adapter || typeof adapter !== "object") throw new TypeError("dispatch: adapter must be an object");
     if (typeof adapter.name !== "string" || adapter.name.length === 0) {
       throw new TypeError("dispatch: adapter.name must be a non-empty string");
@@ -224,7 +224,7 @@ export class JobStore {
    * guard backs the type-level `string[]` guarantee — no shell string, no
    * non-string element can reach `spawn`.
    */
-  #buildArgv(adapter: Adapter, prompt: string, opts: DispatchOpts): string[] {
+  #buildArgv(adapter: WorkUnit, prompt: string, opts: DispatchOpts): string[] {
     const contracted = adapter.injectContract(prompt);
     const argv = adapter.buildArgs(contracted, opts);
     if (!Array.isArray(argv) || argv.length === 0) {
@@ -257,7 +257,7 @@ export class JobStore {
   }
 
   /** Spawn the child (no shell, new process group), wire streaming + exit handling. */
-  #spawnAndTrack(id: string, adapter: Adapter, cwd: string, logPath: string, argv: string[]): void {
+  #spawnAndTrack(id: string, adapter: WorkUnit, cwd: string, logPath: string, argv: string[]): void {
     const child = spawn(argv[0]!, argv.slice(1), {
       cwd,
       detached: true, // new process group → cancel/shutdown can kill the whole group
