@@ -14,7 +14,7 @@
  *
  * `parseResult(stdout, stderr, exitCode)` receives no `opts` (confirmed by
  * reading JobStore's call sequence in src/lib/jobs.ts), so it cannot look up
- * the caller's intended path independently. Design: agy 1.0.16 has NO
+ * the caller's intended path independently. Design: agy 1.1.5 has NO
  * `--image` / `--out` flags (verified against `agy --help`) — image generation
  * is a built-in capability of agy's agent, driven entirely through the prompt.
  * `buildArgs` therefore embeds the resolved absolute save path INTO the prompt
@@ -31,7 +31,7 @@
  *
  * SECURITY POSTURE (non-interactive agent write): `--print` runs the agent
  * with no TTY, so it cannot be prompted to confirm the PNG write — it would
- * block until timeout. agy 1.0.16 offers no scoped tool allowlist (`agy --help`
+ * block until timeout. agy 1.1.5 offers no scoped tool allowlist (`agy --help`
  * has only two permission knobs), so this adapter combines BOTH as defense-in-
  * depth: `--sandbox` (terminal restrictions — a prompt-injected agent cannot
  * spawn a shell or reach the network) plus `--dangerously-skip-permissions` to
@@ -76,7 +76,7 @@ const SAVED_MARKER_RE = /^AGY_IMAGE_SAVED:\s*(.+)$/gm;
 
 export function buildArgs(prompt: string, opts: DispatchOpts): string[] {
   const outPath = resolveOutputPath(opts);
-  // agy 1.0.16 has no --image/--out flags — image gen is a built-in agent
+  // agy 1.1.5 has no --image/--out flags — image gen is a built-in agent
   // capability driven through the prompt. injectContract ran first (before opts
   // was available) and referenced "the absolute path given below"; we append
   // that concrete path here, as the tail of the prompt. Flag-order: --print
@@ -85,7 +85,7 @@ export function buildArgs(prompt: string, opts: DispatchOpts): string[] {
   //
   // SECURITY (see header): --print is non-interactive, so the agent cannot be
   // asked to confirm the PNG write at a TTY — it would block until timeout.
-  // agy 1.0.16 exposes no scoped tool allowlist, only two blunt knobs, so we
+  // agy 1.1.5 exposes no scoped tool allowlist, only two blunt knobs, so we
   // use BOTH as defense-in-depth: --sandbox enables terminal restrictions
   // (a prompt-injected agent cannot spawn a shell or reach the network), and
   // --dangerously-skip-permissions auto-approves the one thing left — the file

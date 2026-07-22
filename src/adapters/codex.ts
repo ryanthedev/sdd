@@ -188,8 +188,9 @@ export function parseResult(stdout: string, stderr: string, exitCode: number): A
  * quota — so usage cannot be scraped off a dispatch. The app-server protocol is
  * the only surface that exposes it: `account/rateLimits/read` takes null params,
  * runs no model, and costs nothing. Method name and payload shape verified
- * against `codex app-server generate-json-schema --experimental` (codex-cli
- * 0.144.1) and against a live call.
+ * against `codex app-server generate-json-schema --experimental` and against a
+ * live call — originally on codex-cli 0.144.1, re-verified unchanged on 0.145.0
+ * (2026-07-21).
  */
 export const readLimits: LimitsProbe = {
   transport: "app-server-jsonrpc",
@@ -288,5 +289,76 @@ export function parseLimits(raw: unknown): Omit<UsageSnapshot, "adapter" | "fetc
     windows,
     credits,
     limitReached: asString(reachedSource?.rateLimitReachedType),
+    individualLimit: toIndividualLimit(buckets),
+    spendControlReached: toSpendControlReached(buckets, primaryBucket),
+    resetCredits: toResetCredits(root?.rateLimitResetCredits),
   };
+}
+
+/**
+ * Bucket-level spend-control ceiling, collapsed to the first bucket that
+ * reports one (mirroring how `limitReached` collapses `rateLimitReachedType`).
+ * Absent on personal plans, so `null` is the overwhelmingly common answer and
+ * must not be mistaken for "no limit remaining".
+ */
+function toIndividualLimit(
+  buckets: { bucket: Record<string, unknown> }[],
+): UsageSnapshot["individualLimit"] {
+  for (const { bucket } of buckets) {
+    const raw = asRecord(bucket.individualLimit);
+    if (!raw) continue;
+    return {
+      limit: asString(raw.limit),
+      remainingPercent: asNumber(raw.remainingPercent),
+      resetsAt: asNumber(raw.resetsAt),
+      used: asString(raw.used),
+    };
+  }
+  return null;
+}
+
+/**
+ * Whether a spend-control ceiling is currently hit. Tri-state on purpose:
+ * `null` means the harness never reported the field (an older payload), which
+ * is NOT the same as `false` ("reported, and not hit"). Collapsing those two
+ * would let an unrecognized payload read as "you're fine".
+ */
+function toSpendControlReached(
+  buckets: { bucket: Record<string, unknown> }[],
+  primaryBucket: Record<string, unknown> | null,
+): boolean | null {
+  for (const { bucket } of buckets) {
+    if (typeof bucket.spendControlReached === "boolean") return bucket.spendControlReached;
+  }
+  return typeof primaryBucket?.spendControlReached === "boolean" ? primaryBucket.spendControlReached : null;
+}
+
+/**
+ * Redeemable quota-reset grants — the source of codex's "You have N usage limit
+ * resets available" line. Root-level in the payload (sibling of `rateLimits`),
+ * NOT inside a bucket.
+ *
+ * `entries` is frequently `[]` while `availableCount` is non-zero — the live
+ * payload behaves exactly that way. Callers must report the COUNT and never
+ * infer "none available" from an empty entries array.
+ */
+function toResetCredits(raw: unknown): UsageSnapshot["resetCredits"] {
+  const rec = asRecord(raw);
+  if (!rec) return null;
+  const availableCount = asNumber(rec.availableCount);
+  const list = Array.isArray(rec.credits) ? rec.credits : [];
+  const entries = list.flatMap((item) => {
+    const entry = asRecord(item);
+    if (!entry) return [];
+    return [
+      {
+        id: asString(entry.id),
+        status: asString(entry.status),
+        title: asString(entry.title),
+        expiresAt: asString(entry.expiresAt),
+      },
+    ];
+  });
+  if (availableCount === null && entries.length === 0) return null;
+  return { availableCount, entries };
 }

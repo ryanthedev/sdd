@@ -39,7 +39,7 @@
  * `../`-escaping value throws a TypeError before spawn. An absolute path is
  * an explicit caller-specified target and passes through unchanged.
  * `--dangerously-skip-permissions` auto-approves the one permitted action —
- * the single JSON write — INSIDE the sandbox (agy 1.0.16 has no scoped tool
+ * the single JSON write — INSIDE the sandbox (agy 1.1.5 has no scoped tool
  * allowlist; same two-knob posture as agy.ts/agy-image.ts).
  *
  * `probeable = false`: a live probe would bill a real multimodal agent run

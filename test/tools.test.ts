@@ -256,12 +256,33 @@ test("test_DW_1_5_out_of_enum_effort_rejected_at_tool_boundary", () => {
 });
 
 test("test_DW_1_5_forwarded_keys_inert_for_adapters_that_do_not_read_them", () => {
-  // `effort` is read by NO adapter other than codex. `model` IS read by grok
-  // (its `-m` passthrough) and by agy (agy.ts, its own model knob) — so both
-  // are asserted inert for `effort` only, and grok's `model` is asserted live.
-  expect(grok.buildArgs("p", { effort: "high" })).toEqual(grok.buildArgs("p", {}));
+  // `model` is read by grok (its `-m` passthrough) and by agy (its own model
+  // knob), so it is asserted LIVE for grok.
   expect(grok.buildArgs("p", { model: "grok-4.5" })).not.toEqual(grok.buildArgs("p", {}));
-  expect(agy.buildArgs("p", { effort: "high" })).toEqual(agy.buildArgs("p", {}));
+
+  // `effort` is read by codex and — since 2026-07-21 — by agy, which exposes
+  // `--effort low|medium|high` and rejects anything else with exit 1. This
+  // assertion used to say the opposite (that agy ignores effort); that was
+  // asserting a bug, not a contract: a caller asking for high effort silently
+  // got the default.
+  expect(agy.buildArgs("p", { effort: "high" })).toEqual([
+    "agy",
+    "--sandbox",
+    "--dangerously-skip-permissions",
+    "--effort",
+    "high",
+    "--print",
+    "p",
+  ]);
+
+  // grok stays inert for `effort` DELIBERATELY, and this is not an oversight to
+  // "fix" later without evidence. grok 0.2.93 does have `--reasoning-effort`
+  // (alias `--effort`), but it does NOT validate the value — measured, it
+  // accepts `--reasoning-effort definitely-not-valid` and runs the turn anyway.
+  // Passing a value grok might silently ignore would make the opt LOOK honored
+  // while changing nothing, which is worse than not passing it. Wire this up
+  // only once grok's accepted value set is actually known.
+  expect(grok.buildArgs("p", { effort: "high" })).toEqual(grok.buildArgs("p", {}));
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

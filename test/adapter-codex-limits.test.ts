@@ -89,6 +89,70 @@ test("parseLimits finds a reached limit on ANY bucket, not just the first", () =
   expect(s.limitReached).toBe("workspace_member_usage_limit_reached");
 });
 
+test("parseLimits surfaces redeemable reset credits from the real payload", () => {
+  // REGRESSION: this field sat in REAL_PAYLOAD from the day the fixture was
+  // captured, and parseLimits walked straight past it — so `usage` never
+  // reported what codex's own TUI prints as "You have 3 usage limit resets
+  // available. Run /usage to use one."
+  const s = parse(REAL_PAYLOAD);
+  expect(s.resetCredits).toEqual({ availableCount: 3, entries: [] });
+});
+
+test("an empty credits array does NOT mean zero resets available", () => {
+  // The live payload really does send availableCount:3 with credits:[]. Reading
+  // "none available" off the empty array would under-report the account.
+  const s = parse({ ...REAL_PAYLOAD, rateLimitResetCredits: { availableCount: 3, credits: [] } });
+  expect(s.resetCredits?.availableCount).toBe(3);
+});
+
+test("parseLimits keeps per-grant reset-credit detail when the harness sends it", () => {
+  const s = parse({
+    rateLimits: bucket(),
+    rateLimitResetCredits: {
+      availableCount: 1,
+      credits: [{ id: "rc_1", status: "available", title: "Full reset", expiresAt: "2026-08-01" }],
+    },
+  });
+  expect(s.resetCredits?.entries).toEqual([
+    { id: "rc_1", status: "available", title: "Full reset", expiresAt: "2026-08-01" },
+  ]);
+});
+
+test("parseLimits reports no reset credits as null, not a zero count", () => {
+  expect(parse({ rateLimits: bucket() }).resetCredits).toBeNull();
+});
+
+test("parseLimits surfaces a spend-control limit from whichever bucket carries it", () => {
+  const s = parse({
+    rateLimitsByLimitId: {
+      codex: bucket(),
+      other: bucket({
+        individualLimit: { limit: "100", remainingPercent: 42, resetsAt: 1785081793, used: "58" },
+      }),
+    },
+  });
+  expect(s.individualLimit).toEqual({
+    limit: "100",
+    remainingPercent: 42,
+    resetsAt: 1785081793,
+    used: "58",
+  });
+});
+
+test("an unreported spendControlReached stays null and never collapses to false", () => {
+  // null ("the payload never said") must not read as false ("said, and fine").
+  expect(parse(REAL_PAYLOAD).spendControlReached).toBeNull();
+  expect(parse({ rateLimits: bucket({ spendControlReached: false }) }).spendControlReached).toBe(false);
+  expect(parse({ rateLimits: bucket({ spendControlReached: true }) }).spendControlReached).toBe(true);
+});
+
+test("parseLimits degrades on a malformed reset-credits block instead of throwing", () => {
+  expect(parse({ rateLimits: bucket(), rateLimitResetCredits: "nonsense" }).resetCredits).toBeNull();
+  expect(parse({ rateLimits: bucket(), rateLimitResetCredits: { credits: "nope" } }).resetCredits).toBeNull();
+  const partial = parse({ rateLimits: bucket(), rateLimitResetCredits: { availableCount: 2, credits: [null, 7] } });
+  expect(partial.resetCredits).toEqual({ availableCount: 2, entries: [] });
+});
+
 test("parseLimits drops a window with no usedPercent rather than reporting 0%", () => {
   // Reporting an unquantifiable window as 0% would read as "plenty left".
   const s = parse({ rateLimits: bucket({ primary: { windowDurationMins: 10080 } }) });

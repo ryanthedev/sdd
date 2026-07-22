@@ -22,7 +22,8 @@ export const name = "usage";
 export const title = "Report account quota/limits for a harness";
 export const description =
   "Report how much of a harness's account quota is used and when it resets — e.g. codex's rolling weekly " +
-  "window, plan tier, and credit balance. Costs no tokens and runs no work unit: it reads the CLI's own " +
+  "window, plan tier, credit balance, any spend-control ceiling, and how many redeemable usage resets the " +
+  "account is holding. Costs no tokens and runs no work unit: it reads the CLI's own " +
   "account endpoint. Call it before a large fan-out, or when a job fails in a way that smells like a quota " +
   "wall. Omit `adapter` to report every harness that can answer; adapters that cannot are listed as " +
   "unsupported.";

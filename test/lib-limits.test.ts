@@ -36,6 +36,9 @@ function fakeAdapter(serverScript: string, over: Partial<Adapter> = {}): Adapter
       windows: [],
       credits: null,
       limitReached: null,
+      individualLimit: null,
+      spendControlReached: null,
+      resetCredits: null,
     }),
     ...over,
   };
@@ -311,6 +314,9 @@ const snapshot = (over: Partial<UsageSnapshot> = {}): UsageSnapshot => ({
   windows: [{ name: "codex", usedPercent: 1, windowMinutes: 10080, resetsAt: null }],
   credits: null,
   limitReached: null,
+  individualLimit: null,
+  spendControlReached: null,
+  resetCredits: null,
   fetchedAt: Date.now(),
   ...over,
 });

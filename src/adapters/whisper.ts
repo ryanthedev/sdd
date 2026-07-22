@@ -69,9 +69,14 @@
  * `present_unverified`. A real probe would also incur a real (slow)
  * transcription. Binary-presence check only (yt-dlp / agy-image precedent).
  *
- * mlx-whisper is NOT installed in this environment — this adapter is built
- * and tested against the verified upstream CLI source, never a real
- * invocation (yt-dlp precedent for the same constraint).
+ * HISTORY: this adapter was written against the upstream CLI source because
+ * mlx-whisper was not installed at the time. As of 2026-07-21 it IS installed
+ * (`/Users/r/.local/bin/mlx_whisper`) and the `Args: {...}` debug-print marker
+ * this adapter parses was re-confirmed in the installed source (`cli.py:208`,
+ * `if args["verbose"] is True: print(f"Args: {args}")`). The unit tests still
+ * drive `parseResult` from captured output rather than a real invocation — a
+ * real transcription is slow — but "not installed" is no longer the reason,
+ * and a live end-to-end check is now possible if one is ever wanted.
  */
 import { existsSync } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";

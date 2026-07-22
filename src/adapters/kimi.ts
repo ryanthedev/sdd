@@ -15,10 +15,16 @@
  * A prior version of this adapter emitted `--yolo`, which meant every kimi
  * dispatch failed before the model was ever reached.
  *
- * That still leaves kimi unconditionally permissive in practice — one-shot `-p`
- * runs the tools it decides to run — so it may modify the tree it is dispatched
- * into. Whether that is safe right now — and whether two jobs may share one
- * tree — is the CALLER's decision, not this adapter's. No
+ * The flags are refused because `-p` ALREADY forces a permissive mode, not
+ * because it is read-only. `forcePromptPermission` (kimi's own prompt-mode
+ * runner) sets permission mode to `auto` for the duration of the run and
+ * restores the previous mode afterwards. Per kimi's permission picker, `auto`
+ * means "Run fully non-interactively. Tool actions are approved automatically,
+ * and agent questions are skipped so it can decide on its own" — note that in
+ * kimi this is MORE autonomous than `yolo`, which "can still ask you explicit
+ * questions". So kimi is as permissive as the rest and may modify the tree it
+ * is dispatched into. Whether that is safe right now — and whether two jobs may
+ * share one tree — is the CALLER's decision, not this adapter's. No
  * `danger-full-access`/full-access knob is ever emitted.
  */
 import type { AdapterResult, DispatchOpts } from "../types.ts";

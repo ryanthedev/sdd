@@ -9,15 +9,22 @@
  * `isCandidate`) skips underscore-prefixed files, so this helper is never
  * loaded as an adapter.
  *
- * FLAG-ORDER LANDMINE (see agy.ts's header for the full writeup): agy's
- * `--print` swallows the single argv element that immediately follows it as
- * the prompt. Any flag placed AFTER `--print` is silently absorbed into the
- * prompt string instead of being parsed as a flag — and agy exits 0 on this
- * misparse, so a wrong flag order fails silently with no non-zero exit code
- * to catch it. `buildAgyArgv` makes the correct order structural rather than
- * conventional: the prompt is always the LAST array element, and `--print`
- * is always the element immediately before it. There is no code path that
- * can insert anything after the prompt.
+ * FLAG ORDER (see agy.ts's header): `--print` takes the single argv element
+ * immediately following it as the prompt, so that pairing must stay intact.
+ * `buildAgyArgv` makes it structural rather than conventional: the prompt is
+ * always the LAST array element, `--print` always the element immediately
+ * before it, and no code path can insert anything after the prompt.
+ *
+ * CORRECTION (verified against agy 1.1.5, 2026-07-21): an earlier version of
+ * this comment claimed a flag placed after the prompt is "silently absorbed
+ * into the prompt string" and that "agy exits 0 on this misparse". That is
+ * FALSE for 1.1.5 and the exit-0 half was never demonstrated at all.
+ * Measured: `agy --sandbox --print "reply with just OK" --nope` prints
+ * "flags provided but not defined: -nope" and exits 2; an invalid value
+ * (`--effort bogus`) exits 1. Both reject BEFORE any model call. The ordering
+ * guarantee is kept anyway — it is the house rule for every adapter (some
+ * harnesses genuinely do absorb a trailing flag), and structural ordering
+ * costs nothing — but it is a convention, not a fix for an agy bug.
  *
  * TRUST BOUNDARY: `subcommandFlags` is caller-assembled and must already be
  * validated by the caller (e.g. `agy.ts`'s `pushOptionalStringFlag` throws on

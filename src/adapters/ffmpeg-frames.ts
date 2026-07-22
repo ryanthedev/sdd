@@ -91,10 +91,14 @@
  * real (slow) video decode. Binary-presence check only (yt-dlp / agy-image /
  * whisper precedent).
  *
- * ffmpeg is NOT installed in this environment — this adapter is built and
- * tested against verified ffmpeg CLI facts (this plan's own research plus a
- * spot-check this session), never a real invocation (yt-dlp / whisper
- * precedent for the same constraint).
+ * HISTORY: this adapter was written against documented ffmpeg CLI facts
+ * because ffmpeg was not installed at the time. As of 2026-07-21 it IS
+ * installed (8.1.1), and a live run against a synthetic source
+ * (`-f lavfi -i testsrc=duration=2`) reproduced every detail this adapter
+ * depends on: the `Output #0, image2, to '<dir>/frame_%d.jpg':` banner line,
+ * `pts_time:` in stderr, the `frame_0.jpg` naming, and the predicted
+ * `-vsync is deprecated. Use -fps_mode` notice. The parsing facts are now
+ * measured, not inferred.
  */
 import { readdirSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";

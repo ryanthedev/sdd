@@ -2,19 +2,25 @@
  * agy adapter — general-purpose review/implement harness invoked as
  * `agy <flags...> --print <prompt>`.
  *
- * FLAG-ORDER LANDMINE: agy's `--print` swallows the single argv element that
- * immediately follows it as the prompt. Any flag placed AFTER `--print` is
- * silently absorbed into the prompt string instead of being parsed as a flag
- * — and agy exits 0 on this misparse, so a wrong flag order fails silently
- * with no non-zero exit code to catch it. `buildArgs` makes the correct order
- * structural rather than conventional: the prompt is always the LAST array
- * element pushed, and `--print` is always the element immediately before it.
- * There is no code path that can insert anything after the prompt.
+ * FLAG ORDER: `--print` takes the single argv element immediately following
+ * it as the prompt, so `buildArgs` keeps that pairing structural rather than
+ * conventional — the prompt is always the LAST array element pushed and
+ * `--print` always the element immediately before it, with no code path able
+ * to insert anything after the prompt.
  *
- * The exit-0 misparse is additionally backstopped by `parseResult`: a
- * required `AGY_RESULT:` marker (injected via `injectContract`) must be
- * present in stdout, or the job is classified `failed` regardless of exit
- * code — see Adapter port docs (src/adapters/types.ts).
+ * CORRECTION (verified against agy 1.1.5, 2026-07-21): this header used to
+ * call the above a "LANDMINE", asserting a trailing flag is "silently
+ * absorbed into the prompt string" and that "agy exits 0 on this misparse".
+ * Both halves are false for 1.1.5 — measured, agy rejects an unknown trailing
+ * flag with "flags provided but not defined" and exit 2, and an invalid value
+ * with exit 1, both before any model call. The ordering rule stays because it
+ * is the house rule for every adapter, not because agy misbehaves.
+ *
+ * `parseResult` still requires the `AGY_RESULT:` marker (injected via
+ * `injectContract`) and classifies a job `failed` without it regardless of
+ * exit code — the general silent-misparse backstop for any harness that exits
+ * clean without doing the work. See the Adapter port docs
+ * (src/adapters/types.ts).
  *
  * MARKER-COLLISION LANDMINE: `injectContract` embeds the literal strings
  * `AGY_RESULT: DONE` / `AGY_RESULT: FAILED` into the prompt as instructions.
@@ -49,22 +55,30 @@ const RESULT_MARKER_RE = /^AGY_RESULT:\s*(DONE|FAILED)\s*$/gm;
 export function buildArgs(prompt: string, opts: DispatchOpts): string[] {
   const flags: string[] = [];
   pushOptionalStringFlag(flags, opts, "model", "--model");
+  pushEffortFlag(flags, opts);
   // SECURITY / headless posture (mirrors agy-image, see that file's header):
   // agy's `--print` is non-interactive, so an implement (write) job cannot be
   // asked to confirm its edits at a TTY — without auto-approval it hangs until
-  // the print timeout. agy 1.0.16 has no scoped tool allowlist, so we use both
-  // blunt knobs as defense-in-depth: `--sandbox` restricts the terminal (an
-  // agent steered by an injected task cannot spawn a shell or reach the network)
-  // and `--dangerously-skip-permissions` auto-approves the edits INSIDE that
-  // sandbox. `--sandbox` is a BOOLEAN flag in agy 1.0.16 (takes no value) and is
-  // always on here. Unlike agy-image, the prompt is NOT fenced as untrusted data
-  // — for a review/implement harness the prompt legitimately IS the task the
-  // agent must follow; the injection risk is inherent to delegating a task and
-  // is the accepted v1 posture (same-cwd, real env).
+  // the print timeout. agy 1.1.5 has no per-tool allowlist, so we use the blunt
+  // knobs as defense-in-depth: `--sandbox` restricts the terminal (an agent
+  // steered by an injected task cannot spawn a shell or reach the network) and
+  // `--dangerously-skip-permissions` auto-approves the edits INSIDE that
+  // sandbox. `--sandbox` is a BOOLEAN flag (takes no value) and is always on
+  // here. Unlike agy-image, the prompt is NOT fenced as untrusted data — for a
+  // review/implement harness the prompt legitimately IS the task the agent must
+  // follow; the injection risk is inherent to delegating a task and is the
+  // accepted v1 posture (same-cwd, real env).
   //
-  // Structural guard against the flag-order landmine: `buildAgyArgv` always
-  // pushes `--print` and the prompt last, in that order — nothing lands
-  // after the prompt.
+  // NOT "only two permission knobs" (a claim this file used to make): agy 1.1.5
+  // also exposes `--mode {accept-edits,plan}` and `--agent`. `--mode plan` is a
+  // genuine non-writing mode and is the obvious way to offer a read-only
+  // dispatch — deliberately NOT emitted here, because this adapter's contract
+  // is "may edit the tree" and silently making it read-only would break callers
+  // who dispatch agy to implement. Adding a read-only mode is a product
+  // decision, not something to smuggle in via a flag.
+  //
+  // Structural flag order: `buildAgyArgv` always pushes `--print` and the
+  // prompt last, in that order — nothing lands after the prompt.
   return buildAgyArgv(["--sandbox", "--dangerously-skip-permissions", ...flags], prompt);
 }
 
@@ -103,6 +117,25 @@ export function parseResult(stdout: string, stderr: string, exitCode: number): A
  * malformed (non-string / empty) throws — this is untrusted external input
  * (an MCP client's opts), validated at entry rather than silently ignored.
  */
+/**
+ * Append `--effort <level>` when `opts.effort` is present. agy 1.1.5 accepts
+ * `--effort low|medium|high`; this adapter previously ignored `opts.effort`
+ * entirely, so a caller asking for high effort silently got the default. An
+ * out-of-range value throws rather than being dropped — a job that quietly ran
+ * at the wrong effort is worse than one that refuses to start.
+ */
+function pushEffortFlag(flags: string[], opts: DispatchOpts): void {
+  const effort = opts.effort;
+  if (effort === undefined) return;
+  if (typeof effort !== "string" || !AGY_EFFORT_LEVELS.has(effort)) {
+    throw new TypeError(`agy: opts.effort must be "low" | "medium" | "high" if provided, got: ${JSON.stringify(effort)}`);
+  }
+  flags.push("--effort", effort);
+}
+
+/** Mirrors agy 1.1.5's `--effort` allowlist (low|medium|high), verified via `agy --help`. */
+const AGY_EFFORT_LEVELS: ReadonlySet<string> = new Set(["low", "medium", "high"]);
+
 function pushOptionalStringFlag(flags: string[], opts: DispatchOpts, key: string, flag: string): void {
   const value = opts[key];
   if (value === undefined) return;

@@ -488,7 +488,21 @@ export function formatSnapshot(s: UsageSnapshot): string {
         : `credits: ${s.credits.hasCredits ? `available${s.credits.balance ? ` (${s.credits.balance})` : ""}` : "none"}`,
     );
   }
+  // Report the COUNT, never the entries array: the live payload sends
+  // availableCount:3 with credits:[], so an entries-based check would print
+  // "none" while three resets sat unredeemed.
+  const resetCount = s.resetCredits?.availableCount;
+  if (typeof resetCount === "number" && resetCount > 0) {
+    parts.push(`${resetCount} usage reset${resetCount === 1 ? "" : "s"} available`);
+  }
+  if (s.individualLimit) {
+    const remaining =
+      s.individualLimit.remainingPercent !== null ? `${s.individualLimit.remainingPercent}% left` : "reported";
+    const resets = s.individualLimit.resetsAt !== null ? `, resets ${formatEta(s.individualLimit.resetsAt)}` : "";
+    parts.push(`spend control: ${remaining}${resets}`);
+  }
   if (s.limitReached) parts.push(`LIMIT REACHED (${s.limitReached})`);
+  if (s.spendControlReached === true) parts.push("SPEND CONTROL REACHED");
   return parts.join(" · ");
 }
 
