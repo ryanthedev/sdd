@@ -80,8 +80,8 @@ test("buildArgs includes mpdecimate (dedup), showinfo, -frame_pts 1, and -i befo
   expect(vf).toContain("mpdecimate");
   expect(vf).toContain("showinfo");
   expect(argv[argv.indexOf("-frame_pts") + 1]).toBe("1");
-  expect(argv).toContain("-vsync");
-  expect(argv[argv.indexOf("-vsync") + 1]).toBe("vfr");
+  expect(argv).toContain("-fps_mode");
+  expect(argv[argv.indexOf("-fps_mode") + 1]).toBe("vfr");
   expect(argv[argv.length - 1]).toBe(join(dir, "frame_%d.jpg"));
 });
 

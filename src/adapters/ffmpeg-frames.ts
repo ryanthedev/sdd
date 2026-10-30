@@ -55,11 +55,10 @@
  * verified base filter chain untouched. `mpdecimate` (dedup of near-identical
  * frames) runs first in the chain, ahead of `select`.
  *
- * `-vsync vfr` is required so ffmpeg doesn't pad/drop `select`'s
+ * `-fps_mode vfr` is required so ffmpeg doesn't pad/drop `select`'s
  * variable-rate output back to a constant frame rate — a well-known gotcha
- * with `select`-based frame extraction. It may print a deprecation notice on
- * newer ffmpeg builds but still functions, and the notice text does not
- * collide with the `Output #0` / `pts_time:` parsing below.
+ * with `select`-based frame extraction. (It replaces `-vsync vfr`, which was
+ * deprecated and then removed in ffmpeg 9 — `Unrecognized option 'vsync'`.)
  *
  * MANIFEST WRITE IS A SCOPED EXCEPTION: the plan's Scope-IN line explicitly
  * assigns manifest construction to `parseResult` ("parseResult builds the
@@ -141,7 +140,7 @@ export function buildArgs(prompt: string, opts: DispatchOpts): string[] {
     inputPath,
     "-vf",
     buildFilterExpr(sceneThreshold),
-    "-vsync",
+    "-fps_mode",
     "vfr",
     "-frame_pts",
     "1",
