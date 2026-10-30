@@ -48,7 +48,7 @@ Orchestrated by the [`video-ingest`](../../video-ingest/SKILL.md) skill — read
 
 | Adapter | Provider / CLI | PATH binary | What it's for | Auth requirement |
 |---|---|---|---|---|
-| `jev` | TypeSafe Jev via the Vercel AI Gateway (`/v1/evaluate`), through the bundled `assets/jev-evaluate.ts` | `bun` (name ≠ binary) | A request JSON (`questions` + `items[{id, state}]`) → one results JSON at `outputPath` with a probability per answer per item. Ranks and routes; never writes text, never touches the tree | `AI_GATEWAY_API_KEY` env var. The key in use has a $25/month spend cap |
+| `jev` | TypeSafe Jev via the Vercel AI Gateway (`/v1/evaluate`), through the bundled `assets/jev-evaluate.ts` | `bun` (name ≠ binary) | A request JSON (`questions` + `items[{id, state}]`) → one results JSON at `outputPath` with a probability per answer per item. Ranks and routes; never writes text, never touches the tree | `AI_GATEWAY_API_KEY`, from the server's env or else an `AI_GATEWAY_API_KEY=` line in `~/.config/sdd/.env` (read on every job, so no restart). The key in use has a $25/month spend cap |
 
 `jev` is not an agent. It returns probabilities for typed questions (`boolean`, `choice` up to 255 options, `score` 1–10) at about 0.3 s and $0.042 per million input tokens, so it is for **ranking and routing at volume**. The [recipes](recipes.md) say where it has measured well and where it hasn't. Three things to know before dispatching it:
 
@@ -73,7 +73,7 @@ They differ along two axes:
 
 `binaryPresent` answers exactly one question: is the CLI binary on `PATH`? It says nothing about whether a dispatch will succeed, because every harness has a second gate that PATH can't see:
 
-- **Env-key adapters** (`grok`, `kimi`, `qwen`, `mistral`, `jev`) fail at spawn time if their key (`XAI_API_KEY`/`GROK_API_KEY`/`GROK_DEPLOYMENT_KEY`, `MOONSHOT_API_KEY`, `DASHSCOPE_API_KEY`, `MISTRAL_API_KEY`, `AI_GATEWAY_API_KEY`) is unset in the environment the server inherited. `jev` reports the missing key by name in its `failed` summary.
+- **Env-key adapters** (`grok`, `kimi`, `qwen`, `mistral`, `jev`) fail at spawn time if their key (`XAI_API_KEY`/`GROK_API_KEY`/`GROK_DEPLOYMENT_KEY`, `MOONSHOT_API_KEY`, `DASHSCOPE_API_KEY`, `MISTRAL_API_KEY`, `AI_GATEWAY_API_KEY`) is unset in the environment the server inherited. `jev` also reads `~/.config/sdd/.env` when the variable is unset, and reports the missing key by name in its `failed` summary.
 - **Login-flow harnesses** (`codex`, `agy` — including their `image`/`vision` kinds, which share the same binary and account) fail if the underlying CLI isn't logged in or the subscription/quota is inactive.
 - **The video-pipeline adapters** (`yt-dlp`, `whisper`, `ffmpeg-frames`, `shazam`) have no auth gate at all — but they are also not managed by `bun install`, so their gate is the preflight check (`bun run src/lib/preflight.ts`), not `check_adapter`.
 

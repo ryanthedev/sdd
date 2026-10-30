@@ -8,7 +8,11 @@
  * `boolean` -> {probability}, `choice` -> {choice, probabilities, confidence},
  * `score` -> {score, probabilities, confidence}. It is reached through the
  * Vercel AI Gateway (`POST /v1/evaluate`, model `typesafe-ai/jev`) with the
- * `AI_GATEWAY_API_KEY` bearer key, read from the environment only.
+ * `AI_GATEWAY_API_KEY` bearer key: from the environment when set, otherwise
+ * from an `AI_GATEWAY_API_KEY=` line in the user-level `~/.config/sdd/.env`
+ * (`$XDG_CONFIG_HOME/sdd/.env` when that is set). That file is read by path
+ * on every job, so it works without restarting Claude Code. It is never the
+ * job cwd's `.env`: the adapter runs bun with `--no-env-file`.
  *
  * REQUEST (the file the adapter's prompt names):
  *   {
@@ -36,7 +40,8 @@
  * when the same provider answered both.
  */
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { homedir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 
 const ENDPOINT = "https://ai-gateway.vercel.sh/v1/evaluate";
 const DEFAULT_MODEL = "typesafe-ai/jev";
@@ -165,6 +170,23 @@ async function evaluate(key: string, model: string, questions: Record<string, un
   return { id: item.id, error: `retries exhausted (last: ${lastError})` };
 }
 
+/** Env first, then the user-level sdd config file — see header. */
+function resolveKey(): string {
+  const fromEnv = process.env.AI_GATEWAY_API_KEY;
+  if (fromEnv) return fromEnv;
+  const configHome = process.env.XDG_CONFIG_HOME || join(homedir(), ".config");
+  const file = join(configHome, "sdd", ".env");
+  let text = "";
+  try {
+    text = readFileSync(file, "utf8");
+  } catch {
+    // Missing file reads the same as a missing line.
+  }
+  const m = /^\s*(?:export\s+)?AI_GATEWAY_API_KEY\s*=\s*["']?([^"'\s]+)["']?\s*$/m.exec(text);
+  if (m?.[1]) return m[1];
+  die(`AI_GATEWAY_API_KEY is not set in the sdd server's environment or in ${file}`);
+}
+
 async function pool<T, R>(items: T[], n: number, fn: (t: T) => Promise<R>): Promise<R[]> {
   const out: R[] = new Array(items.length);
   let next = 0;
@@ -183,8 +205,7 @@ async function main(): Promise<void> {
   const [requestArg, outArg] = process.argv.slice(2);
   if (!requestArg || !outArg || process.argv.length !== 4) die("usage: jev-evaluate.ts <request.json> <results.json>");
 
-  const key = process.env.AI_GATEWAY_API_KEY;
-  if (!key) die("AI_GATEWAY_API_KEY is not set in the environment the sdd server was started from");
+  const key = resolveKey();
 
   const requestPath = resolve(requestArg);
   const outPath = resolve(outArg);

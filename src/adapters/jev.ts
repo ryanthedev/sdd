@@ -16,8 +16,9 @@
  * HARNESS: `bun`, running the repo-bundled `assets/jev-evaluate.ts` (the
  * Vercel AI Gateway client, ported from tellme's `grade()`). The sdd server
  * already runs on bun, so there is nothing extra to install. The key is
- * `AI_GATEWAY_API_KEY` in the environment the server inherited — the same
- * env-key shape as grok/kimi/qwen/mistral.
+ * `AI_GATEWAY_API_KEY` from the environment the server inherited (the env-key
+ * shape of grok/kimi/qwen/mistral), else from the user-level
+ * `~/.config/sdd/.env`, which the script reads by path on every job.
  *
  * HERMETIC RUN: `bun run` from the job cwd would read that cwd's
  * `bunfig.toml` (whose `preload` executes code before the script) and its
