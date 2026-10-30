@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `sdd` (Subagent-Driven Development) is a Claude Code **plugin**: an MCP server plus a Skills layer. It lets Claude delegate scoped, fresh-context work units to external CLI harnesses that run as child processes in the current working tree. Claude stays the brain and owns the diff; a harness does one bounded task (review, second opinion, implementation, image generation, video ingestion) and reports back a structured `{status, summary, artifacts, raw}` result.
 
-Ten harnesses ship today: the agent harnesses `codex`, `agy`, `grok`, `kimi`, `qwen`, `mistral`, and the video pipeline `yt-dlp`, `whisper`, `ffmpeg-frames`, `shazam`.
+Eleven harnesses ship today: the agent harnesses `codex`, `agy`, `grok`, `kimi`, `qwen`, `mistral`, the video pipeline `yt-dlp`, `whisper`, `ffmpeg-frames`, `shazam`, and the `jev` decision model (TypeSafe Jev over the Vercel AI Gateway, which ranks and routes but never writes or edits). Adapters that run a bundled script (`shazam`, `jev`) keep it in `assets/` and must run it hermetically: the job cwd's own project config (`pyproject.toml`; `bunfig.toml` preloads and `.env`) must never reach the script.
 
 One adapter = one HARNESS, not one contract. A harness that does several things exposes them as **kinds** on a single name: `agy` has `default`/`image`/`vision`, `codex` and `grok` have `default`/`image`. This replaced the old `agy-image`/`agy-vision` adapter names, which forced the caller to learn an internal file layout to ask agy for a picture. Same reasoning as the single codex adapter — reasoning tier and model are per-call `dispatch` opts, not pinned variant files. See the README for the per-harness gotcha table.
 

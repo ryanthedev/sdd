@@ -1,6 +1,6 @@
 # Harness roster — capabilities & auth
 
-A *harness* here is an external CLI (`codex`, `agy`, and friends) that `sdd` spawns as a child process in the current working tree to do one bounded task — review, second opinion, implementation, image generation, or a step of the video pipeline — and report back a structured `{status, summary, artifacts, raw}` result. Each harness is wrapped by an adapter in `src/adapters/`; `list_adapters` enumerates all nine, and reports a `kinds` list for any harness that does more than one thing.
+A *harness* here is an external CLI (`codex`, `agy`, and friends) that `sdd` spawns as a child process in the current working tree to do one bounded task — review, second opinion, implementation, image generation, or a step of the video pipeline — and report back a structured `{status, summary, artifacts, raw}` result. Each harness is wrapped by an adapter in `src/adapters/`; `list_adapters` enumerates all eleven, and reports a `kinds` list for any harness that does more than one thing.
 
 The load-bearing distinction: **a harness that shows up in `list_adapters` with `binaryPresent: true` is INSTALLED, not necessarily USABLE.** `binaryPresent` is a `Bun.which` PATH check and nothing more — it cannot see whether the CLI is logged in, has an active subscription, or has an API key in the environment. The honest way to tell whether a harness will actually run is `check_adapter(name)`, which runs a real minimal probe through the dispatch path and reports what happened. See [Auth is not presence](#auth-is-not-presence) below.
 
@@ -44,6 +44,18 @@ Orchestrated by the [`video-ingest`](../../video-ingest/SKILL.md) skill — read
 - **A no-match is `done`, not `failed`.** "Not in the catalog" is a real answer to the question. Read `matched` in the JSON; never read an empty title as a broken job.
 - **Hand it the media file, not a pre-made wav, if you like** — it transcodes with `ffmpeg` before fingerprinting. That transcode is load-bearing, not a convenience: fed an `.mp4` directly, the underlying library sniffs it as raw mpeg audio and produces a fingerprint that fails to match while looking exactly like an honest negative.
 
+### Decision model
+
+| Adapter | Provider / CLI | PATH binary | What it's for | Auth requirement |
+|---|---|---|---|---|
+| `jev` | TypeSafe Jev via the Vercel AI Gateway (`/v1/evaluate`), through the bundled `assets/jev-evaluate.ts` | `bun` (name ≠ binary) | A request JSON (`questions` + `items[{id, state}]`) → one results JSON at `outputPath` with a probability per answer per item. Ranks and routes; never writes text, never touches the tree | `AI_GATEWAY_API_KEY` env var. The key in use has a $25/month spend cap |
+
+`jev` is not an agent. It returns probabilities for typed questions (`boolean`, `choice` up to 255 options, `score` 1–10) at about 0.3 s and $0.042 per million input tokens, so it is for **ranking and routing at volume**. The [recipes](recipes.md) say where it has measured well and where it hasn't. Three things to know before dispatching it:
+
+- **The prompt is a request file path,** not a question. Write `{"questions": {...}, "items": [{"id", "state"}]}` to a file and dispatch its path with an `outputPath`. Items over 120,000 characters (about 32k tokens) are rejected, not truncated; more than 500 items needs `"maxItems"` in the request.
+- **Every state leaves the machine.** It goes to TypeSafe through Vercel. Never put secrets in one.
+- **Rank by the probabilities, never threshold them.** Raw Jev probabilities are uncalibrated (measured ECE 0.09–0.22 in tellme): "act above 0.9" means nothing until a per-question calibration map exists. The results log the gateway's `finalProvider` per item, because the gateway can fall back to a second provider and two rankings compare only when the same one answered.
+
 ## The review roster
 
 `codex`, `grok`, `kimi`, `qwen`, and `mistral` are **interchangeable second-opinion harnesses**. They share the same output contract — a `VERDICT:` line plus a `## Findings` section — so any one of them can stand in for another, and they fan out cleanly in parallel for an *ensemble* review: dispatch several against the same target in one turn, then `wait` on the batch and compare their findings.
@@ -61,7 +73,7 @@ They differ along two axes:
 
 `binaryPresent` answers exactly one question: is the CLI binary on `PATH`? It says nothing about whether a dispatch will succeed, because every harness has a second gate that PATH can't see:
 
-- **Env-key adapters** (`grok`, `kimi`, `qwen`, `mistral`) fail at spawn time if their key (`XAI_API_KEY`/`GROK_API_KEY`/`GROK_DEPLOYMENT_KEY`, `MOONSHOT_API_KEY`, `DASHSCOPE_API_KEY`, `MISTRAL_API_KEY`) is unset in the environment the server inherited.
+- **Env-key adapters** (`grok`, `kimi`, `qwen`, `mistral`, `jev`) fail at spawn time if their key (`XAI_API_KEY`/`GROK_API_KEY`/`GROK_DEPLOYMENT_KEY`, `MOONSHOT_API_KEY`, `DASHSCOPE_API_KEY`, `MISTRAL_API_KEY`, `AI_GATEWAY_API_KEY`) is unset in the environment the server inherited. `jev` reports the missing key by name in its `failed` summary.
 - **Login-flow harnesses** (`codex`, `agy` — including their `image`/`vision` kinds, which share the same binary and account) fail if the underlying CLI isn't logged in or the subscription/quota is inactive.
 - **The video-pipeline adapters** (`yt-dlp`, `whisper`, `ffmpeg-frames`, `shazam`) have no auth gate at all — but they are also not managed by `bun install`, so their gate is the preflight check (`bun run src/lib/preflight.ts`), not `check_adapter`.
 
@@ -72,7 +84,7 @@ None of this is visible to `list_adapters`. The honest verification is **`check_
 | `ok` | Binary present **and** the live probe completed — the harness ran and is authenticated. The reliable signal. |
 | `failed` | Binary present but the probe failed; `detail` carries the CLI's own error text (typically an auth / subscription / quota message, tailed from the job log where stderr lands). |
 | `timeout` | Probe still running at the timeout — inconclusive (slow model, network, or a hang); the probe job is cancelled. Retry with a larger `timeoutMs`. |
-| `present_unverified` | Binary present but the adapter opts out of automatic probing (`probeable: false`): `yt-dlp`, `whisper`, `ffmpeg-frames`, `shazam` — a probe would bill a real generation, hit the network, or run a slow transcode, and a generic health-check prompt can't supply the `outputPath`/`outputDir`/`addDir` their `buildArgs` demand. Dispatch a real job to confirm. Every agent harness is probeable. |
+| `present_unverified` | Binary present but the adapter opts out of automatic probing (`probeable: false`): `yt-dlp`, `whisper`, `ffmpeg-frames`, `shazam`, `jev` — a probe would bill a real generation, hit the network, or run a slow transcode, and a generic health-check prompt can't supply the `outputPath`/`outputDir`/`addDir` their `buildArgs` demand. Dispatch a real job to confirm. Every agent harness is probeable. |
 | `missing` | Binary not on `PATH` — not installed. |
 
 `check_adapter(adapter, timeoutMs?, cwd?)` defaults to a 60s probe timeout (clamped to the JobStore wait cap). Before you rely on a harness you have **not** already exercised this session, check it.
@@ -92,3 +104,4 @@ A job's terminal state is decided by exit code **and** the adapter's `parseResul
 | `whisper` | An `output_dir` scraped from mlx-whisper's `Args: {...}` line, with **both** `transcript.srt` and `transcript.txt` present on disk. Missing either → `failed`. |
 | `ffmpeg-frames` | An output dir recovered from ffmpeg's own `Output #0, …, to '<path>':` line, with the frames + `manifest.json` present on disk. |
 | `shazam` | A `SDD_SHAZAM_RESULT:<path>` line from the bundled script, the JSON present on disk, and either a title/artist pair or an explicit `SDD_SHAZAM_NOMATCH` — a result marker with neither is a broken run, not a negative. |
+| `jev` | `SDD_JEV_RESULT:<path>` (plus an `SDD_JEV_SUMMARY:` count line) from the bundled script and the results JSON present on disk. Per-item errors are recorded in the JSON and don't fail the job; if no item succeeded the script exits 1 and the job is `failed` with its stderr reason. |

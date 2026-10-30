@@ -63,7 +63,7 @@ bun run src/lib/preflight.ts    # tells you what's present, what's missing
 
 ## The adapters
 
-Ten ship today, and the ones that do more than one thing expose the extras as *kinds* on the same name (`agy` has `default`/`image`/`vision`; `codex` and `grok` have `default`/`image`). `list_adapters` shows you which ones are installed, `check_adapter` tells you whether one is actually logged in and usable (installed isn't the same as usable), and `usage` tells you how much quota is left.
+Eleven ship today, and the ones that do more than one thing expose the extras as *kinds* on the same name (`agy` has `default`/`image`/`vision`; `codex` and `grok` have `default`/`image`). `list_adapters` shows you which ones are installed, `check_adapter` tells you whether one is actually logged in and usable (installed isn't the same as usable), and `usage` tells you how much quota is left.
 
 | Group | Adapters | For |
 |---|---|---|
@@ -74,10 +74,11 @@ Ten ship today, and the ones that do more than one thing expose the extras as *k
 | | `agy` + `kind: "vision"` | Fuse a transcript + keyframes into one understanding JSON |
 | Video pipeline | `yt-dlp`, `whisper`, `ffmpeg-frames` | Pull a video, transcribe it, extract scene-cut keyframes |
 | | `shazam` | Name the song playing in it, by acoustic fingerprint — the one thing the transcript and the frames both can't tell you |
+| Decision model | `jev` | Rank or route a batch at volume: TypeSafe Jev answers typed questions with probabilities, about 0.3 s and a fraction of a cent per item. It never writes text |
 
 ### What's paying for what
 
-Two of the harnesses ride an account you already log into. Four want an API key. Three are free. Worth knowing which is which before you fan out, because "spend the surplus I already bought" and "meter myself a few cents per review" are different decisions:
+Two of the harnesses ride an account you already log into. Five want an API key. Four are free. Worth knowing which is which before you fan out, because "spend the surplus I already bought" and "meter myself a few cents per review" are different decisions:
 
 | Harness | Auth | What a job costs |
 |---|---|---|
@@ -86,6 +87,7 @@ Two of the harnesses ride an account you already log into. Four want an API key.
 | `grok`, `kimi`, `qwen`, `mistral` | one env var each (`XAI_API_KEY`, `MOONSHOT_API_KEY`, `DASHSCOPE_API_KEY`, `MISTRAL_API_KEY`) | Metered per token. Cheap for a review, but it's real spend, so fan these out deliberately. |
 | `yt-dlp`, `whisper`, `ffmpeg-frames` | none | Free. whisper and ffmpeg run locally on your own silicon. |
 | `shazam` | none | Free. Needs `uv` on PATH; it provisions the recognizer on first run and caches it. |
+| `jev` | `AI_GATEWAY_API_KEY` (Vercel AI Gateway) | Metered: $0.042 per million input tokens, so two short items cost about $0.00004. Each item's text is sent to TypeSafe through Vercel. |
 
 Each harness has its own quirks: flag ordering, the marker it emits, what auth it needs. The full per-harness reference (capabilities, auth, and every gotcha) lives in **[`skills/subagent-driven-development/references/harnesses.md`](skills/subagent-driven-development/references/harnesses.md)**. For the orchestration doctrine (when to fan out, when to serialize, how to use `wait`) see **[`skills/subagent-driven-development/SKILL.md`](skills/subagent-driven-development/SKILL.md)**.
 

@@ -1,12 +1,12 @@
 {
   "name": "sdd",
-  "version": "0.4.0",
-  "description": "Subagent-Driven Development — delegate scoped work units to CLI agent harnesses (codex, agy, grok, kimi, qwen, mistral) as fresh-context subagents, fan out, collect structured results, and check account quota before you spend it; plus a video pipeline (yt-dlp, whisper, ffmpeg-frames, shazam) that turns a video URL into one transcript + visual-understanding JSON",
+  "version": "0.5.0",
+  "description": "Subagent-Driven Development — delegate scoped work units to CLI agent harnesses (codex, agy, grok, kimi, qwen, mistral) as fresh-context subagents, fan out, collect structured results, and check account quota before you spend it; plus a video pipeline (yt-dlp, whisper, ffmpeg-frames, shazam) that turns a video URL into one transcript + visual-understanding JSON; plus the Jev decision model for ranking and routing at volume",
   "author": {
     "name": "r"
   },
   "license": "MIT",
-  "keywords": ["mcp", "subagent", "orchestration", "codex", "agy", "delegation", "quota"],
+  "keywords": ["mcp", "subagent", "orchestration", "codex", "agy", "delegation", "quota", "jev"],
   "mcpServers": {
     "sdd": {
       "command": "bun",

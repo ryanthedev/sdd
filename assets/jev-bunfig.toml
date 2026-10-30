@@ -1,0 +1,3 @@
+# Deliberately empty. The jev adapter runs its script with
+# `bun --config=<this file>` so a bunfig.toml in the job cwd (whose `preload`
+# would execute arbitrary code before the script) is never read.
