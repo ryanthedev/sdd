@@ -23,6 +23,8 @@
  * codex's own output contract.
  */
 import type { AdapterResult, DispatchOpts, UsageSnapshot, UsageWindow } from "../types.ts";
+import { tmpdir } from "node:os";
+import { resolve, sep } from "node:path";
 import { buildCodexArgv, type CodexArgvConfig } from "./_codex-shared.ts";
 import { DEFAULT_KIND } from "./types.ts";
 import type { Capability, LimitsProbe, MultiAdapterModule } from "./types.ts";
@@ -88,6 +90,7 @@ export function buildArgs(prompt: string, opts: DispatchOpts): string[] {
  */
 function toArgvConfig(opts: DispatchOpts): CodexArgvConfig {
   const cfg: CodexArgvConfig = {};
+  if (inTempDir(opts.cwd)) cfg.skipGitRepoCheck = true;
   const { model, effort } = opts;
   if (model !== undefined) {
     if (typeof model !== "string" || model.length === 0) {
@@ -103,6 +106,21 @@ function toArgvConfig(opts: DispatchOpts): CodexArgvConfig {
   }
 
   return cfg;
+}
+
+/**
+ * codex refuses to run outside a git repository unless told `--skip-git-repo-check`. That guard exists so codex
+ * never edits files git cannot give back, and outside the temp dirs it stays on. Inside them there is nothing to
+ * give back: a dispatch into a scratch folder (a video-ingest run writing a report page into /tmp, 2026-10-29)
+ * is the whole point, and refusing it made codex useless there. Lexical on purpose: adapters do no I/O, and a
+ * symlink out of /tmp still lands under the workspace-write sandbox rooted at that cwd.
+ */
+const TEMP_ROOTS = [...new Set([tmpdir(), "/tmp", "/private/tmp"].map((p) => resolve(p)))];
+
+export function inTempDir(cwd: unknown): boolean {
+  // Only a cwd the caller NAMED: an omitted one is the server's own folder, and the guard stays on there.
+  if (typeof cwd !== "string" || cwd.length === 0) return false;
+  return TEMP_ROOTS.some((root) => resolve(cwd).startsWith(root + sep));
 }
 
 /**
@@ -177,7 +195,7 @@ function codexFailureSummary(stderr: string, exitCode: number): string {
       "codex failed: its working directory is not a git repository. codex refuses to run outside a git repo " +
       '("Not inside a trusted directory and --skip-git-repo-check was not specified") and exits before ever ' +
       "reaching the model — this is NOT an auth or quota failure. Fix: run `git init` in the dispatch cwd, " +
-      "dispatch codex with a git-repo cwd, or have the caller allow --skip-git-repo-check."
+      "dispatch codex with a git-repo cwd, or dispatch it in a folder under /tmp (where the check is skipped)."
     );
   }
   const tail = stderrTail(stripContractEcho(stderr), 600);

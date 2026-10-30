@@ -326,3 +326,15 @@ test("the default kind is unchanged by the image kind existing", () => {
   expect(codex.capabilities.default!.buildArgs).toBe(codex.buildArgs);
   expect(codex.capabilities.default!.parseResult).toBe(codex.parseResult);
 });
+
+// A dispatch into a temp dir skips codex's git-repo guard; anywhere else keeps it (2026-10-29).
+test("test_codex_skips_the_git_repo_check_only_in_a_temp_dir", () => {
+  const argv = (cwd: string) => codex.buildArgs("p", { cwd });
+  for (const cwd of ["/tmp/video-ingest/DeYGHqrRzDy", "/private/tmp/x/site"]) {
+    const a = argv(cwd);
+    expect(a).toContain("--skip-git-repo-check");
+    expect(a.indexOf("--skip-git-repo-check")).toBeLessThan(a.indexOf("--sandbox"));
+    expect(a.at(-1)).toBe("p");
+  }
+  for (const cwd of ["/Users/r/repos/scratch", "/tmp", "/tmpfoo/x", "/tmp/../Users/r"]) expect(argv(cwd)).not.toContain("--skip-git-repo-check");
+});
