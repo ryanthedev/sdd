@@ -2,22 +2,17 @@
 name: video-ingest
 description: >-
   Ingest a video from a URL (YouTube, Instagram, TikTok, or X) into one fused
-  transcript + visual-understanding JSON artifact, by sequencing the sdd
-  pipeline's four adapters through MCP dispatches: yt-dlp (fetch audio+video),
-  whisper (transcribe), ffmpeg-frames (keyframes), and agy's sandboxed vision
-  (fuse spoken + on-screen content). Documents the preflight gate, the
-  fetch → transcribe ∥ frames → fuse sequence with its parallel fan-out,
-  per-platform auth (Instagram burner cookies / nightly / sleeps), frame
-  budgets, timestamp interleaving via the frame manifest, the split-privilege
-  containment (full-network fetch vs. sandboxed fusion), the known visual
-  blind spots, and the optional shazam step that names the song playing in a
-  video by acoustic fingerprint (which neither the transcript nor the frames
-  can do). Use when ingesting, transcribing, or extracting a visual
-  understanding of a video from a URL on any of the four platforms, or when
-  asked what song is playing in one.
-  Not for: image generation (dispatch agy or codex with kind:"image"),
-  code review or second opinions (subagent-driven-development), or writing new
-  MCP tools / adapters (runtime code, out of scope here).
+  transcript + visual-understanding JSON artifact by sequencing the sdd
+  video adapters: yt-dlp (fetch), whisper (transcribe), ffmpeg-frames
+  (keyframes), and agy's sandboxed vision (fuse speech + on-screen content),
+  plus an optional shazam step that names the song by acoustic fingerprint.
+  Covers the preflight gate, the fetch → transcribe ∥ frames → fuse fan-out,
+  per-platform auth (Instagram burner cookies, nightly yt-dlp), frame budgets,
+  timestamp interleaving, fetch-vs-fusion privilege split, and visual blind
+  spots. Use when ingesting, transcribing, or summarizing a video from a URL
+  on those platforms, or when asked what song is playing in one.
+  Not for: image generation (agy/codex kind:"image"), code review or second
+  opinions (subagent-driven-development), or writing new adapters.
 when_to_use: >-
   Trigger phrases: "ingest this video", "transcribe this YouTube/TikTok/
   Instagram/X video", "what happens in this video", "get the transcript and

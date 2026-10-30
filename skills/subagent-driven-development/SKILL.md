@@ -2,7 +2,7 @@
 name: subagent-driven-development
 description: >-
   Orchestration doctrine for delegating scoped work units to CLI agent
-  harnesses (codex, agy) through the sdd MCP server's eight tools (dispatch,
+  harnesses (codex, agy, grok, kimi, qwen, mistral) through the sdd MCP server's eight tools (dispatch,
   status, result, wait, list_adapters, cancel, check_adapter, usage). Documents
   which adapter fits which job, the caller-owned concurrency rule (the server
   serializes nothing), the poll-by-default wait policy, each harness's parsing
@@ -114,7 +114,7 @@ What follows is orchestration discipline you must apply yourself — advice, not
 
 The review roster (`codex`, `grok`, `kimi`, `qwen`, `mistral`) are interchangeable second-opinion harnesses sharing one output contract (`VERDICT:` + `## Findings`) — fan them out in parallel for an ensemble review. They are *scoped* to reviewing by their prompt, not sandboxed to it: each still runs permissively and could touch the tree, so don't overlap them with an implementation job in the same `cwd`. Full per-harness capability + auth detail: [`references/harnesses.md`](references/harnesses.md).
 
-The video-pipeline adapters (`yt-dlp`, `whisper`, `ffmpeg-frames`) wrap real CLIs, not instructable agents — their "prompt" *is* the URL or file path. Don't hand-sequence them from here; the [`video-ingest`](../video-ingest/SKILL.md) skill owns that pipeline, its preflight gate, and its per-platform auth.
+The video-pipeline adapters (`yt-dlp`, `whisper`, `ffmpeg-frames`, `shazam`) wrap real CLIs, not instructable agents — their "prompt" *is* the URL or file path. Don't hand-sequence them from here; the [`video-ingest`](../video-ingest/SKILL.md) skill owns that pipeline, its preflight gate, and its per-platform auth.
 
 Call `list_adapters` before dispatching to confirm the adapter's underlying CLI is actually on `PATH` (`binaryPresent`) — dispatching to an adapter whose binary is missing fails at spawn time, not at discovery time.
 
@@ -125,7 +125,7 @@ Call `list_adapters` before dispatching to confirm the adapter's underlying CLI 
 - `ok` — installed **and** authenticated; the reliable green light.
 - `failed` — installed but the probe failed; `detail` carries the CLI's own auth/quota/subscription error text.
 - `timeout` — inconclusive (slow model, network, or hang); the probe job is cancelled — retry with a larger `timeoutMs`.
-- `present_unverified` — the adapter opts out of automatic probing (`probeable: false`): `yt-dlp`, `whisper`, `ffmpeg-frames`, because a probe would bill a real generation, hit the network, or run a slow transcode — and a generic health-check prompt can't supply the `outputPath`/`outputDir`/`addDir` they require. Confirm these by dispatching a real job. Every agent harness is probeable and gets the real liveness+auth probe.
+- `present_unverified` — the adapter opts out of automatic probing (`probeable: false`): `yt-dlp`, `whisper`, `ffmpeg-frames`, `shazam`, because a probe would bill a real generation, hit the network, or run a slow transcode — and a generic health-check prompt can't supply the `outputPath`/`outputDir`/`addDir` they require. Confirm these by dispatching a real job. Every agent harness is probeable and gets the real liveness+auth probe.
 - `missing` — binary not on `PATH`; not installed.
 
 Full per-harness capability + auth table: [`references/harnesses.md`](references/harnesses.md).
