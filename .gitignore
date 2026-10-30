@@ -6,3 +6,8 @@ dist/
 
 # Local Claude Code state (settings + nested agent worktrees)
 .claude/
+
+# Process artifacts from planning/design tools (kept out of the repo; still in history)
+.code-foundations/
+.design-foundations/
+tldr-site/
