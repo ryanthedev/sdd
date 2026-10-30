@@ -17,10 +17,14 @@
  * path that can drop it. Verified this session: `--sandbox` does NOT block
  * reading files granted via `--add-dir`.
  *
- * MODEL DEFAULT: `"Gemini 3.1 Pro (High)"` — verified this session to
- * actually read `--add-dir` frames and produce the fusion. Do NOT default to
- * a weak/fast tier: `Gemini 3.5 Flash (Low)` loops on the frame set and
- * times out. `opts.model` may override (validated at entry).
+ * MODEL DEFAULT: `"Gemini 4 Argon (High)"` — verified 2026-10-29 on agy
+ * 1.4.10 to read `--add-dir` frames and produce the fusion (real reel, exit 0,
+ * valid JSON in 47 s). It replaced `"Gemini 3.1 Pro (High)"`, which agy
+ * 1.4.10 dropped from its roster: agy rejects an unknown `--model` on stderr
+ * with exit 1 before any model call. agy auto-updates, so check `agy models`
+ * when this step starts failing. Do NOT default to a weak/fast tier: Flash-Low
+ * looped on the frame set and timed out. `opts.model` may override
+ * (validated at entry).
  *
  * OUTPUT PATH: agy has NO `--out` flag (same landmine as agy-image) — the
  * resolved absolute `opts.outputPath` is embedded into the prompt tail by
@@ -58,7 +62,7 @@ export const binary = "agy";
 export const probeable = false;
 
 /** See MODEL DEFAULT in the header: strong tier required; Flash-Low loops. */
-const DEFAULT_VISION_MODEL = "Gemini 3.1 Pro (High)";
+const DEFAULT_VISION_MODEL = "Gemini 4 Argon (High)";
 
 /** Marker line the harness must print last, containing the absolute save
  *  path. `g` so every occurrence is enumerated and the LAST taken. */
@@ -115,6 +119,17 @@ export function injectContract(prompt: string): string {
 
 export function parseResult(stdout: string, stderr: string, exitCode: number): AdapterResult {
   const match = lastMarkerMatch(SAVED_MARKER_RE, stdout);
+  if (!match && exitCode !== 0) {
+    // agy rejects bad startup input (e.g. a model name missing from its
+    // roster) on STDERR with a non-zero exit and an empty stdout. Reporting
+    // that as a "missing marker" hides the real reason, so surface it.
+    return {
+      status: "failed",
+      summary: `agy-vision: exited with code ${exitCode} before printing the AGY_VISION_SAVED marker: ${stderrReason(stderr)}`,
+      artifacts: [],
+      raw: stdout,
+    };
+  }
   if (!match) {
     return {
       status: "failed",
@@ -141,6 +156,15 @@ export function parseResult(stdout: string, stderr: string, exitCode: number): A
     artifacts: [savedPath],
     raw: stdout,
   };
+}
+
+/** The line of `stderr` that explains a failure: the first `error:` line if
+ *  any (agy prints the error first, then e.g. the list of valid models), else
+ *  the last non-empty line. Capped so a noisy stderr can't flood the summary. */
+function stderrReason(stderr: string): string {
+  const lines = stderr.split("\n").map((l) => l.trim()).filter((l) => l.length > 0);
+  const line = lines.find((l) => /^error\b/i.test(l)) ?? lines.at(-1) ?? "(no stderr output)";
+  return line.length > 300 ? `${line.slice(0, 300)}…` : line;
 }
 
 /**

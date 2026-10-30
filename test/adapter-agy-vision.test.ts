@@ -43,7 +43,7 @@ test("test_DW_6_1_sandbox_add_dir_and_default_model", () => {
   expect(argv[0]).toBe("agy");
   expect(argv).toContain("--sandbox");
   expect(argv[argv.indexOf("--add-dir") + 1]).toBe(dir);
-  expect(argv[argv.indexOf("--model") + 1]).toBe("Gemini 3.1 Pro (High)");
+  expect(argv[argv.indexOf("--model") + 1]).toBe("Gemini 4 Argon (High)");
   // Flag-order invariant: --print immediately precedes the prompt, prompt last.
   expect(argv[argv.length - 2]).toBe("--print");
   expect(argv[argv.length - 1]).toContain("fuse it");
@@ -78,6 +78,26 @@ test("test_DW_6_2_missing_marker_fails_even_on_exit_0", () => {
   expect(res.status).toBe("failed");
   expect(res.summary).toContain("AGY_VISION_SAVED");
   expect(res.artifacts).toEqual([]);
+});
+
+test("nonzero_exit_without_marker_surfaces_stderr_reason", () => {
+  // Real agy 1.4.10 output for a model name dropped from its roster: exit 1,
+  // empty stdout, the reason on stderr followed by the valid model list.
+  const stderr =
+    'error: invalid model selection (--model "Gemini 3.1 Pro (High)" --effort ""): model Gemini 3.1 Pro (High) ' +
+    "is not recognized as a known model or custom model in settings\n" +
+    "Available models:\n  Gemini 4 Argon (High)\n";
+  const res = agyVision.parseResult("", stderr, 1);
+  expect(res.status).toBe("failed");
+  expect(res.summary).toContain("exited with code 1");
+  expect(res.summary).toContain("invalid model selection");
+  expect(res.artifacts).toEqual([]);
+});
+
+test("nonzero_exit_without_marker_or_stderr_still_fails", () => {
+  const res = agyVision.parseResult("", "", 2);
+  expect(res.status).toBe("failed");
+  expect(res.summary).toContain("exited with code 2");
 });
 
 // ── DW-6.3: LAST marker occurrence wins ──────────────────────────────────────
