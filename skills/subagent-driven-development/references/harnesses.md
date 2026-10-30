@@ -30,13 +30,19 @@ Every agent harness here runs **unconditionally permissive** — the adapter alw
 
 ### Video pipeline
 
-Orchestrated by the [`video-ingest`](../../video-ingest/SKILL.md) skill — read it before dispatching these. They wrap real CLIs, not instructable agents: the "prompt" **is** the URL or file path, `injectContract` is the identity function, and none of them is an agent that can edit your tree. `bun run src/lib/preflight.ts` gates all three (none is managed by `bun install`).
+Orchestrated by the [`video-ingest`](../../video-ingest/SKILL.md) skill — read it before dispatching these. They wrap real CLIs, not instructable agents: the "prompt" **is** the URL or file path, `injectContract` is the identity function, and none of them is an agent that can edit your tree. `bun run src/lib/preflight.ts` gates the first three (none is managed by `bun install`); `shazam` is optional and reported but not gated.
 
 | Adapter | Provider / CLI | PATH binary | What it's for | Auth requirement |
 |---|---|---|---|---|
 | `yt-dlp` | `yt-dlp` | `yt-dlp` | One video URL (YouTube, Instagram, TikTok, X) → WAV + the 720p-capped video + best-effort subs, in `outputDir` | None for YouTube/TikTok; a burner-account `cookies` file for gated X / Instagram (see the video-ingest skill) |
 | `whisper` | mlx-whisper (large-v3-turbo) | `mlx_whisper` (name ≠ binary) | One audio file → `transcript.srt` + `transcript.txt` in `outputDir` | None — runs locally |
 | `ffmpeg-frames` | `ffmpeg` | `ffmpeg` | One video file → scene-cut keyframes + `manifest.json` (frame → seconds) in `outputDir` | None — runs locally |
+| `shazam` | shazamio, via the bundled `assets/shazam-recognize.py` | `uv` (name ≠ binary) | One audio **or** video file → a track-identity JSON at `outputPath` (`matched`, title, artist, album, label, ISRC, Shazam + Apple Music links) | None — but `uv` must be on PATH; it provisions the recognizer from the script's inline metadata on first run |
+
+`shazam` is the one video-pipeline adapter preflight does **not** gate: `uv` is reported under `optional[]`, because the fetch → transcribe → frames → fuse sequence is complete without it. Two things about it that will otherwise bite:
+
+- **A no-match is `done`, not `failed`.** "Not in the catalog" is a real answer to the question. Read `matched` in the JSON; never read an empty title as a broken job.
+- **Hand it the media file, not a pre-made wav, if you like** — it transcodes with `ffmpeg` before fingerprinting. That transcode is load-bearing, not a convenience: fed an `.mp4` directly, the underlying library sniffs it as raw mpeg audio and produces a fingerprint that fails to match while looking exactly like an honest negative.
 
 ## The review roster
 
@@ -57,7 +63,7 @@ They differ along two axes:
 
 - **Env-key adapters** (`grok`, `kimi`, `qwen`, `mistral`) fail at spawn time if their key (`XAI_API_KEY`/`GROK_API_KEY`/`GROK_DEPLOYMENT_KEY`, `MOONSHOT_API_KEY`, `DASHSCOPE_API_KEY`, `MISTRAL_API_KEY`) is unset in the environment the server inherited.
 - **Login-flow harnesses** (`codex`, `agy` — including their `image`/`vision` kinds, which share the same binary and account) fail if the underlying CLI isn't logged in or the subscription/quota is inactive.
-- **The video-pipeline adapters** (`yt-dlp`, `whisper`, `ffmpeg-frames`) have no auth gate at all — but they are also not managed by `bun install`, so their gate is the preflight check (`bun run src/lib/preflight.ts`), not `check_adapter`.
+- **The video-pipeline adapters** (`yt-dlp`, `whisper`, `ffmpeg-frames`, `shazam`) have no auth gate at all — but they are also not managed by `bun install`, so their gate is the preflight check (`bun run src/lib/preflight.ts`), not `check_adapter`.
 
 None of this is visible to `list_adapters`. The honest verification is **`check_adapter(name)`** — it runs a minimal live probe through the normal dispatch path and reports what actually happened, surfacing the CLI's own auth/quota error text on failure. Because the probe runs a real (permissive) harness, it defaults to a **fresh throwaway temp cwd** when the caller names no `cwd`, so any write it makes lands off-tree; a caller-supplied `cwd` is honored as-is. Its status ladder:
 
@@ -66,7 +72,7 @@ None of this is visible to `list_adapters`. The honest verification is **`check_
 | `ok` | Binary present **and** the live probe completed — the harness ran and is authenticated. The reliable signal. |
 | `failed` | Binary present but the probe failed; `detail` carries the CLI's own error text (typically an auth / subscription / quota message, tailed from the job log where stderr lands). |
 | `timeout` | Probe still running at the timeout — inconclusive (slow model, network, or a hang); the probe job is cancelled. Retry with a larger `timeoutMs`. |
-| `present_unverified` | Binary present but the adapter opts out of automatic probing (`probeable: false`): `yt-dlp`, `whisper`, `ffmpeg-frames` — a probe would bill a real generation, hit the network, or run a slow transcode, and a generic health-check prompt can't supply the `outputPath`/`outputDir`/`addDir` their `buildArgs` demand. Dispatch a real job to confirm. Every agent harness is probeable. |
+| `present_unverified` | Binary present but the adapter opts out of automatic probing (`probeable: false`): `yt-dlp`, `whisper`, `ffmpeg-frames`, `shazam` — a probe would bill a real generation, hit the network, or run a slow transcode, and a generic health-check prompt can't supply the `outputPath`/`outputDir`/`addDir` their `buildArgs` demand. Dispatch a real job to confirm. Every agent harness is probeable. |
 | `missing` | Binary not on `PATH` — not installed. |
 
 `check_adapter(adapter, timeoutMs?, cwd?)` defaults to a 60s probe timeout (clamped to the JobStore wait cap). Before you rely on a harness you have **not** already exercised this session, check it.
@@ -85,3 +91,4 @@ A job's terminal state is decided by exit code **and** the adapter's `parseResul
 | `yt-dlp` | An absolute `.wav` path on yt-dlp's own `--print after_move:filepath` line (plus a labelled `SDD_VIDEO_PATH:` line for the retained video), and the file must exist on disk. No path line → `failed` even on exit 0. |
 | `whisper` | An `output_dir` scraped from mlx-whisper's `Args: {...}` line, with **both** `transcript.srt` and `transcript.txt` present on disk. Missing either → `failed`. |
 | `ffmpeg-frames` | An output dir recovered from ffmpeg's own `Output #0, …, to '<path>':` line, with the frames + `manifest.json` present on disk. |
+| `shazam` | A `SDD_SHAZAM_RESULT:<path>` line from the bundled script, the JSON present on disk, and either a title/artist pair or an explicit `SDD_SHAZAM_NOMATCH` — a result marker with neither is a broken run, not a negative. |

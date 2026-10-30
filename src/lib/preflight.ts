@@ -7,6 +7,10 @@
  * network access or download: "are these usable right now?" — and if not,
  * names exactly what to run to fix it.
  *
+ * `OPTIONAL_TOOL_SPECS` covers tools that only opt-in steps need (`uv`, for the
+ * `shazam` song-identification adapter). They are reported but never gate: `ok`
+ * and the CLI exit code are decided by the required tools alone.
+ *
  * Three independent checks per tool, all always reported (never short-circuit
  * on the first miss, per the phase's edge-case requirement):
  *   1. PRESENCE   — is the binary resolvable on PATH at all (`Bun.which`)?
@@ -140,6 +144,11 @@ function parseMlxWhisperVersion(stdout: string, stderr: string): string | undefi
   return /(\d+\.\d+(?:\.\d+)?)/.exec(`${stdout}\n${stderr}`)?.[1];
 }
 
+/** uv prints e.g. "uv 0.9.7 (abc1234 2026-06-01)" on stdout. */
+function parseUvVersion(stdout: string): string | undefined {
+  return /^uv (\S+)/m.exec(stdout)?.[1];
+}
+
 /** The three tools this pipeline depends on. */
 export const DEFAULT_TOOL_SPECS: ToolSpec[] = [
   {
@@ -173,6 +182,25 @@ export const DEFAULT_TOOL_SPECS: ToolSpec[] = [
     capabilityHint: (missing) =>
       `ffmpeg is present but missing required encoder(s): ${missing.join(", ")} — ` +
       "install a full ffmpeg build (brew install ffmpeg) that includes them.",
+  },
+];
+
+/**
+ * Tools needed only by OPT-IN steps of the pipeline. Deliberately NOT in
+ * `DEFAULT_TOOL_SPECS`: their absence must never fail the gate, because the
+ * core fetch → transcribe → frames → fuse sequence runs fine without them.
+ *
+ * `uv` backs the `shazam` adapter, which runs the bundled
+ * `assets/shazam-recognize.py` (PEP 723 inline metadata, so uv provisions the
+ * interpreter and shazamio itself — there is nothing else to install).
+ */
+export const OPTIONAL_TOOL_SPECS: ToolSpec[] = [
+  {
+    name: "uv",
+    binary: "uv",
+    versionArgs: ["--version"],
+    parseVersion: (stdout) => parseUvVersion(stdout),
+    installHint: "brew install uv  (or: curl -LsSf https://astral.sh/uv/install.sh | sh) — only needed for the optional `shazam` song-identification step",
   },
 ];
 
@@ -324,8 +352,15 @@ export async function preflight(tools?: string[], options: PreflightOptions = {}
 // video-ingest skill (Phase 7) runs via Bash before dispatching any work.
 // This is the ONLY place this module writes to stdout, and it does so via
 // `process.stdout.write` directly, never the global logging object.
+//
+// Optional tools are reported under a separate `optional` key and DELIBERATELY
+// do not influence `ok` or the exit code: the core pipeline runs without them,
+// so a missing `uv` is information ("the song-identification step is
+// unavailable"), never a gate failure.
 if (import.meta.main) {
   const result = await preflight();
-  process.stdout.write(JSON.stringify(result, null, 2) + "\n");
+  const optional = await preflight(undefined, { specs: OPTIONAL_TOOL_SPECS });
+  const report = { ...result, optional: optional.tools };
+  process.stdout.write(JSON.stringify(report, null, 2) + "\n");
   process.exit(result.ok ? 0 : 1);
 }

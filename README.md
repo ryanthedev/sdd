@@ -4,7 +4,9 @@
 
 sdd lets Claude hand a job to another CLI and get a clean answer back.
 
-Claude stays the brain. But some jobs a different tool just does better: transcribing a video, a second pair of eyes on your diff, painting an image, grinding through a scoped refactor. So instead of Claude trying to do all of it in one crowded context, sdd spins the right CLI up as a child process right in your repo, lets it do the one thing, and hands back a tidy `{status, summary, artifacts, raw}`. You keep a clean diff and Claude keeps a clear head.
+Count the AI coding CLIs installed on your machine. Odds are you pay for two or three and drive exactly one. Codex sits there, logged in, idle, while its quota window rolls over on a schedule whether you spent a token of it or not. Nothing carries forward. You re-buy that capacity every cycle and leave most of it on the table.
+
+Claude stays the brain. But some jobs another tool just does better, and every one of those is a job Claude isn't spending its own context on: transcribing a video, a second pair of eyes on your diff, painting an image, grinding through a scoped refactor. sdd spins the right CLI up as a child process in your repo, lets it do the one thing, and hands back a tidy `{status, summary, artifacts, raw}`. You keep a clean diff. Claude keeps a clear head.
 
 It's one Claude Code plugin: an MCP server plus a couple of Skills.
 
@@ -12,12 +14,13 @@ It's one Claude Code plugin: an MCP server plus a couple of Skills.
 
 ## What you can actually do with it
 
+- **Five reviewers in one turn.** `codex`, `grok`, `kimi`, `qwen` and `mistral` all emit the same output contract, so you can throw one diff at all five and read their findings side by side. Five vendors, five sets of blind spots, and the blind spots don't line up. That's the ensemble review, and it costs you one turn of wall clock instead of five.
+- **Get a second opinion on your code.** Or just pick one. Hand your diff to any of them and an independent verdict plus findings comes back while Claude keeps driving.
 - **Transcribe an Instagram reel.** Point the video pipeline at a URL (YouTube, Instagram, TikTok, X) and get back the audio, a transcript, and scene-cut keyframes. Great for "what's actually in this video" without watching it.
-- **Get a second opinion on your code.** Hand your diff to `codex`, `grok`, `kimi`, `qwen`, or `mistral` and get an independent review back, verdict and findings, while Claude keeps driving.
-- **Generate an image.** Ask `agy`, `codex`, or `grok` for a PNG with `kind: "image"`. That's how the banner above got made.
-- **Hand off the hard stuff.** Give a gnarly refactor a flagship model and high reasoning effort (`dispatch codex` with `model` + `effort`) and let it churn in the background.
-- **Check what's left in the tank.** `usage` tells you how much of your codex quota you've burned and when it resets. Costs no tokens — it reads the CLI's own account endpoint, no model call.
-- **Fan out.** Kick off a bunch of these at once. Each dispatch runs in parallel and returns right away, so Claude can start three reviews and collect them as they land.
+- **Generate an image.** Ask `agy`, `codex`, or `grok` for a PNG with `kind: "image"`. That's how the banner above got made. No Midjourney seat needed: with `agy` or `codex` the account you already log into covers it, and `grok` bills the same xAI key its reviews do.
+- **Hand off the hard stuff.** Give a gnarly refactor a flagship model and high reasoning effort (`dispatch codex` with `model` + `effort`) and let it churn in the background while you keep working.
+- **Check what's left in the tank.** `usage` reports how much of your codex quota you've burned, when the window resets, and what credit you're holding. It costs zero tokens and runs no model: it reads the CLI's own account endpoint. Call it before a big fan-out and you'll know whether you're spending surplus or about to hit a wall.
+- **Fan out.** Kick off a batch at once. Every dispatch runs in parallel and returns a job id right away, so Claude can start three jobs and collect them as they land.
 
 ## How it works
 
@@ -28,6 +31,8 @@ Three moves, and the first one never blocks:
 3. Collect the structured result with `result`.
 
 Eight MCP tools drive the whole thing: `dispatch`, `status`, `result`, `wait`, `cancel`, `list_adapters`, `check_adapter`, and `usage`. Job state lives in memory for the session, so a server restart clears it (that's fine for v1, no disk persistence yet).
+
+You could background a process from Bash and grep its stdout. What you'd be missing is the backstop: every adapter validates an output-contract marker before it calls a job `done`, so a harness that exits 0 without doing the work gets reported as `failed` instead of quietly passing. A misparsed flag, a swallowed prompt, a model that answered the wrong question. Those show up as failures here. In a shell one-liner they show up as a green checkmark.
 
 One thing that's on you, not the server: every agent harness runs wide open (it can edit the tree you hand it), and every dispatch runs in parallel. So if two jobs would write the same directory, keeping them apart is the caller's job. sdd serializes nothing.
 
@@ -48,23 +53,39 @@ The video pipeline also shells out to three tools that `bun install` doesn't man
 brew install yt-dlp
 brew install ffmpeg
 pip install -U mlx-whisper      # Apple Silicon speech-to-text
+brew install uv                 # optional — only for `shazam` (song identification)
 bun run src/lib/preflight.ts    # tells you what's present, what's missing
 ```
+
+`uv` is optional and reported separately: preflight lists it under `optional[]` and never fails the gate for it. Everything except the `shazam` step runs without it.
 
 **Instagram is the awkward one.** It rate-limits and often demands a login, unlike YouTube, TikTok, or X. Two things help: pass a logged-in session's cookies file (`dispatch yt-dlp` with `cookies`) — use a burner account, never your primary, and never commit or log that file. And run yt-dlp's nightly channel (`pip install -U --pre "yt-dlp[default]"`), since Instagram breaks the extractor often and nightly ships the fixes first. Pair it with `sleepRequests` to throttle.
 
 ## The adapters
 
-Eleven ship today. `list_adapters` shows you which ones are installed, `check_adapter` tells you whether one is actually logged in and usable (installed isn't the same as usable), and `usage` tells you how much quota is left.
+Ten ship today, and the ones that do more than one thing expose the extras as *kinds* on the same name (`agy` has `default`/`image`/`vision`; `codex` and `grok` have `default`/`image`). `list_adapters` shows you which ones are installed, `check_adapter` tells you whether one is actually logged in and usable (installed isn't the same as usable), and `usage` tells you how much quota is left.
 
 | Group | Adapters | For |
 |---|---|---|
-| Agent harnesses | `codex` | Review, second opinions, implementation. Pick the tier per call with `model` + `effort` — there are no pinned variants to remember |
+| Agent harnesses | `codex` | Review, second opinions, implementation. Pick the tier per call with `model` + `effort`; there are no pinned variants to remember |
 | | `agy` | Review / implement |
 | | `grok`, `kimi`, `qwen`, `mistral` | Second opinions from xAI, Moonshot, Alibaba, and Mistral |
 | Image + vision | `agy` / `codex` / `grok` + `kind: "image"` | Text to a PNG (agy: Nano Banana; codex: imagegen skill; grok: imagine skill) |
 | | `agy` + `kind: "vision"` | Fuse a transcript + keyframes into one understanding JSON |
 | Video pipeline | `yt-dlp`, `whisper`, `ffmpeg-frames` | Pull a video, transcribe it, extract scene-cut keyframes |
+| | `shazam` | Name the song playing in it, by acoustic fingerprint — the one thing the transcript and the frames both can't tell you |
+
+### What's paying for what
+
+Two of the harnesses ride an account you already log into. Four want an API key. Three are free. Worth knowing which is which before you fan out, because "spend the surplus I already bought" and "meter myself a few cents per review" are different decisions:
+
+| Harness | Auth | What a job costs |
+|---|---|---|
+| `codex` | OpenAI/ChatGPT login flow | Plan quota you've already paid for. `usage` shows what's left and when it resets. |
+| `agy` | its own login flow | Account-backed, same shape as codex. No per-token key to fund. |
+| `grok`, `kimi`, `qwen`, `mistral` | one env var each (`XAI_API_KEY`, `MOONSHOT_API_KEY`, `DASHSCOPE_API_KEY`, `MISTRAL_API_KEY`) | Metered per token. Cheap for a review, but it's real spend, so fan these out deliberately. |
+| `yt-dlp`, `whisper`, `ffmpeg-frames` | none | Free. whisper and ffmpeg run locally on your own silicon. |
+| `shazam` | none | Free. Needs `uv` on PATH; it provisions the recognizer on first run and caches it. |
 
 Each harness has its own quirks: flag ordering, the marker it emits, what auth it needs. The full per-harness reference (capabilities, auth, and every gotcha) lives in **[`skills/subagent-driven-development/references/harnesses.md`](skills/subagent-driven-development/references/harnesses.md)**. For the orchestration doctrine (when to fan out, when to serialize, how to use `wait`) see **[`skills/subagent-driven-development/SKILL.md`](skills/subagent-driven-development/SKILL.md)**.
 

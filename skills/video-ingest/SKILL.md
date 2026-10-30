@@ -9,9 +9,12 @@ description: >-
   fetch → transcribe ∥ frames → fuse sequence with its parallel fan-out,
   per-platform auth (Instagram burner cookies / nightly / sleeps), frame
   budgets, timestamp interleaving via the frame manifest, the split-privilege
-  containment (full-network fetch vs. sandboxed fusion), and the known visual
-  blind spots. Use when ingesting, transcribing, or extracting a visual
-  understanding of a video from a URL on any of the four platforms.
+  containment (full-network fetch vs. sandboxed fusion), the known visual
+  blind spots, and the optional shazam step that names the song playing in a
+  video by acoustic fingerprint (which neither the transcript nor the frames
+  can do). Use when ingesting, transcribing, or extracting a visual
+  understanding of a video from a URL on any of the four platforms, or when
+  asked what song is playing in one.
   Not for: image generation (dispatch agy or codex with kind:"image"),
   code review or second opinions (subagent-driven-development), or writing new
   MCP tools / adapters (runtime code, out of scope here).
@@ -19,9 +22,10 @@ when_to_use: >-
   Trigger phrases: "ingest this video", "transcribe this YouTube/TikTok/
   Instagram/X video", "what happens in this video", "get the transcript and
   visuals of this reel/short/clip", "summarize this video URL", "fuse the
-  spoken and on-screen content of this video". Use before dispatching any of
-  the yt-dlp / whisper / ffmpeg-frames adapters plus agy's "vision" kind, and run the
-  preflight gate first.
+  spoken and on-screen content of this video", "what song is playing in this
+  reel", "identify the music in this video", "what's this track". Use before
+  dispatching any of the yt-dlp / whisper / ffmpeg-frames / shazam adapters
+  plus agy's "vision" kind, and run the preflight gate first.
 ---
 
 # Video ingestion
@@ -35,6 +39,8 @@ The pipeline shells out to three CLIs that `bun install` does **not** manage: `y
 ```
 bun run src/lib/preflight.ts
 ```
+
+A fourth tool, `uv`, backs the **optional** song-identification step (§10). It is reported separately under `optional[]` and deliberately does **not** gate: the core sequence runs without it.
 
 It prints a JSON report and **exits non-zero when any tool is missing or unusable**. On a non-zero exit, **stop** — do not dispatch. Surface the per-tool `hint` fields from the JSON verbatim (each names the exact install command); the `tools[]` array flags what is absent, too old, or (for `ffmpeg`) missing a required encoder. Only proceed to step 1 when it exits 0. This gate exists so the pipeline fails loudly at the start with actionable guidance, never mid-run with an opaque spawn error three dispatches deep.
 
@@ -60,15 +66,18 @@ dispatch(yt-dlp, <url>, {outputDir: <artifactDir>, cookies?, subLangs?, sleepReq
 dispatch(whisper, <audioWav>, {outputDir: <artifactDir>})           dispatch(ffmpeg-frames, <video>, {outputDir: <artifactDir>,
   ⇒ artifacts = [transcript.srt, transcript.txt]                       frameCount?, sceneThreshold?})
                                                                        ⇒ artifacts = [...frames, manifest.json]
-  └───────────────────────────── wait BOTH ─────────────────────────────────────────────────────┘
+  │                                    (+ OPTIONAL, same fan-out, only when the song is asked for:
+  │                                       dispatch(shazam, <video|audioWav>, {outputPath: <artifactDir>/song.json})
+  │                                       ⇒ artifacts = [song.json]   — see §10)
+  └───────────────────────────── wait ALL DISPATCHED ───────────────────────────────────────────┘
   │
   ▼
-dispatch(agy, kind:"vision", <short instruction>, {addDir: <artifactDir>, outputPath: <artifactDir>/fused.json, model: "Gemini 3.1 Pro (High)"})
+dispatch(agy, kind:"vision", <short instruction>, {addDir: <artifactDir>, outputPath: <artifactDir>/fused.json})
   → wait → result   ⇒ artifacts = [fused.json]   ({summary, moments:[{tSeconds, spoken, visual, isVisualGag}]})
 ```
 
 - **Step 2 (fetch):** `yt-dlp` fetches a 720p-capped video *and* extracts a whisper-ready wav, keeping both. `result`'s `artifacts` array is `[audioWav, video, ...subtitles]` — audio first, video second, subtitles (best-effort) last. Read the first two paths for the fan-out.
-- **Step 3 (fan out — the parallel point):** `whisper` reads only the audio; `ffmpeg-frames` reads only the video. They are fully independent reads with no shared write target — **dispatch both in the same turn**, then `wait` on the pair. This is the pipeline's one concurrency win; do not serialize them.
+- **Step 3 (fan out — the parallel point):** `whisper` reads only the audio; `ffmpeg-frames` reads only the video. They are fully independent reads with no shared write target — **dispatch both in the same turn**, then `wait` on the pair. This is the pipeline's one concurrency win; do not serialize them. `shazam` (§10) belongs in this same fan-out on the turns where it runs at all — it is another independent read with its own output path.
 - **Step 4 (fuse):** agy's `vision` kind reads the transcript + frames + manifest from `<artifactDir>` (granted via `--add-dir`) and writes `fused.json`. Its prompt is a short instruction — the adapter's own `injectContract` supplies the full fusion contract and output schema; you just point it at the material. `wait`/`result`, then read `fused.json`.
 
 ## 3. Whisper is mandatory; captions are opportunistic
@@ -112,7 +121,7 @@ The pipeline is deliberately split across a privilege boundary — this is the c
 
 ## 8. Strong vision model — not Flash-Low
 
-Default the `vision` kind to **`"Gemini 3.1 Pro (High)"`** (already the adapter default; pass it explicitly for clarity). **Do NOT use a weak/fast tier like `Gemini 3.5 Flash (Low)`** — it loops on the frame set and times out. This is a capability floor, not a cost preference: the fusion genuinely needs the strong tier to read `--add-dir` frames and produce the aligned output.
+The `vision` kind defaults to **`"Gemini 4 Argon (High)"`**. Omit `model` and let the adapter default apply: it is the one place the name lives, so the next agy model-roster change (agy auto-updates) needs a fix in one file, not in every dispatch. Override `model` only with a name `agy models` currently lists. **Do NOT use a weak/fast tier like `Gemini 3.8 Flash (Low)`** — it loops on the frame set and times out. This is a capability floor, not a cost preference: the fusion genuinely needs the strong tier to read `--add-dir` frames and produce the aligned output.
 
 ## 9. Known visual blind spots
 
@@ -125,11 +134,28 @@ Frame sampling captures *stills*, so set downstream expectations — the fused u
 
 Raising `frameCount` / lowering `sceneThreshold` narrows the meme-flash gap but never closes the motion/timing ones — those are inherent to still-frame analysis.
 
-## 10. Manual E2E (DEFERRED-MANUAL)
+## 10. Identifying the music (optional — the `shazam` step)
+
+The fused understanding reads two channels, speech and pixels, and **neither can name a song**. That is a blind spot of a different kind from §9's: not a sampling artifact, but a channel the pipeline doesn't have. A reel scored with a wordless vocal hook transcribes as one long `Ооооо`, the platform's audio attribution is UI chrome that never reaches the downloaded media, and `yt-dlp`'s metadata carries no `track`/`artist`. Song identity has to come from the waveform.
+
+Dispatch the `shazam` adapter when the user asks what the music is — it is **opt-in and off the critical path**, so it never runs as part of the default sequence:
+
+```
+dispatch(shazam, <audio or video path>, {outputPath: <artifactDir>/song.json})
+  → wait → result   ⇒ artifacts = [song.json]
+```
+
+- **It is independent of everything after the fetch.** It reads only the media file, so it can join the §2 fan-out — dispatch it in the same turn as `whisper` and `ffmpeg-frames`, and `wait` on all three. Its output path is distinct from theirs, so nothing collides.
+- **Feed it either the video or the wav.** The recognizer transcodes its input to 16 kHz mono PCM with `ffmpeg` before fingerprinting, so an `.mp4` works directly. Do NOT hand raw non-wav media to a fingerprinter that skips this — pydub sniffs an mp4 as raw mpeg audio and returns a garbage fingerprint that fails to match while looking like a clean negative.
+- **`song.json`** holds `{matched, title, artist, album, label, released, genre, shazam_url, apple_music_url, isrc, raw}`. Only Apple Music and Shazam links come back — for a Spotify link, search the web for the title + artist, which also confirms the match independently.
+- **NO MATCH IS `done`, NOT `failed`.** "This audio is not in the catalog" is a real answer; only a breakdown (unreadable audio, API failure) fails. Read `matched` — never infer a failure from an empty title.
+- **Tooling:** it runs `uv`, which provisions the recognizer's interpreter and dependencies from the bundled script's inline metadata on first use. `uv` is reported in preflight's `optional[]` and never gates the run (§0). Absent `uv`, this step is unavailable and the rest of the pipeline is unaffected.
+
+## 11. Manual E2E (DEFERRED-MANUAL)
 
 `yt-dlp` and `mlx-whisper` are **not installed in this build environment**, so the real-URL end-to-end run cannot be executed here and must be verified manually on a machine that has the tooling:
 
 1. **Install the tools:** `brew install yt-dlp ffmpeg` and `pip install -U mlx-whisper` (Apple Silicon). Then `bun run src/lib/preflight.ts` and confirm it exits 0.
 2. **Pick a short public YouTube URL** (a clip of tens of seconds keeps whisper + frame extraction fast).
-3. **Run the sequence in §2** against a fresh `<artifactDir>`: `dispatch(yt-dlp)` → `wait` → fan out `dispatch(whisper)` ∥ `dispatch(ffmpeg-frames)` → `wait` both → `dispatch(agy, kind:"vision", …, {outputPath: <artifactDir>/fused.json, model: "Gemini 3.1 Pro (High)"})` → `wait`/`result`.
+3. **Run the sequence in §2** against a fresh `<artifactDir>`: `dispatch(yt-dlp)` → `wait` → fan out `dispatch(whisper)` ∥ `dispatch(ffmpeg-frames)` → `wait` both → `dispatch(agy, kind:"vision", …, {outputPath: <artifactDir>/fused.json})` → `wait`/`result`.
 4. **Confirm success:** `<artifactDir>/fused.json` exists and is non-empty, and its `moments[]` array has entries with `tSeconds`, `spoken`, and `visual` populated. That proves the whole pipeline end-to-end on real tooling (plan success criterion #1).

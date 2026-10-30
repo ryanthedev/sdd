@@ -16,6 +16,7 @@ import { join } from "node:path";
 import { readFileSync } from "node:fs";
 import {
   DEFAULT_TOOL_SPECS,
+  OPTIONAL_TOOL_SPECS,
   preflight,
   type PreflightResult,
   type ToolSpec,
@@ -317,4 +318,45 @@ test("test_DW_1_3_readme_documents_all_three_tools_and_instagram_caveat", () => 
   expect(readme).toMatch(/nightly/i);
   // points at the preflight CLI
   expect(readme).toMatch(/bun run src\/lib\/preflight\.ts/);
+});
+
+/**
+ * OPTIONAL_TOOL_SPECS — tools only an opt-in step needs (`uv`, for `shazam`).
+ * The invariant under test is that they are reported but never gate: a machine
+ * without `uv` must still pass preflight, because the core fetch → transcribe →
+ * frames → fuse sequence is complete without it.
+ */
+test("optional specs are disjoint from the gating specs", () => {
+  const required = new Set(DEFAULT_TOOL_SPECS.map((s) => s.name));
+  expect(OPTIONAL_TOOL_SPECS.length).toBeGreaterThan(0);
+  for (const spec of OPTIONAL_TOOL_SPECS) {
+    expect(required.has(spec.name)).toBe(false);
+    // Every optional spec still names an exact fix, like every required one.
+    expect(spec.installHint.length).toBeGreaterThan(0);
+  }
+  expect(OPTIONAL_TOOL_SPECS.map((s) => s.name)).toContain("uv");
+});
+
+test("a missing optional tool is reported but never flips ok", async () => {
+  const emptyDir = freshDir("sdd-preflight-empty-");
+
+  // Nothing on PATH at all: the optional probe reports the miss with a hint...
+  const optional = await preflight(undefined, { specs: OPTIONAL_TOOL_SPECS, PATH: emptyDir });
+  expect(optional.tools[0]?.found).toBe(false);
+  expect(optional.tools[0]?.hint).toBeDefined();
+
+  // ...and the gating call is decided by DEFAULT_TOOL_SPECS alone — an absent
+  // `uv` is never one of the tools it looks at.
+  const gating = await preflight(undefined, { specs: DEFAULT_TOOL_SPECS, PATH: emptyDir });
+  expect(gating.tools.map((t) => t.name)).not.toContain("uv");
+});
+
+test("uv version output is parsed", async () => {
+  const dir = freshDir("sdd-preflight-uv-");
+  writeFakeBinary(dir, "uv", "uv 0.11.21 (abc1234 2026-06-01)");
+
+  const result = await preflight(undefined, { specs: OPTIONAL_TOOL_SPECS, PATH: dir });
+  expect(result.tools[0]?.found).toBe(true);
+  expect(result.tools[0]?.version).toBe("0.11.21");
+  expect(result.tools[0]?.hint).toBeUndefined();
 });
