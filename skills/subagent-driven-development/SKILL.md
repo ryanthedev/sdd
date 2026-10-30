@@ -2,24 +2,25 @@
 name: subagent-driven-development
 description: >-
   Orchestration doctrine for delegating scoped work units to CLI agent
-  harnesses (codex, agy, grok, kimi, qwen, mistral) through the sdd MCP server's eight tools (dispatch,
-  status, result, wait, list_adapters, cancel, check_adapter, usage). Documents
-  which adapter fits which job, the caller-owned concurrency rule (the server
-  serializes nothing), the poll-by-default wait policy, each harness's parsing
-  gotchas, and how to health-check a harness's auth/liveness before relying on
-  it. Use when delegating a scoped task to a CLI subagent harness, getting a
-  second opinion or independent review, generating an image, fanning out
-  parallel jobs, checking how much account quota a harness has left before
-  spending it, deciding whether to poll or block on a dispatched job, or
-  checking whether a harness is installed and logged in.
+  harnesses (codex, agy, grok, kimi, qwen, mistral) and the Jev decision
+  model through the sdd MCP server's eight tools (dispatch, status, result,
+  wait, list_adapters, cancel, check_adapter, usage). Covers which adapter fits
+  which job, the caller-owned concurrency rule, poll-vs-block waits, harness
+  gotchas, auth health checks, and four recipes: quota-first routing, parallel
+  writers in git worktrees, a five-vendor ensemble review ranked by agreement,
+  and repo-scale targeting with Jev. Use when delegating a task to a CLI
+  harness, getting a second opinion or ensemble review, generating an image,
+  fanning out or racing implementations, ranking a batch with Jev, or checking
+  a harness's quota or login.
   Not for: in-process Agent-tool subagents (use oberskills:agent) or writing
-  new MCP tools or adapters (runtime code, out of scope here).
+  new MCP tools or adapters.
 when_to_use: >-
-  Trigger phrases: "get a second opinion", "review this with codex", "review
-  this with agy", "generate an image", "delegate this to a subagent",
-  "dispatch this to codex/agy", "fan this out", "run these reviews in
-  parallel", "is codex working", "is the harness logged in", "check an
-  adapter", "health-check an adapter". Use before calling any sdd MCP tool.
+  Trigger phrases: "get a second opinion", "review this with codex/agy", "have
+  all the models review this", "ensemble review", "generate an image",
+  "delegate this to a subagent", "fan this out", "have codex and agy both try
+  it", "run these in parallel", "rank these with jev", "audit this whole repo",
+  "how much codex quota is left", "is the harness logged in". Use before
+  calling any sdd MCP tool.
 ---
 
 # Subagent-driven development
@@ -46,7 +47,7 @@ What follows is orchestration discipline you must apply yourself — advice, not
 - **Fan out jobs that can't collide.** Reviews and second opinions against the same tree, image generation to an out-of-tree path, independent reads — dispatch several in the same turn, then `wait` on the batch. This is still the big win.
 - **Serialize jobs that write the same tree.** Sequence them deliberately: `dispatch(implement) → wait → dispatch(review)`. Never two implementation harnesses in one `cwd` at once.
 - **The failure mode is real and silent.** Dispatch two harnesses into the same tree and they both run: interleaved edits, one clobbering the other's file, a review reading a half-written tree. Nothing errors. Nothing warns. You get a corrupted diff and a confident summary.
-- **When in doubt, give them separate trees.** Distinct `cwd`s (a worktree, a temp clone) make the collision structurally impossible instead of merely avoided.
+- **When in doubt, give them separate trees.** Distinct `cwd`s (a worktree, a temp clone) make the collision structurally impossible instead of merely avoided. To run writers in parallel on purpose, including a bake-off where two harnesses attempt the same change, follow [recipe 2](references/recipes.md#2-parallel-writers-in-worktrees).
 
 ## 2. Poll-by-default wait
 
@@ -106,11 +107,12 @@ What follows is orchestration discipline you must apply yourself — advice, not
 | Deep review — subtle correctness, security-sensitive code | `codex` with `effort:"high"` (add `model:"gpt-5.6-sol"` for the flagship tier) |
 | Fast/cheap spot-check | `codex` with `effort:"low"` |
 | Am I about to hit a quota wall? | `usage` — no tokens, no work unit |
-| Ensemble review (multi-model, parallel) | fan out `codex` + `grok`/`kimi`/`qwen`/`mistral` |
+| Ensemble review (multi-model, parallel) | fan out `codex` + `grok`/`kimi`/`qwen`/`mistral`, then rank with [recipe 3](references/recipes.md#3-ensemble-review-ranked) |
 | Implement a change in the working tree | `agy` or `codex` |
 | Generate an image | `agy`, `codex`, or `grok` with `kind: "image"` + `outputPath` |
 | Fuse a transcript + keyframes into one understanding JSON | `agy` with `kind: "vision"` |
 | Ingest a video from a URL | the `video-ingest` skill (`yt-dlp` → `whisper` ∥ `ffmpeg-frames` → agy `kind:"vision"`) |
+| Rank or route a batch at volume (which files to audit, which findings tie-break first) | `jev` with a request file + `outputPath`. Ranks only; it never writes or edits |
 
 The review roster (`codex`, `grok`, `kimi`, `qwen`, `mistral`) are interchangeable second-opinion harnesses sharing one output contract (`VERDICT:` + `## Findings`) — fan them out in parallel for an ensemble review. They are *scoped* to reviewing by their prompt, not sandboxed to it: each still runs permissively and could touch the tree, so don't overlap them with an implementation job in the same `cwd`. Full per-harness capability + auth detail: [`references/harnesses.md`](references/harnesses.md).
 
@@ -133,3 +135,16 @@ Full per-harness capability + auth table: [`references/harnesses.md`](references
 ## 5. Tool surface
 
 `dispatch(adapter, prompt, cwd?, timeoutMs?) → jobId`, `status(jobId)`, `result(jobId)`, `wait(jobIds, timeoutMs?)`, `list_adapters()`, `cancel(jobId)`, `check_adapter(adapter, timeoutMs?, cwd?)`, `usage(adapter?, refresh?)`. Eight tools total. Full parameter and return-shape reference: the project [README](../../README.md).
+
+## 6. Recipes: running it at full strength
+
+[`references/recipes.md`](references/recipes.md) turns the tools into four bigger moves. Read the recipe before running it; each one says what was measured and what is still a bet.
+
+| Recipe | One line |
+|---|---|
+| **Quota-first routing** | Call `usage("codex")` before a fan-out; spend prepaid quota that resets anyway before metered keys |
+| **Parallel writers in worktrees** | One `git worktree` per writer, so implementations run in parallel or race each other; Claude reviews and merges |
+| **Ensemble review, ranked** | Five vendors, one fixed finding format, findings clustered and ranked by agreement, then reviewer severity, then (as an experiment) Jev |
+| **Repo-scale targeting with Jev** | Jev ranks every routine by likely defect (AUC 0.84 measured); reviewers read the top 20–30%. Never for pruning a PR review |
+
+Two Jev rules hold everywhere: **rank by its probabilities, never threshold them** (they are uncalibrated), and **never use it to judge whether a finding is true** (it measured AUC 0.54–0.64 there, worse than the reviewer's own severity).
