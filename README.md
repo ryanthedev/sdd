@@ -54,6 +54,7 @@ brew install yt-dlp
 brew install ffmpeg
 pip install -U mlx-whisper      # Apple Silicon speech-to-text
 brew install uv                 # optional — only for `shazam` (song identification)
+export AI_GATEWAY_API_KEY=...   # optional — only for `jev`; set it where Claude Code starts, then restart it
 bun run src/lib/preflight.ts    # tells you what's present, what's missing
 ```
 
