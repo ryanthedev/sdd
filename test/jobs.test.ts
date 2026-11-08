@@ -461,3 +461,38 @@ test("test_stderr_chunks_are_streamed_into_the_per_job_log_file", async () => {
   const logContents = readFileSync(job.logPath, "utf8");
   expect(logContents).toContain("oops: something went sideways");
 });
+
+// Regression (domod #143): a job used to be reported terminal as soon as its
+// child closed, while its log stream was still opening or flushing. Two bugs
+// followed: (1) a caller reading logPath right after `done` could get a
+// truncated log, and (2) the stream had no error listener, so a log that
+// could not be opened (its folder removed, disk full) threw from an
+// EventEmitter and could take the whole server down. Under full-suite load
+// (2) surfaced as an ENOENT blamed on whichever test was running.
+test("test_job_is_terminal_only_after_its_log_is_fully_flushed", async () => {
+  const store = newStore();
+  const size = 4 * 1024 * 1024; // big enough that the flush outlives the child's close
+  const adapter = stubAdapter({
+    name: "big-stderr",
+    buildArgs: () => [BUN, "-e", `process.stderr.write("e".repeat(${size}))`],
+  });
+  const id = store.dispatch(adapter, "x", {});
+  const res = await store.wait([id], 10_000);
+  expect(res.done).toEqual([id]);
+  expect(readFileSync(store.get(id)!.logPath, "utf8").length).toBe(size);
+});
+
+test("test_unwritable_log_never_throws_and_the_job_still_settles", async () => {
+  const logDir = freshDir("sdd-logs-gone-");
+  const store = newStore({ logDir });
+  const adapter = stubAdapter({ name: "quick", buildArgs: () => [BUN, "-e", "process.stdout.write('ok')"] });
+  const id = store.dispatch(adapter, "x", {});
+  // Remove the folder before the log stream's (asynchronous) open runs.
+  rmSync(logDir, { recursive: true, force: true });
+
+  const res = await store.wait([id], 10_000);
+  expect(res.done).toEqual([id]);
+  const job = store.get(id)!;
+  expect(job.state).toBe("done"); // the result comes from captured output, not the log
+  expect(job.result!.summary).toBe("ok");
+});

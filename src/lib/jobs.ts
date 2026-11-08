@@ -267,6 +267,16 @@ export class JobStore {
     });
 
     const logStream = createWriteStream(logPath, { flags: "a" });
+    // The log is a debugging aid, never the result (that comes from the captured
+    // buffers below). A log that can't be opened or written (its folder removed,
+    // disk full) must not throw: an EventEmitter "error" with no listener throws
+    // and would take the whole server down. Report it once and carry on.
+    let logFailed = false;
+    logStream.on("error", (err) => {
+      if (logFailed) return;
+      logFailed = true;
+      log(`job ${id}: could not write log ${logPath}: ${err.message} (the job's result is unaffected)`);
+    });
     const stdout: string[] = [];
     const stderr: string[] = [];
     child.stdout?.on("data", (chunk: Buffer) => {
@@ -294,12 +304,23 @@ export class JobStore {
     const tracked: TrackedJob = { job, adapter, child, logStream, stdout, stderr, settled: false, done, resolveDone };
     this.#jobs.set(id, tracked);
 
+    // A job turns terminal only once its log stream has CLOSED: flushed to disk,
+    // or failed and reported. Settling on the child's close alone let `wait`
+    // return while the log was still opening or flushing, so a caller reading
+    // logPath right after `done` could get a truncated file.
     const finalize = (finish: () => void): void => {
       if (tracked.settled) return;
       tracked.settled = true;
+      const settle = (): void => {
+        finish();
+        tracked.resolveDone();
+      };
+      if (logStream.closed) {
+        settle(); // it already failed and closed; nothing left to flush
+        return;
+      }
+      logStream.once("close", settle);
       logStream.end();
-      finish();
-      tracked.resolveDone();
     };
 
     child.on("close", (code, signal) => finalize(() => this.#classify(tracked, code, signal)));
