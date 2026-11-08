@@ -12,8 +12,9 @@ description: >-
   harness, getting a second opinion or ensemble review, generating an image,
   fanning out or racing implementations, ranking a batch with Jev, or checking
   a harness's quota or login.
-  Not for: in-process Agent-tool subagents (use oberskills:agent) or writing
-  new MCP tools or adapters.
+  Not for: in-process Agent-tool subagents (use oberskills:agent), running a
+  whole task as a multi-agent operation (use commander), or writing new MCP
+  tools or adapters.
 when_to_use: >-
   Trigger phrases: "get a second opinion", "review this with codex/agy", "have
   all the models review this", "ensemble review", "generate an image",

@@ -45,7 +45,7 @@ It ships in the [rtd marketplace](https://github.com/ryanthedev/rtd-claude-inn).
 /plugin install sdd@rtd
 ```
 
-That wires up the MCP server and auto-discovers the `subagent-driven-development` and `video-ingest` skills. You'll need `bun >= 1.3.0`. Run `bun install` for the two deps (`@modelcontextprotocol/sdk`, `zod`).
+That wires up the MCP server and auto-discovers the `subagent-driven-development`, `commander` and `video-ingest` skills. `commander` runs a whole task as a multi-agent operation: Claude acts as your proxy, charters 3-5 tracks, staffs them with interactive agents in herdr-core (`hc`), subagents and sdd jobs, then verifies and merges. You'll need `bun >= 1.3.0`. Run `bun install` for the two deps (`@modelcontextprotocol/sdk`, `zod`).
 
 The video pipeline also shells out to three tools that `bun install` doesn't manage. Grab them and run the preflight:
 
