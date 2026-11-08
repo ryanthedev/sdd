@@ -2,7 +2,9 @@
 
 Copy these into the operation folder (`.commander/<date>-<slug>/`) and fill them in. They follow the shape of the upublish `CHARTER.md` and the-problem2 `COMMANDER.md`, which worked.
 
-Contents: [CHARTER.md](#chartermd) · [brief](#brief-trackmd) · [status file](#status-trackmd) · [launch prompt](#launch-prompt-the-commanders-first-message) · [resume point](#resume-point-appended-to-the-charter-at-succession)
+## Contents
+
+[CHARTER.md](#chartermd) · [brief](#brief-trackmd) · [status file](#status-trackmd) · [launch prompt](#launch-prompt-the-commanders-first-message) · [resume point](#resume-point-appended-to-the-charter-at-succession)
 
 ## CHARTER.md
 
@@ -110,6 +112,8 @@ Report with hc send <lead terminal> when done or stuck.
 
 ```markdown
 ### Resume point <date time> (lead <old> -> <new>)
+- Old lead terminal: <$HC_TERMINAL_ID of the outgoing lead>. The commanders are still its children: wait on them with `hc wait --children any <old lead terminal>`, or by name.
+- Commanders told the new lead's name: yes/no
 - Live terminals: cmd-a (working on X), cmd-b (blocked: Ask #2) ...
 - Merged so far: <branches>
 - Open Asks: <ids>
