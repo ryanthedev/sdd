@@ -56,6 +56,10 @@ export function resolveKey(): { key: string | null; file: string } {
   return { key: m?.[1] ?? null, file };
 }
 
+/** The two budget pools (contract section 4): `vision` is ledger kind "vision"
+ *  (video fusion); `decision` is every other gemini line, a missing kind included. */
+export type Pool = "decision" | "vision";
+
 export interface GeminiBudget {
   dailyUsd: number;
   monthlyUsd: number;
@@ -63,7 +67,10 @@ export interface GeminiBudget {
    *  UNKNOWN_COST_CHARGE_USD per job against the budget). Default false. */
   allowUnpricedModels: boolean;
 }
-const DEFAULT_BUDGET: GeminiBudget = { dailyUsd: 5, monthlyUsd: 50, allowUnpricedModels: false };
+const DEFAULT_LIMITS: Record<Pool, { dailyUsd: number; monthlyUsd: number }> = {
+  decision: { dailyUsd: 5, monthlyUsd: 50 },
+  vision: { dailyUsd: 15, monthlyUsd: 150 },
+};
 
 /** A billed job whose cost is unknown is charged this much against the budget
  *  (fail closed): an unknown cost must never read as free. */
@@ -71,7 +78,7 @@ export const UNKNOWN_COST_CHARGE_USD = 0.25;
 
 /** Refusal text for a model with no known price, or null when it may run. */
 export function unpricedModelRefusal(model: string, priced: (m: string) => boolean, who: string): string | null {
-  if (priced(model) || readBudget(who).allowUnpricedModels) return null;
+  if (priced(model) || readBudget(who, "decision").allowUnpricedModels) return null;
   return `model "${model}" has no known price, so its spend can't be tracked; use a priced model or ask the user to set "allowUnpricedModels": true in the gemini block of ~/.config/sdd/budget.json`;
 }
 
@@ -85,28 +92,33 @@ export function ledgerPath(): string {
   return join(process.env.XDG_STATE_HOME || join(homedir(), ".local", "state"), "sdd", "ledger.jsonl");
 }
 
-/** `~/.config/sdd/budget.json`'s `gemini` block; missing or partial = defaults.
- *  An unparseable file also falls back to defaults (warned on stderr): the
- *  spend ledger still bounds the job. */
-export function readBudget(who: string): GeminiBudget {
+/** `~/.config/sdd/budget.json`'s `gemini` block, limits for one pool (decision =
+ *  top-level `dailyUsd`/`monthlyUsd`; vision = nested `vision` block); missing or
+ *  partial = per-field defaults. An unparseable file also falls back to defaults
+ *  (warned on stderr): the spend ledger still bounds the job. */
+export function readBudget(who: string, pool: Pool): GeminiBudget {
+  const defaults: GeminiBudget = { ...DEFAULT_LIMITS[pool], allowUnpricedModels: false };
   const file = join(configHome(), "sdd", "budget.json");
   let text: string;
   try {
     text = readFileSync(file, "utf8");
   } catch {
-    return { ...DEFAULT_BUDGET };
+    return defaults;
   }
   try {
-    const g = (JSON.parse(text) as { gemini?: { dailyUsd?: unknown; monthlyUsd?: unknown; allowUnpricedModels?: unknown } }).gemini;
+    type Block = { dailyUsd?: unknown; monthlyUsd?: unknown; allowUnpricedModels?: unknown; vision?: unknown };
+    const g = (JSON.parse(text) as { gemini?: Block }).gemini;
+    const isObj = (v: unknown): v is Block => typeof v === "object" && v !== null && !Array.isArray(v);
+    const block: Block | undefined = pool === "vision" ? (isObj(g?.vision) ? g.vision : undefined) : g;
     const num = (v: unknown, d: number) => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : d);
     return {
-      dailyUsd: num(g?.dailyUsd, DEFAULT_BUDGET.dailyUsd),
-      monthlyUsd: num(g?.monthlyUsd, DEFAULT_BUDGET.monthlyUsd),
+      dailyUsd: num(block?.dailyUsd, defaults.dailyUsd),
+      monthlyUsd: num(block?.monthlyUsd, defaults.monthlyUsd),
       allowUnpricedModels: g?.allowUnpricedModels === true,
     };
   } catch {
     process.stderr.write(`${who}: ${file} is not valid JSON; using default budget\n`);
-    return { ...DEFAULT_BUDGET };
+    return defaults;
   }
 }
 
@@ -118,11 +130,12 @@ export interface Spend {
   unreadable: string | null;
 }
 
-/** Sum gemini `usage.costUsd` from the ledger over the rolling 24h and the
- *  local calendar month. Missing file (ENOENT) = $0; any other read error sets
+/** Sum gemini `usage.costUsd` for one pool from the ledger over the rolling 24h
+ *  and the local calendar month (vision = kind "vision"; decision = any other
+ *  kind, a missing one included). Missing file (ENOENT) = $0; any other read error sets
  *  `unreadable` so callers fail closed; torn/invalid lines are skipped;
  *  a null cost counts as `unknownCostJobs`, never as 0. */
-export function readSpend(now: number = Date.now()): Spend {
+export function readSpend(pool: Pool, now: number = Date.now()): Spend {
   const spend: Spend = { usd24h: 0, usdMonth: 0, unknownCostJobs: 0, unreadable: null };
   let text: string;
   try {
@@ -139,13 +152,13 @@ export function readSpend(now: number = Date.now()): Spend {
   // timestamp in the future (clock skew, a bad line) counts in neither window.
   for (const line of text.split("\n")) {
     if (!line.includes('"gemini"')) continue;
-    let rec: { adapter?: unknown; ts?: unknown; usage?: { costUsd?: unknown; calls?: unknown; unknownCalls?: unknown } | null };
+    let rec: { adapter?: unknown; kind?: unknown; ts?: unknown; usage?: { costUsd?: unknown; calls?: unknown; unknownCalls?: unknown } | null };
     try {
       rec = JSON.parse(line);
     } catch {
       continue;
     }
-    if (rec.adapter !== "gemini" || typeof rec.ts !== "number" || rec.ts > now) continue;
+    if (rec.adapter !== "gemini" || (rec.kind === "vision") !== (pool === "vision") || typeof rec.ts !== "number" || rec.ts > now) continue;
     const inMonth = rec.ts >= monthStart;
     const inDay = rec.ts > dayStart;
     if (!inMonth && !inDay) continue;
@@ -170,13 +183,13 @@ export function readSpend(now: number = Date.now()): Spend {
   return spend;
 }
 
-/** The refusal message when either limit is already reached, else null. */
-export function budgetRefusal(who: string, now: number = Date.now()): string | null {
-  const b = readBudget(who);
-  const s = readSpend(now);
-  if (s.unreadable !== null) return `budget unknown: the spend ledger could not be read (${s.unreadable}); refusing paid calls`;
-  if (s.usd24h >= b.dailyUsd) return `budget exceeded: $${s.usd24h.toFixed(4)} in 24h of $${b.dailyUsd} daily`;
-  if (s.usdMonth >= b.monthlyUsd) return `budget exceeded: $${s.usdMonth.toFixed(4)} this month of $${b.monthlyUsd} monthly`;
+/** The refusal message (naming the pool) when either limit is already reached, else null. */
+export function budgetRefusal(who: string, pool: Pool, now: number = Date.now()): string | null {
+  const b = readBudget(who, pool);
+  const s = readSpend(pool, now);
+  if (s.unreadable !== null) return `${pool} budget unknown: the spend ledger could not be read (${s.unreadable}); refusing paid calls`;
+  if (s.usd24h >= b.dailyUsd) return `${pool} budget exceeded: $${s.usd24h.toFixed(4)} in 24h of $${b.dailyUsd} daily`;
+  if (s.usdMonth >= b.monthlyUsd) return `${pool} budget exceeded: $${s.usdMonth.toFixed(4)} this month of $${b.monthlyUsd} monthly`;
   return null;
 }
 
@@ -198,16 +211,16 @@ export interface JobCap {
  * N x remaining. A cross-process reservation would close it; the clamp keeps the
  * bound finite without one.
  */
-export function effectiveCap(who: string, requested: number, now: number = Date.now()): JobCap {
-  const b = readBudget(who);
-  const s = readSpend(now);
-  if (s.unreadable !== null) return { usd: 0, why: `$0.0000: the spend ledger could not be read (${s.unreadable})` };
+export function effectiveCap(who: string, pool: Pool, requested: number, now: number = Date.now()): JobCap {
+  const b = readBudget(who, pool);
+  const s = readSpend(pool, now);
+  if (s.unreadable !== null) return { usd: 0, why: `$0.0000: the ${pool} spend ledger could not be read (${s.unreadable})` };
   const daily = Math.max(0, b.dailyUsd - s.usd24h);
   const monthly = Math.max(0, b.monthlyUsd - s.usdMonth);
   const usd = Math.min(requested, daily, monthly);
   return {
     usd,
-    why: `$${usd.toFixed(4)} = min(request maxCostUsd $${requested}, daily remaining $${daily.toFixed(4)}, monthly remaining $${monthly.toFixed(4)})`,
+    why: `$${usd.toFixed(4)} = min(request maxCostUsd $${requested}, ${pool} daily remaining $${daily.toFixed(4)}, ${pool} monthly remaining $${monthly.toFixed(4)})`,
   };
 }
 

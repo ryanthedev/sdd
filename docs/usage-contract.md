@@ -1,6 +1,6 @@
-# Usage & spend contract (v0.8.0)
+# Usage & spend contract (v0.9.0)
 
-Status: implemented in sdd 0.8.0 and usage-governor (gemini meter).
+Status: 0.8.0 implemented one gemini pool; 0.9.0 splits it into decision and vision pools (section 4).
 
 Shared contract between the sdd server, the gemini scripts, and the usage governor
 (`~/repos/usage-governor`). Every part below is a cross-repo interface: change it here first.
@@ -66,9 +66,16 @@ The existing `SDD_GEMINI_SUMMARY:` and `SDD_GEMINI_RESULT:` / `SDD_GEMINI_VISION
 ## 4. Budget
 
 - File: `~/.config/sdd/budget.json` (`$XDG_CONFIG_HOME/sdd/budget.json`). Missing = defaults.
-- Default: `{"gemini": {"dailyUsd": 5, "monthlyUsd": 50}}`.
+- Default: `{"gemini": {"dailyUsd": 5, "monthlyUsd": 50, "vision": {"dailyUsd": 15, "monthlyUsd": 150}}}`.
+- TWO POOLS, each with its own limits and its own spend; neither can use up the other:
+  - **decision** pool = gemini ledger lines whose `kind` is anything but `"vision"` (including a missing `kind`).
+    Limits: the top-level `gemini.dailyUsd` / `gemini.monthlyUsd`. Enforced by `gemini-decide.ts`.
+  - **vision** pool = gemini ledger lines with `kind == "vision"` (video fusion). Limits: `gemini.vision.dailyUsd` /
+    `gemini.vision.monthlyUsd`. Enforced by `gemini-vision.ts`.
+  - Per-field merge over defaults in both blocks: `{"gemini":{"dailyUsd":8}}` keeps vision at $15/$150; an invalid,
+    negative or non-finite value falls back to that field's default. `allowUnpricedModels` stays top-level and covers both.
 - Windows: daily = rolling 24 h by ledger `ts`; monthly = calendar month in LOCAL time.
-- Spend = sum of `usage.costUsd` over ledger lines with `adapter == "gemini"`. FAIL CLOSED: a line whose cost is
+- Spend (per pool) = sum of `usage.costUsd` over that pool's ledger lines with `adapter == "gemini"`. FAIL CLOSED: a line whose cost is
   unknown (usage null, or `costUsd` null) is charged **$0.25** and counted in `unknownCostJobs`; a line whose usage
   says `calls: 0` is free. Scripts always print a usage marker (with `calls: 0` when nothing was billed) so harmless
   failures are recorded as $0. The scripts, the sdd `usage` tool and the governor all use this same rule and value.
@@ -87,7 +94,13 @@ The existing `SDD_GEMINI_SUMMARY:` and `SDD_GEMINI_RESULT:` / `SDD_GEMINI_VISION
 
 ```jsonc
 "meters": { …, "gemini": {"decision":"RUN"|"STOP","reason":"…","usd_24h":0.42,"usd_month":3.1,
-                           "daily_usd":5,"monthly_usd":50,"jobs_24h":12,"failed_24h":1,"unknown_cost_24h":0} }
+                           "daily_usd":5,"monthly_usd":50,"jobs_24h":12,"failed_24h":1,"unknown_cost_24h":0},
+             "gemini_vision": { …same fields, vision pool, daily_usd 15, monthly_usd 150… } }
 ```
+
+`meters.gemini` is the DECISION pool (unchanged field names, so older readers keep working); `meters.gemini_vision` is
+the vision pool. The gate picks the meter by what is being started: an sdd `dispatch` with `adapter: "gemini"` and
+`kind: "vision"`, or a Bash run of `gemini-vision.ts`, checks `gemini_vision`; any other gemini dispatch (missing kind =
+default) or a Bash run of `gemini-decide.ts` checks `gemini`. Neither pool's STOP ever blocks the other, or anything else.
 
 Missing ledger = $0, RUN. Unreadable budget/ledger = gemini meter STOP only.

@@ -7,6 +7,8 @@
  *     account windows (see `src/lib/limits.ts`);
  *   - spend: an adapter that bills per call (gemini) is summarized from
  *     the local ledger (`src/lib/ledger.ts`) against `~/.config/sdd/budget.json`.
+ *     Gemini has TWO pools, each with its own limits and spend: decision (every
+ *     kind but "vision") and vision (kind "vision", video fusion).
  *
  * Not every harness can report either. Adapters that do neither are listed as
  * `unsupported` rather than omitted — "we can't see it" and "it has no limits"
@@ -19,6 +21,7 @@ import type { Adapter } from "../adapters/types.ts";
 import {
   type AdapterBudget,
   type LedgerEntry,
+  type Pool,
   ledgerSummary,
   loadBudget,
   readLedgerChecked,
@@ -39,7 +42,7 @@ export const description =
   "Report how much of a harness's account quota is used and when it resets — e.g. codex's rolling weekly " +
   "window, plan tier, credit balance, any spend-control ceiling, and how many redeemable usage resets the " +
   "account is holding — and, for per-call-billed harnesses (gemini), SPEND from the local ledger: rolling 24h " +
-  "and calendar-month dollars against the configured daily/monthly budget, job/failed/call/token counts, and " +
+  "and calendar-month dollars against the configured daily/monthly budget (gemini has two independent pools, reported as two lines, 'gemini decision spend' for decision work and 'gemini vision spend' for video fusion, each against its own limits), job/failed/call/token counts, and " +
   "unknownCostJobs (jobs whose cost could not be determined; the dollar sums already charge each one a " +
   "fail-closed $0.25, so they are not lower bounds). Quota reads cost no tokens and run no work unit. Call it before a large fan-out, or when " +
   "a job fails in a way that smells like a quota wall or a budget refusal. Omit `adapter` to report every " +
@@ -85,7 +88,8 @@ type Report =
   | { adapter: string; supported: true; ok: false; error: string }
   | { adapter: string; supported: false };
 
-type SpendEntry = { adapter: string; spend: SpendReport };
+/** `spend` is the decision pool (or the whole adapter when it has no pools); `vision` is the vision pool, when the adapter has one. */
+type SpendEntry = { adapter: string; spend: SpendReport; vision?: SpendReport };
 
 export function createUsageTool(rt: Runtime): ToolModule<typeof inputShape> {
   return {
@@ -120,7 +124,7 @@ export function createUsageTool(rt: Runtime): ToolModule<typeof inputShape> {
         if (hasSpend(adapter, budget, ledger())) {
           const s = spendFor(adapter.name, ledger(), budget, now);
           reports.push(s);
-          lines.push(renderSpend(s.spend));
+          lines.push(...renderSpendEntry(s));
         }
         if (reports.length === 0) {
           const r: Report = { adapter: adapter.name, supported: false };
@@ -150,7 +154,7 @@ export function createUsageTool(rt: Runtime): ToolModule<typeof inputShape> {
         .filter((a) => !limitCapable.includes(a) && !spendCapable.includes(a))
         .map((a) => ({ adapter: a.name, supported: false as const }));
 
-      const lines = [...govLines, ...limitReports.map(renderReport), ...spendReports.map((s) => renderSpend(s.spend))];
+      const lines = [...govLines, ...limitReports.map(renderReport), ...spendReports.flatMap(renderSpendEntry)];
       if (unsupported.length > 0) {
         lines.push(`no limits reporting: ${unsupported.map((u) => u.adapter).join(", ")}`);
       }
@@ -182,11 +186,16 @@ function lazyLedger(rt: Runtime): () => LedgerEntry[] & { error?: string } {
 }
 
 function spendFor(adapter: string, entries: LedgerEntry[] & { error?: string }, budget: Record<string, AdapterBudget>, now: number): SpendEntry {
-  const s: SpendSummary = summarizeSpend(entries, { now, adapter, budget });
-  // Flat fields mirror the rolling-24h window (the one a pre-dispatch gate cares about).
-  // An unreadable ledger is not $0 spend: say so instead of reporting empty totals.
-  const unavailable = entries.error === undefined ? {} : { unavailable: entries.error };
-  return { adapter, spend: { adapter, ...s.last24h, last24h: s.last24h, month: s.month, budget: s.budget, ...unavailable } };
+  // An adapter with a vision budget block has two pools; the flat `spend` stays the decision pool.
+  const pooled = budget[adapter]?.vision !== undefined;
+  const report = (pool?: Pool): SpendReport => {
+    const s: SpendSummary = summarizeSpend(entries, { now, adapter, budget, pool });
+    // Flat fields mirror the rolling-24h window (the one a pre-dispatch gate cares about).
+    // An unreadable ledger is not $0 spend: say so instead of reporting empty totals.
+    const unavailable = entries.error === undefined ? {} : { unavailable: entries.error };
+    return { adapter, ...s.last24h, last24h: s.last24h, month: s.month, budget: s.budget, ...unavailable };
+  };
+  return pooled ? { adapter, spend: report("decision"), vision: report("vision") } : { adapter, spend: report() };
 }
 
 async function reportFor(adapter: { name: string }, refresh: boolean): Promise<Report> {
@@ -213,9 +222,15 @@ export function usd(n: number): string {
   return `$${n.toFixed(2)}`;
 }
 
-function renderSpend(s: SpendReport): string {
+function renderSpendEntry(e: SpendEntry): string[] {
+  return e.vision
+    ? [renderSpend(e.spend, `${e.adapter} decision spend`), renderSpend(e.vision, `${e.adapter} vision spend`)]
+    : [renderSpend(e.spend)];
+}
+
+function renderSpend(s: SpendReport, label: string = `${s.adapter} spend`): string {
   if (s.unavailable !== undefined) {
-    return `${s.adapter} spend: UNAVAILABLE — the spend ledger could not be read (${s.unavailable}); spend is unknown, not $0, and paid calls will be refused`;
+    return `${label}: UNAVAILABLE — the spend ledger could not be read (${s.unavailable}); spend is unknown, not $0, and paid calls will be refused`;
   }
   const day = s.budget?.dailyUsd !== undefined ? ` of ${usd(s.budget.dailyUsd)} daily` : "";
   const mon = s.budget?.monthlyUsd !== undefined ? ` of ${usd(s.budget.monthlyUsd)}` : "";
@@ -226,7 +241,7 @@ function renderSpend(s: SpendReport): string {
     `${s.last24h.jobs} jobs${failed}`,
     `${s.last24h.unknownCostJobs} unknown-cost`,
   ];
-  let out = `${s.adapter} spend: ${parts.join(" · ")}`;
+  let out = `${label}: ${parts.join(" · ")}`;
   if (s.last24h.unknownCostJobs > 0 || s.month.unknownCostJobs > 0) {
     out += " (each unknown-cost job is charged $0.25 against the budget)";
   }

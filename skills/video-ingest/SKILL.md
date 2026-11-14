@@ -164,7 +164,7 @@ dispatch(gemini, kind:"vision", "Fuse this video.", {addDir: <artifactDir>, outp
 
 **Limits.** Frames are sent inline, so their base64-encoded total must stay under 18 MB (about 150 typical 720p keyframes); over that, or if the reply hits the output-token limit, the job fails with a message to lower `frameCount`.
 
-**Needs** `GEMINI_API_KEY` in the server's env or `~/.config/sdd/.env`. **Budget:** the script refuses (exit 1, `budget exceeded: …`) when the gemini spend in the sdd ledger already reaches the daily or monthly limit the user set; the cost is reported as `cost_usd=unknown` for a model without a known price, never `$0`, and a reply that was cut off or failed validation still reports what it was billed.
+**Needs** `GEMINI_API_KEY` in the server's env or `~/.config/sdd/.env`. **Budget:** the script refuses (exit 1, `vision budget exceeded: …`) when the gemini vision spend in the sdd ledger already reaches the daily or monthly limit the user set for the vision pool (default $15/$150, separate from the decision pool's $5/$50); the cost is reported as `cost_usd=unknown` for a model without a known price, never `$0`, and a reply that was cut off or failed validation still reports what it was billed.
 
 ## 12. Asking closed questions about the video (gemini decisions)
 

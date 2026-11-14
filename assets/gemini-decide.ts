@@ -918,9 +918,9 @@ async function main(): Promise<void> {
 
   const { key } = resolveKey();
   if (!key) die(`GEMINI_API_KEY is not set in the sdd server's environment or in ${resolveKey().file}`);
-  const refusal = budgetRefusal("gemini-decide");
+  const refusal = budgetRefusal("gemini-decide", "decision");
   if (refusal) die(refusal);
-  jobCap = effectiveCap("gemini-decide", req.maxCostUsd);
+  jobCap = effectiveCap("gemini-decide", "decision", req.maxCostUsd);
 
   const deadlineAt = cli.deadlineMs !== null ? startedAt + cli.deadlineMs : Infinity;
   const caches: MediaCaches = { uploads: new Map(), b64: new Map() };
