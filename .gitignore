@@ -12,6 +12,6 @@ dist/
 .design-foundations/
 tldr-site/
 
-# Secrets never belong in the repo (jev reads its key from ~/.config/sdd/.env)
+# Secrets never belong in the repo (gemini reads its key from ~/.config/sdd/.env)
 .env
 .env.*
