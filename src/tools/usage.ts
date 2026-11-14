@@ -26,6 +26,7 @@ import {
   summarizeSpend,
 } from "../lib/ledger.ts";
 import { formatSnapshot, readAdapterLimits } from "../lib/limits.ts";
+import { readGovernor, renderGovernor } from "../lib/governor.ts";
 import type { UsageSnapshot } from "../types.ts";
 import { findAdapter, listAdapters, type Runtime } from "./runtime.ts";
 import { err, ok, type ToolModule } from "./shared.ts";
@@ -37,10 +38,12 @@ export const description =
   "window, plan tier, credit balance, any spend-control ceiling, and how many redeemable usage resets the " +
   "account is holding — and, for per-call-billed harnesses (gemini), SPEND from the local ledger: rolling 24h " +
   "and calendar-month dollars against the configured daily/monthly budget, job/failed/call/token counts, and " +
-  "unknownCostJobs (jobs whose cost could not be determined; the dollar sums exclude them and are a lower " +
-  "bound, never zero). Quota reads cost no tokens and run no work unit. Call it before a large fan-out, or when " +
+  "unknownCostJobs (jobs whose cost could not be determined; the dollar sums already charge each one a " +
+  "fail-closed $0.25, so they are not lower bounds). Quota reads cost no tokens and run no work unit. Call it before a large fan-out, or when " +
   "a job fails in a way that smells like a quota wall or a budget refusal. Omit `adapter` to report every " +
-  "harness that can answer; the rest are listed as unsupported. Pass `recent` (1-50) to instead get job " +
+  "harness that can answer; the rest are listed as unsupported, and, when the user's Claude usage governor is " +
+  "installed, the output also leads with a governor block (Claude weekly %, 24h use, RUN/STOP, stale flag) so " +
+  "Claude, Gemini and codex usage come from this one tool. Pass `recent` (1-50) to instead get job " +
   "history: the last N ledger rows (ts, adapter, kind, state, durationMs, costUsd, summary), optionally for one adapter.";
 
 export const inputShape = {
@@ -128,7 +131,12 @@ export function createUsageTool(rt: Runtime): ToolModule<typeof inputShape> {
       const all = listAdapters(rt);
       const limitCapable = all.filter(hasLimits);
       const spendCapable = all.filter((a) => hasSpend(a, budget, ledger()));
+      // The user's Claude usage governor, when installed: Claude, Gemini and codex in one answer.
+      // Opt-in per runtime (server wiring passes the real dir), so tests never read the machine's governor.
+      const governor = rt.governorDir ? readGovernor(rt.governorDir) : null;
+      const govLines = governor ? [renderGovernor(governor)] : [];
       if (limitCapable.length === 0 && spendCapable.length === 0) {
+        if (governor) return ok(govLines.join("\n"), { reports: [], governor });
         return ok("no discovered adapter reports account limits.", { reports: [] });
       }
 
@@ -138,11 +146,11 @@ export function createUsageTool(rt: Runtime): ToolModule<typeof inputShape> {
         .filter((a) => !limitCapable.includes(a) && !spendCapable.includes(a))
         .map((a) => ({ adapter: a.name, supported: false as const }));
 
-      const lines = [...limitReports.map(renderReport), ...spendReports.map((s) => renderSpend(s.spend))];
+      const lines = [...govLines, ...limitReports.map(renderReport), ...spendReports.map((s) => renderSpend(s.spend))];
       if (unsupported.length > 0) {
         lines.push(`no limits reporting: ${unsupported.map((u) => u.adapter).join(", ")}`);
       }
-      return ok(lines.join("\n"), { reports: [...limitReports, ...spendReports, ...unsupported] });
+      return ok(lines.join("\n"), { reports: [...limitReports, ...spendReports, ...unsupported], ...(governor ? { governor } : {}) });
     },
   };
 }

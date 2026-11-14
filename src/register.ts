@@ -20,6 +20,7 @@ import { createCheckTool } from "./tools/check.ts";
 import { createDispatchTool } from "./tools/dispatch.ts";
 import { createListAdaptersTool } from "./tools/list-adapters.ts";
 import { createResultTool } from "./tools/result.ts";
+import { governorDir } from "./lib/governor.ts";
 import { createRuntime, type Runtime } from "./tools/runtime.ts";
 import { friendlyMessage, type ToolModule, type ToolResult } from "./tools/shared.ts";
 import { createStatusTool } from "./tools/status.ts";
@@ -104,7 +105,7 @@ export async function startServer(): Promise<void> {
   const version = readVersion();
   const server = new McpServer({ name: "sdd", version }, { instructions: INSTRUCTIONS });
 
-  const runtime = createRuntime({ jobStoreOptions: { ledger: (entry) => appendLedger(entry) } });
+  const runtime = createRuntime({ governorDir: governorDir(), jobStoreOptions: { ledger: (entry) => appendLedger(entry) } });
   const tools = buildTools(runtime);
 
   for (const tool of tools) {

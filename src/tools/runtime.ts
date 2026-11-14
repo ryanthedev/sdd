@@ -26,11 +26,14 @@ export interface Runtime {
   /** Ledger / budget file overrides (tests). Undefined = the standard resolution in lib/ledger.ts. */
   ledgerPath?: string;
   budgetPath?: string;
+  /** Claude usage-governor state dir. Undefined = governor not reported (tests); the server passes the real dir. */
+  governorDir?: string;
 }
 
 export interface RuntimeOptions {
   ledgerPath?: string;
   budgetPath?: string;
+  governorDir?: string;
   /** Override for tests — a temp dir with fixture adapter files. */
   adaptersDir?: string;
   jobStoreOptions?: JobStoreOptions;
@@ -42,6 +45,7 @@ export function createRuntime(opts: RuntimeOptions = {}): Runtime {
     adaptersDir: opts.adaptersDir ?? DEFAULT_ADAPTERS_DIR,
     ledgerPath: opts.ledgerPath,
     budgetPath: opts.budgetPath,
+    governorDir: opts.governorDir,
   };
 }
 
