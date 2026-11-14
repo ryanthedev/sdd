@@ -10,9 +10,9 @@ Input you need from the caller: the target directory (`cwd`), the task, the file
 
 ## Procedure
 
-1. **Quota gate.** Call `mcp__plugin_sdd_sdd__usage` with `adapter:"codex"`. If any window (5h or weekly) shows `usedPercent >= 90` or `limitReached` is set, STOP. Do not dispatch. Report the numbers and the reset time.
+1. **Quota gate.** Call `mcp__plugin_sdd_sdd__usage` with `adapter:"codex"`. Windows are named "codex" and "codex (secondary)"; only `windowMinutes` tells them apart (300 is the 5h window, 10080 is weekly), and `resetsAt` is unix seconds. If any window shows `usedPercent >= 90`, or `limitReached` is set, or `spendControlReached` is true, STOP. Do not dispatch. Report the numbers and the reset time.
 
-2. **Baseline.** In the target cwd run `git rev-parse HEAD` and `git status --porcelain`. The cwd MUST be a git repo; codex refuses non-git directories before contacting the model (it reads like an auth failure but is not). If it is not a repo, stop and report. Save both outputs; also record `git diff --stat` and, for files already dirty, a hash (`git diff -- <file> | shasum`) so you can tell pre-existing edits from codex's.
+2. **Baseline.** In the target cwd run `git rev-parse HEAD` (call it baselineHEAD), `git status --porcelain --untracked-files=all`, and a content hash of every dirty or untracked file (`git ls-files -m -o --exclude-standard -z | xargs -0 shasum`, plus `git diff | shasum` and `git diff --cached | shasum`) so edits to files that were already dirty or untracked are caught. The cwd MUST be a git repo; codex refuses non-git directories before contacting the model (it reads like an auth failure but is not). If it is not a repo, stop and report. Save all outputs.
 
 3. **Dispatch.** Call `mcp__plugin_sdd_sdd__dispatch` with `adapter:"codex"`, `cwd`, `effort` (default `"medium"`), and a prompt that states:
    - the task and acceptance criteria;
@@ -26,7 +26,8 @@ Input you need from the caller: the target directory (`cwd`), the task, the file
 4. **Wait.** Call `mcp__plugin_sdd_sdd__wait` with the job id (use a generous `timeoutMs`, and repeat while the job is still running), then `mcp__plugin_sdd_sdd__result`. If status is `failed`, read the summary/raw, still do step 5 (codex may have edited before failing), and report.
 
 5. **Verify independently.** Never trust codex's summary.
-   - `git status --porcelain` and `git diff --stat` against the baseline; list every file that changed or appeared since the baseline.
+   - Re-read `git rev-parse HEAD`. If it moved from baselineHEAD, codex committed: report that as a violation and show `git log --stat <baselineHEAD>..HEAD`. Do not reset.
+   - Diff against the baseline commit, not the index: `git diff --stat <baselineHEAD>` plus `git status --porcelain --untracked-files=all` for new files. Re-run the content hashes and compare, so a further edit to an already-dirty or already-untracked file shows up. List every file that changed or appeared since the baseline.
    - Compare to the stated scope. Any file outside scope is an out-of-scope change: list it. Do NOT revert it yourself; report it so the caller decides (exception: if the caller said to revert out-of-scope edits).
    - Skim the in-scope diff for anything the task did not ask for.
    - Run the project's tests and typecheck yourself with Bash (e.g. `bun test`, `bunx tsc --noEmit`, or what the project documents). Do not rely on codex's claim that they pass.

@@ -38,3 +38,15 @@ test("plugin.json version is 0.8.0", () => {
   const v = JSON.parse(readFileSync(join(root, ".claude-plugin/plugin.json"), "utf8")).version;
   expect(v).toBe("0.8.0");
 });
+
+for (const file of ["codex-builder.md", "codex-reviewer.md"]) {
+  test(`agent ${file} compares HEAD, covers untracked files, and gates on spend control`, () => {
+    const { body } = frontmatter(file);
+    expect(body).toContain("baselineHEAD");
+    expect(body).toContain("git log");
+    expect(body).toContain("--untracked-files=all");
+    expect(body).toContain("git diff --stat <baselineHEAD>");
+    expect(body).toContain("spendControlReached");
+    expect(body).toContain("10080");
+  });
+}

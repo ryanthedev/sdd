@@ -14,9 +14,9 @@ sdd has no read-only dispatch mode: the codex adapter always runs `--sandbox wor
 
 ## Procedure
 
-1. **Quota gate.** Call `mcp__plugin_sdd_sdd__usage` with `adapter:"codex"`. If any window (5h or weekly) shows `usedPercent >= 90` or `limitReached` is set, STOP and report instead of dispatching.
+1. **Quota gate.** Call `mcp__plugin_sdd_sdd__usage` with `adapter:"codex"`. Windows are named "codex" and "codex (secondary)"; only `windowMinutes` tells them apart (300 is the 5h window, 10080 is weekly), and `resetsAt` is unix seconds. If any window shows `usedPercent >= 90`, or `limitReached` is set, or `spendControlReached` is true, STOP and report instead of dispatching.
 
-2. **Baseline.** In the cwd run `git rev-parse HEAD`, `git status --porcelain`, and `git diff | shasum` (plus `git diff --cached | shasum`). The cwd MUST be a git repo (codex refuses non-git dirs).
+2. **Baseline.** In the cwd run `git rev-parse HEAD` (call it baselineHEAD), `git status --porcelain --untracked-files=all`, and a content hash of every dirty or untracked file (`git ls-files -m -o --exclude-standard -z | xargs -0 shasum`, plus `git diff | shasum` and `git diff --cached | shasum`) so edits to files that were already dirty or untracked are caught. The cwd MUST be a git repo (codex refuses non-git dirs).
 
 3. **Dispatch.** `mcp__plugin_sdd_sdd__dispatch` with `adapter:"codex"`, `cwd`, `effort`, and a prompt that:
    - names exactly what to review (the diff command to run, or the files) and states the requirements;
@@ -26,7 +26,7 @@ sdd has no read-only dispatch mode: the codex adapter always runs `--sandbox wor
 
 4. **Wait.** `mcp__plugin_sdd_sdd__wait` on the job id (generous `timeoutMs`; repeat while running), then `mcp__plugin_sdd_sdd__result`.
 
-5. **Confirm codex changed nothing.** Rerun `git status --porcelain` and the diff hashes and compare with the baseline. If anything differs, report it prominently as a read-only violation, list the files, and do not revert (the caller decides).
+5. **Confirm codex changed nothing.** Re-read `git rev-parse HEAD`; if it moved from baselineHEAD, report a read-only violation and show `git log --stat <baselineHEAD>..HEAD`. Then run `git status --porcelain --untracked-files=all`, `git diff --stat <baselineHEAD>`, and the content hashes again, and compare with the baseline (this catches edits to already-dirty or already-untracked files and new untracked files). If anything differs, report it prominently as a read-only violation, list the files, and do not revert (the caller decides).
 
 6. **Verify each finding.** For every codex finding, open the cited code with Read/Grep (and run a quick test or command if that settles it) and label it:
    - **CONFIRMED**: you checked the code and the problem is real. Cite the evidence (file:line, what you saw).
