@@ -56,6 +56,30 @@ The existing `SDD_GEMINI_SUMMARY:` and `SDD_GEMINI_RESULT:` / `SDD_GEMINI_VISION
   adapter, every terminal state. Never rewritten or truncated. Many servers (one per Claude session) append
   concurrently; a single short `write` with O_APPEND is the concurrency story. Readers skip torn/invalid lines.
 - Never contains prompts, request contents, or env.
+- Callers of that writer: the MCP server (`src/register.ts`) and, as a second caller, the `decide` command
+  (`src/cli/decide.ts`, section 3a). Both go through `JobStore` with `appendLedger` as its sink, so the one-line-per-job
+  rule and everything above hold for both.
+
+### 3a. `decide` command (second caller)
+
+For programs that are not MCP clients (alsp, in a git hook):
+
+```
+bun run <sdd>/src/cli/decide.ts [--timeout-ms N] [--model M] [--] <request.json> [<results.json>]
+```
+
+- Runs the gemini adapter's `default` kind through the same `JobStore` the server uses, so the budget check (section 4,
+  enforced by the script), hermetic spawn, usage parsing and the single ledger line per job are the existing code. It adds
+  no budget logic and changes no limits.
+- Request and results formats: `assets/gemini-decide.ts` (`"dryRun": true` validates and estimates, calls nothing, and
+  records a `calls: 0` line). The request must be a file path (not inline JSON); the adapter's path rules apply (no leading
+  `-`, no control characters, a relative path may not escape the cwd).
+- stdout: the absolute results path, on success only. stderr: diagnostics.
+- Exit codes: `0` done; `1` the job failed (stderr carries the script's reason, e.g. `budget exceeded: ...`, and no API
+  call is made when the budget is already spent), also on timeout and on SIGTERM/SIGINT (the job is terminated, the script
+  flushes its usage marker and the ledger line is still written); `2` usage error (nothing spawned, nothing recorded).
+- `--timeout-ms` (default 600000) is passed to the script as its deadline and enforced by the command, which cancels the job
+  at the limit. `--model` overrides the request's model.
 
 ```jsonc
 {"v":1,"ts":1794639003485,"jobId":"…","adapter":"gemini","kind":"default","cwd":"/abs",

@@ -5,6 +5,7 @@
   "engines": { "bun": ">=1.3.0" },
   "scripts": {
     "start": "bun run src/server.ts",
+    "decide": "bun run src/cli/decide.ts",
     "typecheck": "tsc --noEmit",
     "test": "bun test"
   },

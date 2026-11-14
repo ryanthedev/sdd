@@ -94,6 +94,16 @@ Two of the harnesses ride an account you already log into. Five want an API key.
 
 Each harness has its own quirks: flag ordering, the marker it emits, what auth it needs. The full per-harness reference (capabilities, auth, and every gotcha) lives in **[`skills/subagent-driven-development/references/harnesses.md`](skills/subagent-driven-development/references/harnesses.md)**. For the orchestration doctrine (when to fan out, when to serialize, how to use `wait`) see **[`skills/subagent-driven-development/SKILL.md`](skills/subagent-driven-development/SKILL.md)**.
 
+## Decision calls without MCP: `src/cli/decide.ts`
+
+Programs that are not MCP clients (a git hook, a script) can make Gemini decision calls through sdd and still get its budget check and spend record:
+
+```
+bun run src/cli/decide.ts [--timeout-ms N] [--model M] [--] <request.json> [<results.json>]
+```
+
+It runs the same code path as `dispatch` with `adapter: "gemini"` (the default kind): the script refuses when the budget is spent, and one line per job lands in the spend ledger. The request and results JSON are documented in `assets/gemini-decide.ts`; `"dryRun": true` estimates cost and calls nothing. On success stdout is the absolute results path and the exit code is 0. Exit 1 means the job failed (stderr has the script's reason, such as `budget exceeded`; a timeout or SIGTERM also exits 1). Exit 2 is a usage error. See `docs/usage-contract.md` section 3a.
+
 ## Codex subagents
 
 The plugin ships two Claude Code subagents that hand the heavy lifting to codex through the MCP server, so Claude spends few tokens:
