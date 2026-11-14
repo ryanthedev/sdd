@@ -13,6 +13,7 @@ import { join } from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import type { z } from "zod";
+import { appendLedger } from "./lib/ledger.ts";
 import { log } from "./lib/log.ts";
 import { createCancelTool } from "./tools/cancel.ts";
 import { createCheckTool } from "./tools/check.ts";
@@ -103,7 +104,7 @@ export async function startServer(): Promise<void> {
   const version = readVersion();
   const server = new McpServer({ name: "sdd", version }, { instructions: INSTRUCTIONS });
 
-  const runtime = createRuntime({ jobStoreOptions: {} });
+  const runtime = createRuntime({ jobStoreOptions: { ledger: (entry) => appendLedger(entry) } });
   const tools = buildTools(runtime);
 
   for (const tool of tools) {

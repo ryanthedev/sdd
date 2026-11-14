@@ -140,6 +140,28 @@ export interface Job {
   state: JobState;
   logPath: string;
   createdAt: number;
+  /** Capability kind that ran ("default", "image", ...), resolved at dispatch. */
+  kind: string;
+  /** Unix epoch ms at which the job turned terminal. */
+  finishedAt?: number;
   exitCode?: number;
   result?: AdapterResult;
+}
+
+/**
+ * What one job spent, as reported by an adapter's pure `parseUsage` (contract:
+ * docs/usage-contract.md §1). `null` numbers mean UNKNOWN — never 0 — and a null
+ * `costUsd` must never be rendered or summed as $0.
+ */
+export interface UsageRecord {
+  model: string | null;
+  calls: number;
+  items: number | null;
+  ok: number | null;
+  failed: number | null;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  costUsd: number | null;
+  /** Always true: list price x tokens, an estimate and not a bill. */
+  costIsEstimate: true;
 }
