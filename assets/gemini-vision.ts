@@ -40,7 +40,17 @@
  */
 import { existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
-import { budgetRefusal, emitUsage, resolveKey, retryAfterMs, unpricedModelRefusal, type UsageRecord } from "./gemini-common.ts";
+import {
+  UNKNOWN_COST_CHARGE_USD,
+  budgetRefusal,
+  effectiveCap,
+  emitUsage,
+  resolveKey,
+  retryAfterMs,
+  unpricedModelRefusal,
+  type JobCap,
+  type UsageRecord,
+} from "./gemini-common.ts";
 
 const API = "https://generativelanguage.googleapis.com/v1beta";
 const MAX_FRAMES = 300;
@@ -50,6 +60,8 @@ const MAX_ENCODED_BYTES_TOTAL = 18 * 1024 * 1024;
 const MAX_TRANSCRIPT_CHARS = 400_000;
 const MAX_ATTEMPTS = 5;
 const GENERATE_TIMEOUT_MS = 300_000;
+/** The request has no maxCostUsd; the per-job cap is this default clamped to the remaining budget. */
+const DEFAULT_MAX_COST_USD = 1.0;
 
 /** List prices per 1M tokens (input, output incl. thinking), Gemini Developer
  *  API paid tier, read 2026-11-13. Only models whose price is not scheduled to
@@ -97,24 +109,43 @@ const RESPONSE_SCHEMA = {
 
 /** Set once a reply has been received (billed): every later exit reports it. */
 let billed: UsageRecord | null = null;
+/** Calls that may have been billed with no usable usage (timed out, body unreadable):
+ *  each is charged UNKNOWN_COST_CHARGE_USD, so a job is never uncapped or free. */
+let unknownCalls = 0;
+let inFlight = false;
 
 /** Zero-call usage, reported on any exit before a reply arrives, so the ledger
  *  records $0 rather than an unknown (charged) cost. */
 let zeroUsage: UsageRecord = { model: null, calls: 0, items: null, ok: null, failed: null, inputTokens: 0, outputTokens: 0, costUsd: 0, costIsEstimate: true };
 
+/** Cumulative usage: the reply's record plus every unknown-cost call (and, on
+ *  SIGTERM, the call still in flight) at the flat charge. */
+function currentUsage(includeInFlight = false): UsageRecord {
+  const base = billed ?? zeroUsage;
+  const extra = unknownCalls + (includeInFlight && inFlight && !billed ? 1 : 0);
+  if (extra === 0) return base;
+  const known = base.calls > 0 ? (base.costUsd ?? UNKNOWN_COST_CHARGE_USD) : 0;
+  return {
+    ...base,
+    calls: base.calls + extra,
+    inputTokens: null,
+    outputTokens: null,
+    costUsd: known + UNKNOWN_COST_CHARGE_USD * extra,
+  };
+}
+
 function die(msg: string): never {
   process.stderr.write(`gemini-vision: ${msg}\n`);
-  emitUsage(billed ?? zeroUsage);
+  emitUsage(currentUsage());
   process.exit(1);
 }
 
 process.on("SIGTERM", () => {
-  // Killed mid-request: the call may have been billed with no reply yet, so the
-  // cost is unknown (null) and the budget charges it conservatively.
-  emitUsage(billed ?? (inFlight ? { ...zeroUsage, calls: 1, inputTokens: null, outputTokens: null, costUsd: null } : zeroUsage));
+  // Killed mid-request: the call may have been billed with no reply yet, so it
+  // is charged as an unknown-cost call.
+  emitUsage(currentUsage(true));
   process.exit(143);
 });
-let inFlight = false;
 
 interface Frame {
   file: string;
@@ -181,6 +212,7 @@ async function main(): Promise<void> {
   if (!key) die(`GEMINI_API_KEY is not set in the sdd server's environment or in ${envFile}`);
   const refusal = budgetRefusal("gemini-vision");
   if (refusal) die(refusal);
+  const cap: JobCap = effectiveCap("gemini-vision", DEFAULT_MAX_COST_USD);
 
   const frames = readFrames(dir);
   const encodedBytes = frames.reduce((n, f) => n + Math.ceil(statSync(f.file).size / 3) * 4, 0);
@@ -213,6 +245,11 @@ async function main(): Promise<void> {
   let data: Record<string, any> | undefined;
   let lastError = "no attempt made";
   for (let attempt = 0; attempt < MAX_ATTEMPTS && !data; attempt++) {
+    // Timed-out attempts may each have been billed: stop retrying once the
+    // charge for them reaches the clamped per-job cap.
+    if (unknownCalls * UNKNOWN_COST_CHARGE_USD >= cap.usd) {
+      die(`stopped=budget: cost cap ${cap.why} reached by ${unknownCalls} timed-out call(s) (last: ${lastError})`);
+    }
     let res: Response;
     try {
       inFlight = true;
@@ -223,17 +260,34 @@ async function main(): Promise<void> {
         signal: AbortSignal.timeout(GENERATE_TIMEOUT_MS),
       });
     } catch (e) {
+      inFlight = false;
       lastError = `network error: ${e instanceof Error ? e.message : String(e)}`;
+      // A timeout is an unknown: the server may have processed (and billed) it.
+      if (e instanceof Error && (e.name === "TimeoutError" || e.name === "AbortError")) unknownCalls++;
       await Bun.sleep(1000 * 2 ** attempt);
       continue;
     }
     if (res.status === 429 || res.status >= 500) {
-      lastError = `HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`;
+      inFlight = false;
+      lastError = `HTTP ${res.status}: ${(await res.text().catch(() => "")).slice(0, 200)}`;
       await Bun.sleep(retryAfterMs(res) ?? 1000 * 2 ** attempt);
       continue;
     }
-    if (!res.ok) die(`HTTP ${res.status} from ${model}: ${(await res.text()).slice(0, 300)}`);
-    data = (await res.json()) as Record<string, any>;
+    if (!res.ok) {
+      inFlight = false;
+      die(`HTTP ${res.status} from ${model}: ${(await res.text().catch(() => "")).slice(0, 300)}`);
+    }
+    try {
+      data = (await res.json()) as Record<string, any>;
+    } catch (e) {
+      // The API answered 200 but the body is unreadable: billed, usage unknown.
+      inFlight = false;
+      unknownCalls++;
+      lastError = `unreadable response body: ${e instanceof Error ? e.message : String(e)}`;
+      await Bun.sleep(1000 * 2 ** attempt);
+      continue;
+    }
+    inFlight = false;
   }
   if (!data) die(`retries exhausted (last: ${lastError})`);
 
@@ -246,7 +300,7 @@ async function main(): Promise<void> {
   const price = PRICES[model];
   const costUsd = price && inTok !== null && outTok !== null ? (inTok * price[0] + outTok * price[1]) / 1_000_000 : null;
   billed = { model, calls: 1, items: null, ok: null, failed: null, inputTokens: inTok, outputTokens: outTok, costUsd, costIsEstimate: true };
-  emitUsage(billed);
+  emitUsage(currentUsage());
 
   const candidate = data.candidates?.[0];
   const text: string | undefined = candidate?.content?.parts
@@ -265,14 +319,16 @@ async function main(): Promise<void> {
   }
   if (typeof fused.summary !== "string" || !Array.isArray(fused.moments)) die("response JSON is missing summary or moments");
 
-  const cost = costUsd === null ? "unknown" : costUsd.toFixed(6);
+  // The summary reports the same figure the ledger will charge (never "unknown").
+  const total = currentUsage();
+  const cost = total.costUsd === null ? "unknown" : total.costUsd.toFixed(6);
 
   mkdirSync(dirname(outPath), { recursive: true });
   writeFileSync(outPath, JSON.stringify(fused, null, 2));
 
   // Markers last, so a partially written file can never look like a success.
   process.stdout.write(
-    `SDD_GEMINI_SUMMARY:model=${model} frames=${frames.length} input_tokens=${inTok ?? "unknown"} output_tokens=${outTok ?? "unknown"} cost_usd=${cost}\n`,
+    `SDD_GEMINI_SUMMARY:model=${model} frames=${frames.length} input_tokens=${total.inputTokens ?? "unknown"} output_tokens=${total.outputTokens ?? "unknown"} cost_usd=${cost}\n`,
   );
   process.stdout.write(`SDD_GEMINI_VISION_SAVED:${outPath}\n`);
 }

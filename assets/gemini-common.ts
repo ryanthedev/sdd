@@ -128,6 +128,8 @@ export function readSpend(now: number = Date.now()): Spend {
   const d = new Date(now);
   const monthStart = new Date(d.getFullYear(), d.getMonth(), 1).getTime();
   const dayStart = now - 24 * 3600 * 1000;
+  // Same window as src/lib/ledger.ts summarizeSpend: ts > now-24h, and a
+  // timestamp in the future (clock skew, a bad line) counts in neither window.
   for (const line of text.split("\n")) {
     if (!line.includes('"gemini"')) continue;
     let rec: { adapter?: unknown; ts?: unknown; usage?: { costUsd?: unknown; calls?: unknown } | null };
@@ -136,9 +138,9 @@ export function readSpend(now: number = Date.now()): Spend {
     } catch {
       continue;
     }
-    if (rec.adapter !== "gemini" || typeof rec.ts !== "number") continue;
+    if (rec.adapter !== "gemini" || typeof rec.ts !== "number" || rec.ts > now) continue;
     const inMonth = rec.ts >= monthStart;
-    const inDay = rec.ts >= dayStart;
+    const inDay = rec.ts > dayStart;
     if (!inMonth && !inDay) continue;
     const raw = rec.usage?.costUsd;
     let cost: number;
@@ -166,6 +168,36 @@ export function budgetRefusal(who: string, now: number = Date.now()): string | n
   if (s.usd24h >= b.dailyUsd) return `budget exceeded: $${s.usd24h.toFixed(4)} in 24h of $${b.dailyUsd} daily`;
   if (s.usdMonth >= b.monthlyUsd) return `budget exceeded: $${s.usdMonth.toFixed(4)} this month of $${b.monthlyUsd} monthly`;
   return null;
+}
+
+export interface JobCap {
+  /** Dollars this job may spend: min(request cap, daily remaining, monthly remaining). */
+  usd: number;
+  /** Human-readable derivation, for the stop message. */
+  why: string;
+}
+
+/**
+ * The effective per-job cap: the request's `maxCostUsd` clamped to what is left
+ * of the daily and monthly budgets right now, so one job can never push spend
+ * past either limit by more than its own in-flight calls.
+ *
+ * RESIDUAL RACE (accepted, documented): the ledger is written by the server only
+ * when a job ends, so N jobs that start together each see the same remaining
+ * budget and may each spend up to it; overshoot is bounded by roughly
+ * N x remaining. A cross-process reservation would close it; the clamp keeps the
+ * bound finite without one.
+ */
+export function effectiveCap(who: string, requested: number, now: number = Date.now()): JobCap {
+  const b = readBudget(who);
+  const s = readSpend(now);
+  const daily = Math.max(0, b.dailyUsd - s.usd24h);
+  const monthly = Math.max(0, b.monthlyUsd - s.usdMonth);
+  const usd = Math.min(requested, daily, monthly);
+  return {
+    usd,
+    why: `$${usd.toFixed(4)} = min(request maxCostUsd $${requested}, daily remaining $${daily.toFixed(4)}, monthly remaining $${monthly.toFixed(4)})`,
+  };
 }
 
 /** Retry-After (delta-seconds or HTTP-date) in ms, capped at 60s; null when absent. */

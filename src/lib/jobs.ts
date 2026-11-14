@@ -348,6 +348,10 @@ export class JobStore {
       tracked.settled = true;
       const settle = (): void => {
         if (tracked.killTimer) clearTimeout(tracked.killTimer);
+        // The leader settling does not mean its group is empty: a grandchild that
+        // ignored SIGTERM would otherwise outlive a cancel/shutdown. One last
+        // SIGKILL to the GROUP only (never the bare pid, which may be reused).
+        if (tracked.terminated && child.pid !== undefined) this.#signalGroup(child.pid, "SIGKILL", false);
         finish();
         job.finishedAt = Date.now();
         this.#record(tracked); // ledger line + usage, on EVERY terminal state; never throws
@@ -431,10 +435,11 @@ export class JobStore {
     }, this.#killGraceMs);
   }
 
-  #signalGroup(pid: number, signal: NodeJS.Signals): void {
+  #signalGroup(pid: number, signal: NodeJS.Signals, fallbackToPid = true): void {
     try {
       process.kill(-pid, signal); // negative pid = the process group led by the detached child
     } catch {
+      if (!fallbackToPid) return; // ESRCH: group already empty
       try {
         process.kill(pid, signal);
       } catch {

@@ -15,6 +15,7 @@ import {
   appendLedger,
   type LedgerEntry,
   type LedgerInput,
+  ledgerSummary,
   loadBudget,
   readLedger,
   summarizeSpend,
@@ -72,13 +73,13 @@ const entry = (over: Partial<LedgerInput> = {}): LedgerEntry => ({ v: 1, host: "
 
 test("appendLedger writes one line, truncates summary, stamps v and host; readLedger round-trips", () => {
   const path = join(fresh(), "deep", "dir", "ledger.jsonl"); // mkdir -p
-  appendLedger(input({ summary: "x".repeat(1000) }), path);
+  appendLedger(input({ summary: "x".repeat(1000), adapter: "codex" }), path);
   appendLedger(input({ jobId: "j2" }), path);
   const lines = readFileSync(path, "utf8").trimEnd().split("\n");
   expect(lines.length).toBe(2);
   const first = JSON.parse(lines[0]!);
   expect(first.v).toBe(1);
-  expect(first.summary.length).toBe(300);
+  expect(first.summary.length).toBe(160);
   expect(typeof first.host).toBe("string");
   expect(readLedger({ path }).map((e) => e.jobId)).toEqual(["j1", "j2"]);
 });
@@ -167,7 +168,68 @@ test("loadBudget: defaults when missing or garbage, file values otherwise", () =
   writeFileSync(join(dir, "bad.json"), "{nope");
   expect(loadBudget(join(dir, "bad.json")).gemini?.dailyUsd).toBe(5);
   writeFileSync(join(dir, "b.json"), JSON.stringify({ gemini: { dailyUsd: 1, monthlyUsd: "x" } }));
-  expect(loadBudget(join(dir, "b.json"))).toEqual({ gemini: { dailyUsd: 1 } });
+  // Per-field merge over the defaults, like the scripts: a bad field falls back to $50, not to "unset".
+  expect(loadBudget(join(dir, "b.json"))).toEqual({ gemini: { dailyUsd: 1, monthlyUsd: 50 } });
+});
+
+test("loadBudget merges defaults per field: no gemini block, an empty one, negative or non-finite values", () => {
+  const dir = fresh();
+  const load = (name: string, body: string) => {
+    writeFileSync(join(dir, name), body);
+    return loadBudget(join(dir, name));
+  };
+  expect(load("a.json", "{}")).toEqual({ gemini: { dailyUsd: 5, monthlyUsd: 50 } });
+  expect(load("b.json", '{"gemini":{}}')).toEqual({ gemini: { dailyUsd: 5, monthlyUsd: 50 } });
+  expect(load("c.json", '{"gemini":{"dailyUsd":-3,"monthlyUsd":2}}').gemini).toEqual({ dailyUsd: 5, monthlyUsd: 2 });
+  expect(load("d.json", '{"gemini":{"dailyUsd":1e999,"monthlyUsd":null}}').gemini).toEqual({ dailyUsd: 5, monthlyUsd: 50 });
+  expect(load("e.json", '{"gemini":{"dailyUsd":0}}').gemini).toEqual({ dailyUsd: 0, monthlyUsd: 50 }); // zero is a real limit
+  expect(load("f.json", '{"codex":{"dailyUsd":2},"gemini":[1]}')).toEqual({ gemini: { dailyUsd: 5, monthlyUsd: 50 }, codex: { dailyUsd: 2 } });
+});
+
+test("a ledger line whose usage has no `calls` (and no cost) is unknown and charged, not free", () => {
+  const dir = fresh();
+  const path = join(dir, "l.jsonl");
+  const row = (usage: unknown) => `${JSON.stringify({ v: 1, ts: NOW - H, adapter: "gemini", usage })}\n`;
+  writeFileSync(path, row({ model: "m" }) + row({ calls: 0 }) + row({ costUsd: 0.4 }));
+  const s = summarizeSpend(readLedger({ path }), { now: NOW, adapter: "gemini" });
+  expect(s.last24h.unknownCostJobs).toBe(1);
+  expect(s.last24h.costUsd).toBeCloseTo(UNKNOWN_COST_CHARGE_USD + 0.4); // calls:0 is free; a known cost is kept
+});
+
+test("the 24h window is ts > now-24h exactly, and a future timestamp counts nowhere", () => {
+  const DAY = 86_400_000;
+  const s = summarizeSpend(
+    [
+      entry({ ts: NOW - DAY, usage: usage({ costUsd: 1 }) }), // exactly 24h old: out
+      entry({ ts: NOW - DAY + 1, usage: usage({ costUsd: 2 }) }), // in
+      entry({ ts: NOW + 1000, usage: usage({ costUsd: 4 }) }), // future: ignored
+    ],
+    { now: NOW, adapter: "gemini" },
+  );
+  expect(s.last24h.costUsd).toBe(2);
+  expect(s.month.costUsd).toBeLessThanOrEqual(3);
+  expect(s.month.jobs).toBeLessThanOrEqual(2);
+});
+
+test("ledgerSummary: every adapter capped at 160; gemini keeps only status tokens", () => {
+  expect(ledgerSummary("codex", "y".repeat(500))).toHaveLength(160);
+  const done =
+    'gemini: items=3 ok=2 failed=1 input_tokens=900 cost_usd=0.000090 stopped=budget failed_ids=a,b first_error=HTTP 400: secret prompt text (results: /tmp/r.json) answers={"a":{"q":0.9}}';
+  const out = ledgerSummary("gemini", done);
+  expect(out).toBe("gemini: items=3 ok=2 failed=1 input_tokens=900 cost_usd=0.000090 stopped=budget failed_ids=2");
+  expect(out).not.toContain("secret");
+  expect(out).not.toContain("answers");
+  const failed = ledgerSummary("gemini", "gemini: exited with code 1: my private question quoted [items=1 ok=0 failed=1 cost_usd=0.000010 first_error=leaky] (results: /x)");
+  expect(failed).toBe("gemini: exited with code 1 items=1 ok=0 failed=1 cost_usd=0.000010");
+  expect(ledgerSummary("gemini", "gemini vision: saved fused understanding to /p (model=m frames=3 input_tokens=5 output_tokens=2 cost_usd=0.1)")).toBe(
+    "gemini vision: model=m frames=3 input_tokens=5 output_tokens=2 cost_usd=0.1",
+  );
+});
+
+test("appendLedger stores the sanitized gemini summary", () => {
+  const path = join(fresh(), "l.jsonl");
+  appendLedger(input({ summary: "gemini: items=1 ok=1 failed=0 answers={\"a\":1}" }), path);
+  expect(readLedger({ path })[0]!.summary).toBe("gemini: items=1 ok=1 failed=0");
 });
 
 // ── usage marker ────────────────────────────────────────────────────────────
@@ -424,6 +486,21 @@ test("usage({recent}) returns the last N ledger rows newest first, optionally pe
   const g = await tool.handler({ recent: 2, adapter: "gemini" });
   expect((g.structuredContent!.rows as unknown[]).length).toBe(2);
   expect((await tool.handler({ recent: 1, adapter: "nobody" })).content[0]!.text).toContain("no ledger rows");
+});
+
+test("usage({recent}) re-sanitizes old rows: a gemini row written with answers/errors never shows them", async () => {
+  const dir = fresh();
+  writeFileSync(join(dir, "plain.ts"), PLAIN("plain"));
+  const ledger = join(fresh(), "l.jsonl");
+  const old = { v: 1, ts: 1000, jobId: "old", adapter: "gemini", kind: "default", state: "done", durationMs: 1, usage: null,
+    summary: 'gemini: items=1 ok=0 failed=1 first_error=HTTP 400: my secret question (results: /x) answers={"a":1}' };
+  writeFileSync(ledger, `${JSON.stringify(old)}\n`);
+  const { tool } = toolRuntime(dir, ledger);
+  const r = await tool.handler({ recent: 1 });
+  const text = r.content[0]!.text;
+  expect(text).toContain("gemini: items=1 ok=0 failed=1");
+  expect(text).not.toContain("secret");
+  expect(JSON.stringify(r.structuredContent)).not.toContain("secret");
 });
 
 // ── wait results ────────────────────────────────────────────────────────────

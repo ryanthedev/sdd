@@ -5,7 +5,8 @@
  * the whole concurrency story, and readers skip torn/invalid lines.
  *
  * The ledger never contains prompts, request contents, or env — only the job's
- * identity, outcome, a truncated result summary, and its UsageRecord.
+ * identity, outcome, a short result summary (<= SUMMARY_MAX chars; for gemini
+ * only counts/cost/stop status, never answers or error text), and its UsageRecord.
  */
 import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir, hostname } from "node:os";
@@ -32,7 +33,7 @@ export interface LedgerEntry {
 /** What a writer supplies; `v` and `host` are stamped by appendLedger. */
 export type LedgerInput = Omit<LedgerEntry, "v" | "host">;
 
-export const SUMMARY_MAX = 300;
+export const SUMMARY_MAX = 160;
 const DAY_MS = 86_400_000;
 
 /** `$SDD_LEDGER_PATH`, else `${XDG_STATE_HOME:-~/.local/state}/sdd/ledger.jsonl`. */
@@ -59,7 +60,7 @@ export function appendLedger(entry: LedgerInput, path: string = ledgerPath()): v
       exitCode: entry.exitCode,
       signal: entry.signal,
       durationMs: entry.durationMs,
-      summary: typeof entry.summary === "string" ? entry.summary.slice(0, SUMMARY_MAX) : "",
+      summary: ledgerSummary(entry.adapter, entry.summary),
       usage: entry.usage,
       host: hostname(),
     };
@@ -72,6 +73,30 @@ export function appendLedger(entry: LedgerInput, path: string = ledgerPath()): v
     warned = true;
     log(`ledger: could not append to ${path}: ${e instanceof Error ? e.message : String(e)} (jobs are unaffected)`);
   }
+}
+
+/**
+ * The summary as stored. Every adapter's is capped at SUMMARY_MAX. Gemini's
+ * result summary can restate request content (`answers=`, `first_error=` quote
+ * the model's output and the API's error text), so only its status tokens
+ * (counts, cost, `stopped=`, a failed-id COUNT) are kept.
+ */
+export function ledgerSummary(adapter: string, summary: unknown): string {
+  if (typeof summary !== "string") return "";
+  if (adapter !== "gemini") return summary.slice(0, SUMMARY_MAX);
+  const prefix = /^gemini(?: vision)?:/.exec(summary)?.[0] ?? "gemini:";
+  const code = /exited with code (-?\d+)/.exec(summary)?.[1];
+  let body = summary;
+  if (code !== undefined) body = /\[([^\]]*)\]\s*(?:\(results:|$)/.exec(summary)?.[1] ?? "";
+  body = body.split(" first_error=")[0]!.split(" answers=")[0]!;
+  const keep = new Set(["model", "items", "ok", "failed", "skipped", "frames", "dry_run", "input_tokens", "output_tokens", "cost_usd", "est_input_tokens", "est_cost_usd", "problems", "stopped"]);
+  const parts: string[] = code !== undefined ? [`exited with code ${code}`] : [];
+  for (const m of body.matchAll(/\b([a-z_]+)=(\S*)/g)) {
+    const [, k, v] = m;
+    if (k === "failed_ids") parts.push(`failed_ids=${v ? v.split(",").length : 0}`);
+    else if (keep.has(k!)) parts.push(`${k}=${v!.replace(/[)\]]+$/, "")}`);
+  }
+  return `${prefix} ${parts.join(" ")}`.trim().slice(0, SUMMARY_MAX);
 }
 
 export interface ReadLedgerOpts {
@@ -121,9 +146,12 @@ function coerceEntry(o: unknown): LedgerEntry | null {
   if (typeof usage === "object" && usage !== null && !Array.isArray(usage)) {
     const x = usage as Record<string, unknown>;
     const n = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
-    u = {
+    // A record with no `calls` (and no cost) must not read as "0 calls = free":
+    // treat it as no usage at all, which the spend rule charges (fail closed).
+    const calls = n(x.calls);
+    u = calls === null && n(x.costUsd) === null ? null : {
       model: typeof x.model === "string" ? x.model : null,
-      calls: n(x.calls) ?? 0,
+      calls: calls ?? 0,
       items: n(x.items),
       ok: n(x.ok),
       failed: n(x.failed),
@@ -178,13 +206,19 @@ export function loadBudget(path: string = budgetPath()): Budget {
     return defaults();
   }
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return defaults();
-  const out: Budget = {};
+  // Per-field merge over the defaults, like the scripts' readBudget: a file with
+  // no gemini block (or `{"gemini":{}}`) still enforces $5/$50; negative or
+  // non-finite values are ignored in favour of the default.
+  const out: Budget = defaults();
+  const limit = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : undefined);
   for (const [adapter, v] of Object.entries(parsed as Record<string, unknown>)) {
-    if (typeof v !== "object" || v === null) continue;
+    if (typeof v !== "object" || v === null || Array.isArray(v)) continue;
     const b = v as Record<string, unknown>;
-    const entry: AdapterBudget = {};
-    if (typeof b.dailyUsd === "number" && Number.isFinite(b.dailyUsd)) entry.dailyUsd = b.dailyUsd;
-    if (typeof b.monthlyUsd === "number" && Number.isFinite(b.monthlyUsd)) entry.monthlyUsd = b.monthlyUsd;
+    const entry: AdapterBudget = { ...out[adapter] };
+    const d = limit(b.dailyUsd);
+    const m = limit(b.monthlyUsd);
+    if (d !== undefined) entry.dailyUsd = d;
+    if (m !== undefined) entry.monthlyUsd = m;
     out[adapter] = entry;
   }
   return out;

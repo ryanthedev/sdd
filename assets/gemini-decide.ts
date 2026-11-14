@@ -58,16 +58,18 @@
  * straight through. YouTube URLs are NOT accepted by the API: download first
  * (the `yt-dlp` adapter).
  *
- * JEV-COMPATIBLE: a jev request runs unchanged. An item's `state` string is
- * read as its text `input`, and a question `type: "boolean"` is sent as
- * `noul`; its answer carries `probability` (= noul) next to the native fields.
+ * LEGACY FIELDS: an item's `state` is read as its text `input`, and a question
+ * `type: "boolean"` (criteria `{true, false}`) is sent as `noul`; its answer
+ * carries `probability` (= noul) next to the native fields.
  * Every answer also carries a uniform headline `p` (P(yes) for noul, the
  * chosen label's probability for choice, the score's probability for score).
  *
  * RESULTS JSON: {model, requestedModel, questionTypes, items, ok, failed,
  * inputTokens, costUsd, stopped?, results:[{id, answers, inputTokens, costUsd,
- * seconds} | {id, error}]}. inputTokens and costUsd are null (never 0) when
- * the API reported no usage or the model has no known price.
+ * seconds} | {id, error}]}. Per item, inputTokens and costUsd are null (never 0)
+ * when the API reported no usage or the model has no known price. The top-level
+ * costUsd is the figure the budget is charged: known costs plus
+ * UNKNOWN_COST_CHARGE_USD per unknown-cost call (inputTokens is null then).
  *
  * CONTRACT (parsed by src/adapters/_gemini-decide.ts — keep in sync):
  *   SDD_GEMINI_USAGE:<json>   cumulative UsageRecord (docs/usage-contract.md); the LAST one wins;
@@ -81,16 +83,31 @@
  * results JSON and do not fail the job. If NO item succeeded the file is still
  * written but the script exits 1 with the first error on stderr.
  *
- * FAIL FAST: the first item runs alone; HTTP 400/401/403 on it aborts the job
- * (the rest recorded as skipped) rather than firing the same failure N times.
+ * QUESTION SHAPES are validated (and friendly shapes converted) before ANY API
+ * call: a score's criteria is a string rubric (an object or list is converted);
+ * a choice's criteria is `{label: description}` (a list of labels or of
+ * `{label, description}` is converted); a noul's criteria is optional
+ * `{true_description, false_description}`. Anything else dies with the exact
+ * correct JSON for that question type.
+ *
+ * FAIL FAST: the first item runs alone; HTTP 401/403 on it, or a 400 whose
+ * message names a request-level field (questions, criteria, instructions),
+ * aborts the job (the rest recorded as skipped) rather than firing the same
+ * failure N times. Any other 400 (typically that item's own bad media) is
+ * recorded per item and the batch continues.
  * 5 consecutive identical non-retryable errors abort it too.
  * PARTIAL RESULTS: each finished item is appended to `<results>.partial.jsonl`,
  * deleted after the final file is written (so it survives only a killed job).
  *
  * BUDGET (docs/usage-contract.md section 4): before the first API call the
- * script refuses (exit 1) if the gemini spend in `$SDD_LEDGER_PATH` (default
- * `~/.local/state/sdd/ledger.jsonl`) reaches `~/.config/sdd/budget.json`'s
- * daily (rolling 24 h) or monthly (local calendar month) limit.
+ * script refuses (exit 1) if the gemini spend in the sdd spend ledger reaches
+ * the budget file's daily (rolling 24 h) or monthly (local calendar month)
+ * limit. The per-job cap is min(request maxCostUsd (default 1), daily
+ * remaining, monthly remaining); every unknown-cost call (no usage in the
+ * reply, timeout, unreadable body) counts at a flat UNKNOWN_COST_CHARGE_USD
+ * toward it, and the stop message says so (`stopped=budget`). Parallel jobs
+ * can still start together before the ledger catches up; see effectiveCap in
+ * gemini-common.ts for that residual race.
  *
  * DATA EGRESS: every item's input, including any local file it names, is sent
  * to Google.
@@ -98,7 +115,17 @@
 import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, extname, join, resolve, sep } from "node:path";
-import { budgetRefusal, emitUsage, resolveKey, retryAfterMs, type UsageRecord, unpricedModelRefusal } from "./gemini-common.ts";
+import {
+  UNKNOWN_COST_CHARGE_USD,
+  budgetRefusal,
+  effectiveCap,
+  emitUsage,
+  resolveKey,
+  retryAfterMs,
+  type JobCap,
+  type UsageRecord,
+  unpricedModelRefusal,
+} from "./gemini-common.ts";
 
 const API = "https://generativelanguage.googleapis.com";
 const DEFAULT_MODEL = "gemini-decision-1";
@@ -149,7 +176,7 @@ interface Request {
   questions: Record<string, unknown>;
   /** The type each question was written with (`boolean` stays `boolean`). */
   questionTypes: Record<string, string>;
-  /** Questions that arrived as jev `boolean` and get a `probability` alias. */
+  /** Questions that arrived as legacy `boolean` and get a `probability` alias. */
   booleanQuestions: Set<string>;
   items: Item[];
   concurrency: number;
@@ -172,44 +199,62 @@ type StopReason = "budget" | "deadline" | "fatal" | "circuit";
 
 /** Cumulative spend, the source of every usage marker. */
 const st = {
+  /** The REQUESTED model: it prices the job (a reply's `model` never does). */
   model: null as string | null,
+  /** The model the API says answered, for the results file only. */
+  responseModel: null as string | null,
   items: null as number | null,
+  /** Calls that reached the API and answered (usage present or not). */
   calls: 0,
   ok: 0,
   failed: 0,
   inputTokens: 0,
-  inputUnknown: false,
   outputTokens: 0,
-  outputUnknown: false,
-  /** Sum of the per-call costs that WERE known (drives maxCostUsd). */
+  /** Sum of the per-call costs that WERE known. */
   costKnown: 0,
-  priced: false,
+  /** Calls that may have been billed with no known cost (reply without usage,
+   *  unpriced model, timeout, unreadable body): each is charged UNKNOWN_COST_CHARGE_USD. */
+  unknownCalls: 0,
+  /** Requests sent whose outcome is not yet known. */
+  inFlight: 0,
 };
 
-function usageRecord(): UsageRecord {
-  const price = st.model ? PRICES[st.model] : undefined;
-  let costUsd: number | null = null;
-  if (price && !st.inputUnknown && (price.output === 0 || !st.outputUnknown)) {
-    costUsd = (st.inputTokens * price.input + st.outputTokens * price.output) / 1_000_000;
-  }
+/** The running total the per-job cap is checked against: known costs plus the
+ *  flat charge per unknown-cost call. (In-flight calls are not counted here:
+ *  they would stop a concurrent batch before it spent anything. They ARE counted
+ *  when a SIGTERM flushes, see usageRecord.) */
+function runningCost(): number {
+  return st.costKnown + UNKNOWN_COST_CHARGE_USD * st.unknownCalls;
+}
+
+/** Record a call that may have been billed without a usable usage payload. */
+function countUnknownCall(): void {
+  st.calls++;
+  st.unknownCalls++;
+}
+
+function usageRecord(includeInFlight = false): UsageRecord {
+  const flying = includeInFlight ? st.inFlight : 0;
+  const unknown = st.unknownCalls + flying;
+  // No billed call means a KNOWN zero. Otherwise cost is always a number: the
+  // known per-call costs plus the flat charge per unknown-cost call.
   return {
     model: st.model,
-    calls: st.calls,
+    calls: st.calls + flying,
     items: st.items,
     ok: st.ok,
     failed: st.failed,
-    // No billed call means a KNOWN zero; an unreadable usage payload is null.
-    inputTokens: st.inputUnknown ? null : st.inputTokens,
-    outputTokens: st.outputUnknown ? null : st.outputTokens,
-    costUsd,
+    inputTokens: unknown > 0 ? null : st.inputTokens,
+    outputTokens: unknown > 0 ? null : st.outputTokens,
+    costUsd: st.costKnown + UNKNOWN_COST_CHARGE_USD * unknown,
     costIsEstimate: true,
   };
 }
 
 /** Always report usage once the script has started, even with zero billed calls,
  *  so the ledger records $0 rather than an unknown (charged) cost. */
-function flushUsage(): void {
-  emitUsage(usageRecord());
+function flushUsage(includeInFlight = false): void {
+  emitUsage(usageRecord(includeInFlight));
 }
 
 function die(msg: string): never {
@@ -286,34 +331,83 @@ function parseQuestions(raw: unknown): Pick<Request, "questions" | "questionType
     }
     questionTypes[qname] = q.type;
     if (q.type === "boolean") booleanQuestions.add(qname);
-    questions[qname] = q.type === "boolean" || q.type === "noul" ? toNoul(q) : q.type === "choice" ? toChoice(q) : q;
+    questions[qname] = q.type === "boolean" || q.type === "noul" ? toNoul(qname, q) : q.type === "choice" ? toChoice(qname, q) : toScore(qname, q);
   }
   return { questions, questionTypes, booleanQuestions };
 }
 
-/** A `choice` question's criteria must be an object `{label: description}`.
- *  A plain list of labels (the natural first guess, and jev's shape) is
- *  converted to `{label: ""}`; the API rejects the list form. */
-function toChoice(q: Record<string, unknown>): Record<string, unknown> {
-  const c = q.criteria;
-  if (Array.isArray(c) && c.every((x) => typeof x === "string")) {
-    return { ...q, criteria: Object.fromEntries((c as string[]).map((label) => [label, ""])) };
-  }
-  return q;
+const SHAPES: Record<string, string> = {
+  noul: '{"type": "noul", "instructions": "Is the sky blue?", "criteria": {"true_description": "the sky is blue", "false_description": "the sky is not blue"}}  (criteria is optional)',
+  choice: '{"type": "choice", "instructions": "Which color is it?", "criteria": {"red": "a red hue", "blue": "a blue hue"}}  (criteria is an object {label: description}; a list of labels also works)',
+  score: '{"type": "score", "instructions": "How good is it?", "criteria": "1 = awful, 3 = fine, 5 = excellent"}  (criteria is ONE string rubric)',
+};
+
+function badShape(qname: string, type: string, problem: string): never {
+  return die(`question "${qname}" (${type}): ${problem}. Correct shape: ${SHAPES[type]}`);
 }
 
-/** A jev `boolean` (criteria `{true, false}`) becomes a Gemini `noul`
- *  (criteria `{true_description, false_description}`). Gemini-shaped criteria
- *  pass through untouched. */
-function toNoul(q: Record<string, unknown>): Record<string, unknown> {
+const labelOf = (v: unknown): string | null => (typeof v === "string" && v.trim().length > 0 ? v.trim() : typeof v === "number" ? String(v) : null);
+
+/** A `score` question's criteria must be ONE string rubric (the API rejects an
+ *  object). An object like {"1": "bad", "5": "great"} or {low, high}, or a list
+ *  of strings / {score|label, description}, becomes a readable rubric. */
+function toScore(qname: string, q: Record<string, unknown>): Record<string, unknown> {
+  const c = q.criteria;
+  if (c === undefined) return q;
+  let rubric: string | null = null;
+  if (typeof c === "string") rubric = c;
+  else if (isRecord(c)) {
+    const lines = Object.entries(c).map(([k, v]) => (typeof v === "string" || typeof v === "number" ? `${k}: ${v}` : null));
+    rubric = lines.length > 0 && lines.every((l) => l !== null) ? lines.join("\n") : null;
+  } else if (Array.isArray(c)) {
+    const lines = c.map((x) => {
+      if (typeof x === "string") return x;
+      if (!isRecord(x)) return null;
+      const label = labelOf(x.label ?? x.score ?? x.value);
+      return label !== null && typeof x.description === "string" ? `${label}: ${x.description}` : null;
+    });
+    rubric = lines.length > 0 && lines.every((l) => l !== null) ? lines.join("\n") : null;
+  }
+  if (rubric === null || rubric.trim().length === 0) badShape(qname, "score", "criteria must be a non-empty string rubric");
+  return { ...q, criteria: rubric };
+}
+
+/** A `choice` question's criteria must be an object `{label: description}`
+ *  (the API rejects a list). A list of labels or of `{label, description}`
+ *  objects is converted. */
+function toChoice(qname: string, q: Record<string, unknown>): Record<string, unknown> {
+  const c = q.criteria;
+  let map: Record<string, string> | null = null;
+  if (isRecord(c)) {
+    const e = Object.entries(c);
+    if (e.length > 0 && e.every(([k, v]) => k.trim().length > 0 && typeof v === "string")) map = c as Record<string, string>;
+  } else if (Array.isArray(c) && c.length > 0) {
+    const entries = c.map((x): [string, string] | null => {
+      if (typeof x === "string") return x.trim().length > 0 ? [x, ""] : null;
+      if (!isRecord(x)) return null;
+      const label = labelOf(x.label);
+      const d = x.description ?? "";
+      return label !== null && typeof d === "string" ? [label, d] : null;
+    });
+    if (entries.every((e) => e !== null)) map = Object.fromEntries(entries as [string, string][]);
+  }
+  if (map === null) badShape(qname, "choice", "criteria must be a non-empty object {label: description}");
+  return { ...q, criteria: map };
+}
+
+/** A `noul` question: optional criteria `{true_description, false_description}`.
+ *  The legacy `boolean` form's `{true, false}` is mapped onto them. */
+function toNoul(qname: string, q: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = { ...q, type: "noul" };
   const c = q.criteria;
-  if (isRecord(c) && ("true" in c || "false" in c)) {
-    const mapped: Record<string, unknown> = {};
-    if (typeof c.true === "string") mapped.true_description = c.true;
-    if (typeof c.false === "string") mapped.false_description = c.false;
-    out.criteria = mapped;
+  if (c === undefined) return out;
+  const allowed = new Set(["true_description", "false_description", "true", "false"]);
+  if (!isRecord(c) || !Object.entries(c).every(([k, v]) => allowed.has(k) && typeof v === "string")) {
+    badShape(qname, "noul", "criteria must be an object with only true_description / false_description strings");
   }
+  const mapped: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(c)) mapped[k === "true" ? "true_description" : k === "false" ? "false_description" : k] = v;
+  out.criteria = mapped;
   return out;
 }
 
@@ -324,7 +418,7 @@ function parseItemInput(item: Record<string, unknown>, label: string): string | 
     return input;
   }
   const blocks = Array.isArray(input) ? input : isRecord(input) ? [input] : null;
-  if (!blocks || blocks.length === 0) die(`${label} needs an "input" (string, block, or array of blocks) or a jev-style "state"`);
+  if (!blocks || blocks.length === 0) die(`${label} needs an "input" (string, block, or array of blocks) or a legacy "state"`);
   for (const [i, b] of blocks.entries()) {
     if (!isRecord(b) || typeof b.type !== "string") die(`${label} input[${i}] must be an object with a "type"`);
     if (b.type === "text") {
@@ -570,7 +664,7 @@ function headlineP(a: Record<string, unknown>): number | null {
   return null;
 }
 
-/** Native answers plus the uniform `p` (and jev's `probability` for a
+/** Native answers plus the uniform `p` (and the legacy `probability` for a
  *  question that arrived as `boolean`). */
 function enrichAnswers(req: Request, answers: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
@@ -626,6 +720,72 @@ function backoff(attempt: number): number {
   return 500 * 2 ** attempt + Math.random() * 250;
 }
 
+/** The API's own message names a request-level field (not one item's media). */
+const REQUEST_LEVEL_RE = /question|criteria|instructions/i;
+
+type Attempt = { retry: string; waitMs?: number } | { result: ItemResult };
+
+/** One POST. Counts the call as in flight until its outcome is accounted for,
+ *  so a SIGTERM flush charges it as unknown instead of dropping it. */
+async function callOnce(key: string, req: Request, item: Item, body: string, attempt: number): Promise<Attempt> {
+  const t0 = performance.now();
+  st.inFlight++;
+  try {
+    let res: Response;
+    try {
+      res = await fetch(`${API}/v1beta/decisions`, {
+        method: "POST",
+        headers: { "x-goog-api-key": key, "Content-Type": "application/json" },
+        body,
+        signal: AbortSignal.timeout(DECISION_TIMEOUT_MS),
+      });
+    } catch (e) {
+      // A timeout may have been processed (and billed) server-side.
+      if (e instanceof Error && (e.name === "TimeoutError" || e.name === "AbortError")) countUnknownCall();
+      return { retry: `network error: ${e instanceof Error ? e.message : String(e)}`, waitMs: backoff(attempt) };
+    }
+    let text: string;
+    try {
+      text = await res.text();
+    } catch (e) {
+      // Body unreadable: a 2xx was still billed; its cost is unknown.
+      if (res.ok) countUnknownCall();
+      return { result: { id: item.id, error: `could not read the response body (HTTP ${res.status}): ${e instanceof Error ? e.message : String(e)}`, status: res.status, retryable: false } };
+    }
+    if (res.status === 429 || res.status >= 500) {
+      return { retry: `HTTP ${res.status}: ${text.slice(0, 200)}`, waitMs: retryAfterMs(res) ?? backoff(attempt) };
+    }
+    if (!res.ok) {
+      return { result: { id: item.id, error: `HTTP ${res.status}: ${text.slice(0, 300)}`, status: res.status, retryable: false } };
+    }
+    let data: Record<string, any>;
+    try {
+      data = JSON.parse(text) as Record<string, any>;
+    } catch {
+      countUnknownCall();
+      return { result: { id: item.id, error: `response was not valid JSON: ${text.slice(0, 200)}`, retryable: false } };
+    }
+    // The call reached the API and answered: it is billed whatever the body holds.
+    const inTok = num(data?.usage?.total_input_tokens);
+    const outTok = num(data?.usage?.total_output_tokens);
+    const cost = costOf(req.model, inTok); // priced by the REQUESTED model
+    if (cost === null) countUnknownCall();
+    else {
+      st.calls++;
+      st.costKnown += cost;
+    }
+    if (inTok !== null) st.inputTokens += inTok;
+    if (outTok !== null) st.outputTokens += outTok;
+    if (typeof data?.model === "string" && data.model.length > 0) st.responseModel = data.model;
+    if (!isRecord(data?.answers)) {
+      return { result: { id: item.id, error: `response carried no answers object: ${JSON.stringify(data).slice(0, 200)}`, retryable: false } };
+    }
+    return { result: { id: item.id, answers: enrichAnswers(req, data.answers), inputTokens: inTok, costUsd: cost, seconds: (performance.now() - t0) / 1000 } };
+  } finally {
+    st.inFlight--;
+  }
+}
+
 async function decide(key: string, req: Request, item: Item, caches: MediaCaches): Promise<ItemResult> {
   let input: string | Block[];
   try {
@@ -636,50 +796,14 @@ async function decide(key: string, req: Request, item: Item, caches: MediaCaches
   const body = JSON.stringify({ model: req.model, input, questions: req.questions });
   let lastError = "no attempt made";
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-    const t0 = performance.now();
-    let res: Response;
-    try {
-      res = await fetch(`${API}/v1beta/decisions`, {
-        method: "POST",
-        headers: { "x-goog-api-key": key, "Content-Type": "application/json" },
-        body,
-        signal: AbortSignal.timeout(DECISION_TIMEOUT_MS),
-      });
-    } catch (e) {
-      lastError = `network error: ${e instanceof Error ? e.message : String(e)}`;
-      await Bun.sleep(backoff(attempt));
-      continue;
+    // Retries of a timed-out item spend too: stop once the cap is reached.
+    if (attempt > 0 && runningCost() >= jobCap.usd) {
+      return { id: item.id, error: `stopped retrying: cost cap reached (last: ${lastError})`, retryable: true };
     }
-    if (res.status === 429 || res.status >= 500) {
-      lastError = `HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`;
-      await Bun.sleep(retryAfterMs(res) ?? backoff(attempt));
-      continue;
-    }
-    if (!res.ok) {
-      return { id: item.id, error: `HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`, status: res.status, retryable: false };
-    }
-    const data = (await res.json()) as Record<string, any>;
-    // The call reached the API and answered: it is billed whatever the body holds.
-    const inTok = num(data.usage?.total_input_tokens);
-    const outTok = num(data.usage?.total_output_tokens);
-    st.calls++;
-    if (inTok === null) st.inputUnknown = true;
-    else st.inputTokens += inTok;
-    if (outTok === null) st.outputUnknown = true;
-    else st.outputTokens += outTok;
-    const cost = costOf(req.model, inTok);
-    if (cost !== null) st.costKnown += cost;
-    if (typeof data.model === "string" && data.model.length > 0) st.model = data.model;
-    if (!isRecord(data.answers)) {
-      return { id: item.id, error: `response carried no answers object: ${JSON.stringify(data).slice(0, 200)}`, retryable: false };
-    }
-    return {
-      id: item.id,
-      answers: enrichAnswers(req, data.answers),
-      inputTokens: inTok,
-      costUsd: cost,
-      seconds: (performance.now() - t0) / 1000,
-    };
+    const r = await callOnce(key, req, item, body, attempt);
+    if ("result" in r) return r.result;
+    lastError = r.retry;
+    await Bun.sleep(r.waitMs ?? backoff(attempt));
   }
   return { id: item.id, error: `retries exhausted (last: ${lastError})`, retryable: true };
 }
@@ -716,6 +840,9 @@ function estimateTokens(req: Request, item: Item, qTokens: number, problems: { i
 
 // ---------------------------------------------------------------- main ----
 
+/** The per-job cap, set in main() once the budget has been read. */
+let jobCap: JobCap = { usd: Infinity, why: "uncapped" };
+
 const STOP_TEXT: Record<StopReason, string> = {
   budget: "maxCostUsd reached",
   deadline: "deadline reached",
@@ -732,7 +859,7 @@ async function main(): Promise<void> {
   // A cancelled job still reports what it spent (docs/usage-contract.md section 2).
   for (const sig of ["SIGTERM", "SIGINT"] as const) {
     process.on(sig, () => {
-      flushUsage();
+      flushUsage(true); // in-flight calls may be billed: charge them as unknown
       process.exit(143);
     });
   }
@@ -784,6 +911,7 @@ async function main(): Promise<void> {
       `SDD_GEMINI_SUMMARY:dry_run=1 items=${req.items.length} est_input_tokens=${inputTokens} est_cost_usd=${costUsd === null ? "unknown" : costUsd.toFixed(6)} problems=${problems.length}\n`,
     );
     process.stdout.write(`SDD_GEMINI_RESULT:${outPath}\n`);
+    flushUsage(); // calls: 0, so the ledger records $0 and not an unknown (charged) cost
     return;
   }
 
@@ -791,6 +919,7 @@ async function main(): Promise<void> {
   if (!key) die(`GEMINI_API_KEY is not set in the sdd server's environment or in ${resolveKey().file}`);
   const refusal = budgetRefusal("gemini-decide");
   if (refusal) die(refusal);
+  jobCap = effectiveCap("gemini-decide", req.maxCostUsd);
 
   const deadlineAt = cli.deadlineMs !== null ? startedAt + cli.deadlineMs : Infinity;
   const caches: MediaCaches = { uploads: new Map(), b64: new Map() };
@@ -816,7 +945,7 @@ async function main(): Promise<void> {
     } else {
       streak = { msg: "", n: 0 };
     }
-    if (st.costKnown >= req.maxCostUsd && !stop) stop = "budget";
+    if (runningCost() >= jobCap.usd && !stop) stop = "budget";
     // Throttled running total, so even a SIGKILLed job leaves a recent figure.
     if (st.calls > 0 && Date.now() - lastUsagePrint > 2000) {
       lastUsagePrint = Date.now();
@@ -831,7 +960,7 @@ async function main(): Promise<void> {
   // item (bad key, bad question shape) fails once, not N times.
   await runOne(0);
   const first = results[0];
-  if (first && "error" in first && (first.status === 400 || first.status === 401 || first.status === 403)) {
+  if (first && "error" in first && (first.status === 401 || first.status === 403 || (first.status === 400 && REQUEST_LEVEL_RE.test(first.error)))) {
     stop = "fatal";
     fatalMessage = first.error;
   }
@@ -848,7 +977,8 @@ async function main(): Promise<void> {
     }),
   );
 
-  const reasonText = stop === "fatal" ? `${STOP_TEXT.fatal}: ${oneLine(fatalMessage, 150)}` : stop ? STOP_TEXT[stop] : "";
+  const reasonText =
+    stop === "fatal" ? `${STOP_TEXT.fatal}: ${oneLine(fatalMessage, 150)}` : stop === "budget" ? `${STOP_TEXT.budget} (cap ${jobCap.why}; unknown-cost calls count $${UNKNOWN_COST_CHARGE_USD} each)` : stop ? STOP_TEXT[stop] : "";
   const final: ItemResult[] = req.items.map((item, i) => results[i] ?? { id: item.id, error: `skipped: ${reasonText}`, skipped: true });
   const ok = final.filter((r) => !("error" in r));
   const failed = final.length - ok.length;
@@ -859,7 +989,7 @@ async function main(): Promise<void> {
     outPath,
     JSON.stringify(
       {
-        model: st.model ?? req.model,
+        model: st.responseModel ?? req.model,
         requestedModel: req.model,
         questionTypes: req.questionTypes,
         items: final.length,

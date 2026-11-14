@@ -2,19 +2,19 @@
  * gemini `default` kind — batch decision calls to the Gemini Decisions API
  * (`gemini-decision-1`). One request JSON in, one results JSON out, reported
  * in `artifacts`. The request format is documented in `assets/gemini-decide.ts`;
- * a jev request runs unchanged.
+ * legacy `state` / `boolean` request fields still work.
  *
- * WHAT IT IS FOR: like jev it never writes text. It returns probabilities for
+ * WHAT IT IS FOR: a decision model; it never writes text. It returns probabilities for
  * typed questions (`noul` yes/no, `choice`, `score`) in about a second at
  * $0.10 per million input tokens and $0 output, so it RANKS, ROUTES, and
- * CLASSIFIES at volume. Unlike jev it reads media: an item's input may hold
+ * CLASSIFIES at volume. It reads media: an item's input may hold
  * local images, video, audio, or PDFs, so it can answer closed questions
  * about a downloaded video directly.
  *
  * IDENTITY CONTRACT: the "prompt" IS the request, and JobStore applies
  * `injectContract` BEFORE `buildArgs`, so any non-identity contract would
- * corrupt it (jev / shazam precedent). The prompt is either a path to a
- * `.json` request file, or (when its first non-space character is `{`) the
+ * corrupt it (shazam precedent). The prompt is either a path to a request
+ * file (any whitespace-free path, extension not required), or (when its first non-space character is `{`) the
  * request JSON itself, passed as `--inline` (capped at ~100 KB; use a file
  * above that). Anything else is rejected here with the request shape, which
  * catches a natural-language question before it spawns a job.
@@ -60,6 +60,16 @@ const ANSWERS_MARKER_RE = /^SDD_GEMINI_ANSWERS:(.+?)\r?$/gm;
 const INLINE_MAX_BYTES = 100 * 1024;
 const REQUEST_SHAPE = '{"questions": {"<name>": {"type": "noul"|"choice"|"score", "instructions": "..."}}, "items": [{"id": "...", "input": "..."}]}';
 
+/** A request FILE path: any single token with no whitespace (the extension is
+ *  not checked, so `/tmp/req` works), or a single-line `.json` path containing
+ *  a `/` (a directory with spaces in it). Natural language has whitespace and
+ *  no such shape, so it is rejected before a job is spawned. */
+function isRequestPath(p: string): boolean {
+  if (p.length === 0) return false;
+  if (!/\s/.test(p)) return true;
+  return !/[\r\n]/.test(p) && p.toLowerCase().endsWith(".json") && p.includes("/");
+}
+
 export function buildArgs(prompt: string, opts: DispatchOpts): string[] {
   const flags: string[] = [];
   const positionals: string[] = [];
@@ -85,11 +95,11 @@ export function buildArgs(prompt: string, opts: DispatchOpts): string[] {
       throw new TypeError(`${WHO}: inline request is not valid JSON (${e instanceof Error ? e.message : String(e)}); expected ${REQUEST_SHAPE}`);
     }
     flags.push("--inline", trimmed);
-  } else if (trimmed.toLowerCase().endsWith(".json")) {
+  } else if (isRequestPath(trimmed)) {
     positionals.push(validatePath(prompt, opts, "prompt (request file path)", WHO));
   } else {
     throw new TypeError(
-      `${WHO}: the prompt must be a request, not a question: either a path ending in .json or inline JSON like ${REQUEST_SHAPE}`,
+      `${WHO}: the prompt must be a request, not a question: either a path to a request file or inline JSON like ${REQUEST_SHAPE}`,
     );
   }
 

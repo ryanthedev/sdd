@@ -4,8 +4,8 @@
  *
  * - `default` — the Gemini Decisions API (`gemini-decision-1`): batch typed
  *   questions (`noul` / `choice` / `score`) over text OR media, returning
- *   probabilities. The multimodal successor to jev for ranking, routing, and
- *   classifying; a jev request file runs unchanged. See `_gemini-decide.ts`.
+ *   probabilities. A multimodal decision model for ranking, routing, and
+ *   classifying; legacy `state` / `boolean` request fields still work. See `_gemini-decide.ts`.
  * - `vision` — video-ingest fusion over `generateContent` on the cheapest
  *   Flash-Lite model: the fallback for agy's `vision` kind when agy is out of
  *   quota or down. Same opts and output shape as agy's. See `_gemini-vision.ts`.

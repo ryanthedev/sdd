@@ -15,7 +15,7 @@ import type { DispatchOpts } from "../types.ts";
 export const MODEL_RE = /^[a-z0-9][a-z0-9.-]{0,79}$/;
 
 /** The empty bunfig that stops the job cwd's bunfig.toml `preload` from
- *  running code inside the job (same reason as jev; see jev.ts HERMETIC RUN). */
+ *  running code inside the job (a bunfig `preload` would otherwise run inside the job). */
 const BUNFIG_RELATIVE = join("assets", "gemini-bunfig.toml");
 
 /**
@@ -31,7 +31,7 @@ export function hermeticBunArgv(scriptRelative: string, positionals: string[]): 
 /**
  * Absolute path to a bundled asset. Prefers $CLAUDE_PLUGIN_ROOT when running
  * inside Claude Code, falling back to a path relative to this module for tests
- * and manual `bun run` (jev / register.ts:readVersion precedent).
+ * and manual `bun run` (register.ts:readVersion precedent).
  */
 export function bundledPath(rel: string): string {
   const root = process.env.CLAUDE_PLUGIN_ROOT;

@@ -309,7 +309,8 @@ describe("bundled script validation (no network)", () => {
     expect(res.estimate.inputTokens).toBeGreaterThan(600);
     expect(res.problems).toHaveLength(1);
     expect(r.stdout).toContain("SDD_GEMINI_SUMMARY:dry_run=1 items=3");
-    expect(r.stdout).not.toContain("SDD_GEMINI_USAGE");
+    // A dry run bills nothing, but must still say so: no marker would be charged as an unknown cost.
+    expect(decide.parseUsage(r.stdout)).toMatchObject({ calls: 0, costUsd: 0 });
     rmSync(reqDir, { recursive: true, force: true });
   });
 
@@ -406,7 +407,7 @@ const mode = process.env.MOCK_MODE;
 globalThis.fetch = (async () => {
   n++;
   const bad = mode === "all400" || (mode === "after1" && n > 1);
-  if (bad) return new Response(JSON.stringify({ error: { message: "bad request" } }), { status: 400 });
+  if (bad) return new Response(JSON.stringify({ error: { message: "invalid questions.q.criteria" } }), { status: 400 });
   const usage = mode === "nousage" ? {} : { total_input_tokens: 1000000 };
   return new Response(JSON.stringify({ model: mode === "unpriced" ? undefined : "gemini-decision-1", answers: { q: { type: "noul", noul: 0.9, confidence: 0.9 } }, usage }));
 }) as typeof fetch;
@@ -464,7 +465,7 @@ globalThis.fetch = (async () => {
     const res = r.results();
     expect(res.stopped).toBe("budget");
     expect(res.ok).toBe(3);
-    expect(res.results[3]).toEqual({ id: "i3", error: "skipped: maxCostUsd reached" });
+    expect(res.results[3].error).toStartWith("skipped: maxCostUsd reached (cap $0.2500 = min(request maxCostUsd $0.25");
     expect(r.stdout).toContain("stopped=budget");
     const usage = decide.parseUsage(r.stdout);
     expect(usage?.calls).toBe(3);
@@ -486,9 +487,11 @@ globalThis.fetch = (async () => {
     const usage = decide.parseUsage(r.stdout);
     expect(usage?.calls).toBe(1);
     expect(usage?.inputTokens).toBeNull();
-    expect(usage?.costUsd).toBeNull();
-    expect(r.stdout).toContain("input_tokens=unknown cost_usd=unknown");
-    expect(r.results().costUsd).toBeNull();
+    // Tokens stay unknown, but the cost is a number: the flat unknown-call charge, so it can never read as free.
+    expect(usage?.costUsd).toBe(0.25);
+    expect(r.stdout).toContain("input_tokens=unknown cost_usd=0.250000");
+    expect(r.results().costUsd).toBe(0.25);
+    expect(r.results().results[0].costUsd).toBeNull();
   });
 
   test("SIGTERM flushes the usage so far, keeps the partial file, and exits 143", async () => {
@@ -514,8 +517,10 @@ globalThis.fetch = (async () => {
     const stdout = await new Response(proc.stdout).text();
     expect(code).toBe(143);
     const usage = decide.parseUsage(stdout);
-    expect(usage?.calls).toBe(1);
-    expect(usage?.inputTokens).toBe(500);
+    // One reply (500 tokens) plus the request still in flight, charged as an unknown-cost call.
+    expect(usage?.calls).toBe(2);
+    expect(usage?.inputTokens).toBeNull();
+    expect(usage?.costUsd).toBeCloseTo(0.00005 + 0.25, 6);
     expect(readFileSync(`${outPath}.partial.jsonl`, "utf8").trim().split("\n")).toHaveLength(1);
   });
 
@@ -524,7 +529,11 @@ globalThis.fetch = (async () => {
     writeFileSync(reqPath, JSON.stringify({ questions: { q: { type: "noul", instructions: "x" } }, items: [{ id: "a", input: "t" }], model: "some-other-model" }));
     const argv = decide.buildArgs(reqPath, { outputPath: join(dir, "unpriced-out.json") });
     argv.splice(argv.indexOf("run") + 1, 0, "--preload", mock);
-    const r = await spawn(argv, { MOCK_MODE: "unpriced" });
-    expect(decide.parseUsage(r.stdout)?.costUsd).toBeNull();
+    const cfg = join(dir, "cfg-allow-unpriced");
+    mkdirSync(join(cfg, "sdd"), { recursive: true });
+    writeFileSync(join(cfg, "sdd", "budget.json"), JSON.stringify({ gemini: { allowUnpricedModels: true } }));
+    const r = await spawn(argv, { MOCK_MODE: "unpriced", XDG_CONFIG_HOME: cfg });
+    // An unknown cost is a number (the flat charge), never null and never 0.
+    expect(decide.parseUsage(r.stdout)).toMatchObject({ calls: 1, costUsd: 0.25 });
   });
 });

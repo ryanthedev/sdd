@@ -5,7 +5,7 @@
  * Two kinds of report, both free to read (no work unit runs):
  *   - quota: an adapter that declares `readLimits`/`parseLimits` is asked for its
  *     account windows (see `src/lib/limits.ts`);
- *   - spend: an adapter that bills per call (gemini, maybe jev) is summarized from
+ *   - spend: an adapter that bills per call (gemini) is summarized from
  *     the local ledger (`src/lib/ledger.ts`) against `~/.config/sdd/budget.json`.
  *
  * Not every harness can report either. Adapters that do neither are listed as
@@ -19,8 +19,10 @@ import type { Adapter } from "../adapters/types.ts";
 import {
   type AdapterBudget,
   type LedgerEntry,
+  ledgerSummary,
   loadBudget,
   readLedger,
+  SUMMARY_MAX,
   type SpendSummary,
   type SpendWindow,
   summarizeSpend,
@@ -228,14 +230,15 @@ function recentRows(rt: Runtime, adapter: string | undefined, n: number) {
     state: e.state,
     durationMs: e.durationMs,
     costUsd: e.usage?.costUsd ?? null,
-    summary: e.summary,
+    // Re-sanitize on read: rows written before the privacy cap may hold answers/error text.
+    summary: ledgerSummary(e.adapter, e.summary),
   }));
   if (rows.length === 0) {
     return ok(`no ledger rows${adapter ? ` for ${adapter}` : ""}.`, { rows });
   }
   const lines = rows.map((r) => {
     const cost = r.costUsd === null ? "cost unknown" : usd(r.costUsd);
-    const summary = r.summary.replace(/\s+/g, " ").slice(0, 120);
+    const summary = r.summary.replace(/\s+/g, " ").slice(0, SUMMARY_MAX);
     return `${new Date(r.ts).toISOString()} ${r.adapter}/${r.kind} ${r.state} ${r.durationMs}ms ${cost} — ${summary}`;
   });
   return ok(lines.join("\n"), { rows });
