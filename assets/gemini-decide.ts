@@ -96,7 +96,7 @@
 import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, extname, join, resolve, sep } from "node:path";
-import { budgetRefusal, emitUsage, resolveKey, retryAfterMs, type UsageRecord } from "./gemini-common.ts";
+import { budgetRefusal, emitUsage, resolveKey, retryAfterMs, type UsageRecord, unpricedModelRefusal } from "./gemini-common.ts";
 
 const API = "https://generativelanguage.googleapis.com";
 const DEFAULT_MODEL = "gemini-decision-1";
@@ -204,8 +204,10 @@ function usageRecord(): UsageRecord {
   };
 }
 
+/** Always report usage once the script has started, even with zero billed calls,
+ *  so the ledger records $0 rather than an unknown (charged) cost. */
 function flushUsage(): void {
-  if (st.calls > 0) emitUsage(usageRecord());
+  emitUsage(usageRecord());
 }
 
 function die(msg: string): never {
@@ -744,6 +746,8 @@ async function main(): Promise<void> {
   }
   const req = parseRequest(raw, baseDir, cli);
   st.model = req.model;
+  const unpriced = unpricedModelRefusal(req.model, (m) => m in PRICES, "gemini-decide");
+  if (unpriced) die(unpriced);
   st.items = req.items.length;
 
   const outArg = cli.outAuto ? null : (cli.positionals[cli.positionals.length - 1] as string);

@@ -40,7 +40,7 @@
  */
 import { existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
-import { budgetRefusal, emitUsage, resolveKey, retryAfterMs, type UsageRecord } from "./gemini-common.ts";
+import { budgetRefusal, emitUsage, resolveKey, retryAfterMs, unpricedModelRefusal, type UsageRecord } from "./gemini-common.ts";
 
 const API = "https://generativelanguage.googleapis.com/v1beta";
 const MAX_FRAMES = 300;
@@ -98,16 +98,23 @@ const RESPONSE_SCHEMA = {
 /** Set once a reply has been received (billed): every later exit reports it. */
 let billed: UsageRecord | null = null;
 
+/** Zero-call usage, reported on any exit before a reply arrives, so the ledger
+ *  records $0 rather than an unknown (charged) cost. */
+let zeroUsage: UsageRecord = { model: null, calls: 0, items: null, ok: null, failed: null, inputTokens: 0, outputTokens: 0, costUsd: 0, costIsEstimate: true };
+
 function die(msg: string): never {
   process.stderr.write(`gemini-vision: ${msg}\n`);
-  if (billed) emitUsage(billed);
+  emitUsage(billed ?? zeroUsage);
   process.exit(1);
 }
 
 process.on("SIGTERM", () => {
-  if (billed) emitUsage(billed);
+  // Killed mid-request: the call may have been billed with no reply yet, so the
+  // cost is unknown (null) and the budget charges it conservatively.
+  emitUsage(billed ?? (inFlight ? { ...zeroUsage, calls: 1, inputTokens: null, outputTokens: null, costUsd: null } : zeroUsage));
   process.exit(143);
 });
+let inFlight = false;
 
 interface Frame {
   file: string;
@@ -165,6 +172,9 @@ async function main(): Promise<void> {
   const args = process.argv.slice(2);
   if (args.length !== 4) die("usage: gemini-vision.ts <artifactDir> <output.json> <model> <instruction>");
   const [dirArg, outArg, model, instruction] = args as [string, string, string, string];
+  zeroUsage = { ...zeroUsage, model };
+  const unpriced = unpricedModelRefusal(model, (m) => m in PRICES, "gemini-vision");
+  if (unpriced) die(unpriced);
   const dir = resolve(dirArg);
   const outPath = resolve(outArg);
   const { key, file: envFile } = resolveKey();
@@ -205,6 +215,7 @@ async function main(): Promise<void> {
   for (let attempt = 0; attempt < MAX_ATTEMPTS && !data; attempt++) {
     let res: Response;
     try {
+      inFlight = true;
       res = await fetch(`${API}/models/${encodeURIComponent(model)}:generateContent`, {
         method: "POST",
         headers: { "x-goog-api-key": key, "Content-Type": "application/json" },

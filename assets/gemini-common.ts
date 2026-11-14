@@ -57,8 +57,21 @@ export function resolveKey(): { key: string | null; file: string } {
 export interface GeminiBudget {
   dailyUsd: number;
   monthlyUsd: number;
+  /** Opt-in to models with no known price (their cost is unknown, charged at
+   *  UNKNOWN_COST_CHARGE_USD per job against the budget). Default false. */
+  allowUnpricedModels: boolean;
 }
-const DEFAULT_BUDGET: GeminiBudget = { dailyUsd: 5, monthlyUsd: 50 };
+const DEFAULT_BUDGET: GeminiBudget = { dailyUsd: 5, monthlyUsd: 50, allowUnpricedModels: false };
+
+/** A billed job whose cost is unknown is charged this much against the budget
+ *  (fail closed): an unknown cost must never read as free. */
+export const UNKNOWN_COST_CHARGE_USD = 0.25;
+
+/** Refusal text for a model with no known price, or null when it may run. */
+export function unpricedModelRefusal(model: string, priced: (m: string) => boolean, who: string): string | null {
+  if (priced(model) || readBudget(who).allowUnpricedModels) return null;
+  return `model "${model}" has no known price, so its spend can't be tracked; use a priced model or ask the user to set "allowUnpricedModels": true in the gemini block of ~/.config/sdd/budget.json`;
+}
 
 function configHome(): string {
   return process.env.XDG_CONFIG_HOME || join(homedir(), ".config");
@@ -82,9 +95,13 @@ export function readBudget(who: string): GeminiBudget {
     return { ...DEFAULT_BUDGET };
   }
   try {
-    const g = (JSON.parse(text) as { gemini?: { dailyUsd?: unknown; monthlyUsd?: unknown } }).gemini;
+    const g = (JSON.parse(text) as { gemini?: { dailyUsd?: unknown; monthlyUsd?: unknown; allowUnpricedModels?: unknown } }).gemini;
     const num = (v: unknown, d: number) => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : d);
-    return { dailyUsd: num(g?.dailyUsd, DEFAULT_BUDGET.dailyUsd), monthlyUsd: num(g?.monthlyUsd, DEFAULT_BUDGET.monthlyUsd) };
+    return {
+      dailyUsd: num(g?.dailyUsd, DEFAULT_BUDGET.dailyUsd),
+      monthlyUsd: num(g?.monthlyUsd, DEFAULT_BUDGET.monthlyUsd),
+      allowUnpricedModels: g?.allowUnpricedModels === true,
+    };
   } catch {
     process.stderr.write(`${who}: ${file} is not valid JSON; using default budget\n`);
     return { ...DEFAULT_BUDGET };
@@ -113,7 +130,7 @@ export function readSpend(now: number = Date.now()): Spend {
   const dayStart = now - 24 * 3600 * 1000;
   for (const line of text.split("\n")) {
     if (!line.includes('"gemini"')) continue;
-    let rec: { adapter?: unknown; ts?: unknown; usage?: { costUsd?: unknown } | null };
+    let rec: { adapter?: unknown; ts?: unknown; usage?: { costUsd?: unknown; calls?: unknown } | null };
     try {
       rec = JSON.parse(line);
     } catch {
@@ -123,10 +140,18 @@ export function readSpend(now: number = Date.now()): Spend {
     const inMonth = rec.ts >= monthStart;
     const inDay = rec.ts >= dayStart;
     if (!inMonth && !inDay) continue;
-    const cost = rec.usage?.costUsd;
-    if (typeof cost !== "number" || !Number.isFinite(cost)) {
-      if (rec.usage != null && inDay) spend.unknownCostJobs++;
-      continue;
+    const raw = rec.usage?.costUsd;
+    let cost: number;
+    if (typeof raw === "number" && Number.isFinite(raw)) {
+      cost = raw;
+    } else {
+      // Fail closed: a job that made billed calls but reports no cost is charged a
+      // conservative flat amount. A job with no usage record at all (killed before
+      // any marker, or a 0.7.0 script) is charged too, unless it says calls: 0.
+      const calls = rec.usage?.calls;
+      if (calls === 0) continue;
+      if (inDay) spend.unknownCostJobs++;
+      cost = UNKNOWN_COST_CHARGE_USD;
     }
     if (inDay) spend.usd24h += cost;
     if (inMonth) spend.usdMonth += cost;

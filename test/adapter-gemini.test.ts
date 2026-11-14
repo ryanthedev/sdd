@@ -342,7 +342,27 @@ describe("spend budget (hermetic ledger + config)", () => {
     const r = await spawn(decide.buildArgs(request, {}), { SDD_LEDGER_PATH: ledger });
     expect(r.code).toBe(1);
     expect(r.stderr).toContain("budget exceeded: $5.5000 in 24h of $5 daily");
-    expect(r.stdout).not.toContain("SDD_GEMINI_USAGE");
+    // A refused job reports zero billed calls, so the ledger records $0, not an unknown (charged) cost.
+    expect(decide.parseUsage(r.stdout)).toMatchObject({ calls: 0, costUsd: 0 });
+  });
+
+  test("unknown-cost jobs are charged conservatively (fail closed), calls:0 jobs are free", async () => {
+    const ledger = join(dir, "ledger-unknown.jsonl");
+    // 20 unknown-cost jobs x $0.25 = $5 >= the $5 daily default; a calls:0 job adds nothing.
+    const unknown = (age: number) => `${JSON.stringify({ v: 1, ts: Date.now() - age, adapter: "gemini", usage: { calls: 1, costUsd: null } })}\n`;
+    const free = `${JSON.stringify({ v: 1, ts: Date.now() - 1000, adapter: "gemini", usage: { calls: 0, costUsd: null } })}\n`;
+    writeFileSync(ledger, Array.from({ length: 20 }, (_, i) => unknown(1000 + i)).join("") + free);
+    const r = await spawn(decide.buildArgs(request, {}), { SDD_LEDGER_PATH: ledger });
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain("budget exceeded");
+  });
+
+  test("a model with no known price is refused unless the user opts in", async () => {
+    const ledger = join(dir, "ledger-empty.jsonl");
+    writeFileSync(ledger, "");
+    const r = await spawn(decide.buildArgs(request, { model: "gemini-9-mystery" }), { SDD_LEDGER_PATH: ledger, XDG_CONFIG_HOME: limits("cfg-unpriced", {}) });
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain("has no known price");
   });
 
   test("the config overrides the defaults; the monthly limit is enforced too", async () => {
