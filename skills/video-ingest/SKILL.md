@@ -164,7 +164,7 @@ dispatch(gemini, kind:"vision", "Fuse this video.", {addDir: <artifactDir>, outp
 
 **Limits.** Frames are sent inline, so their base64-encoded total must stay under 18 MB (about 150 typical 720p keyframes); over that, or if the reply hits the output-token limit, the job fails with a message to lower `frameCount`.
 
-**Needs** `GEMINI_API_KEY` in the server's env or `~/.config/sdd/.env`.
+**Needs** `GEMINI_API_KEY` in the server's env or `~/.config/sdd/.env`. **Budget:** the script refuses (exit 1, `budget exceeded: …`) when the gemini spend in the sdd ledger already reaches the daily or monthly limit the user set; the cost is reported as `cost_usd=unknown` for a model without a known price, never `$0`, and a reply that was cut off or failed validation still reports what it was billed.
 
 ## 12. Asking closed questions about the video (gemini decisions)
 
@@ -177,7 +177,7 @@ When the job is to classify, filter, or route videos rather than describe them (
  "items": [{"id": "reel1", "input": [{"type": "video", "path": "<artifactDir>/<id>.mp4"}]}]}
 ```
 
-`dispatch(gemini, <request path>, {outputPath: <results.json>})`. About 100 tokens per second of video at the default `low` resolution ($0.0002 for a 19-second clip) and about one second per item. Files over 20 MB are uploaded through the Files API automatically. YouTube URLs are refused by the API; always pass the downloaded file.
+`dispatch(gemini, <request path>, {outputPath: <results.json>})`, or pass the request JSON itself as the prompt (relative media paths then resolve against the job `cwd`) and omit `outputPath` to get a fresh temp file. The `result` summary carries an `answers=` headline per item (P(yes), `{choice, p}`, `{score, p}`), so a small batch needs no file read. About 100 tokens per second of video at the default `low` resolution ($0.0002 for a 19-second clip) and about one second per item. Media is sent inline up to 14 MB per item and uploaded through the Files API above that. **Media paths must sit inside the request file's directory or the job `cwd`** unless the request sets `"allowOutsidePaths": true`: put the request file in (or above) the artifact directory, or set that flag. Add `"dryRun": true` to get an item count and a rough token and cost estimate without any API call, and `"maxCostUsd"` (default 1.00) to cap a large batch. YouTube URLs are refused by the API; always pass the downloaded file.
 
 ## 13. Manual E2E (DEFERRED-MANUAL)
 

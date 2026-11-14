@@ -19,7 +19,8 @@ It's one Claude Code plugin: an MCP server plus a couple of Skills.
 - **Transcribe an Instagram reel.** Point the video pipeline at a URL (YouTube, Instagram, TikTok, X) and get back the audio, a transcript, and scene-cut keyframes. Great for "what's actually in this video" without watching it.
 - **Generate an image.** Ask `agy`, `codex`, or `grok` for a PNG with `kind: "image"`. That's how the banner above got made. No Midjourney seat needed: with `agy` or `codex` the account you already log into covers it, and `grok` bills the same xAI key its reviews do.
 - **Hand off the hard stuff.** Give a gnarly refactor a flagship model and high reasoning effort (`dispatch codex` with `model` + `effort`) and let it churn in the background while you keep working.
-- **Check what's left in the tank.** `usage` reports how much of your codex quota you've burned, when the window resets, and what credit you're holding. It costs zero tokens and runs no model: it reads the CLI's own account endpoint. Call it before a big fan-out and you'll know whether you're spending surplus or about to hit a wall.
+- **Check what's left in the tank.** `usage` reports how much of your codex quota you've burned, when the window resets, and what credit you're holding. It costs zero tokens and runs no model: it reads the CLI's own account endpoint. Call it before a big fan-out and you'll know whether you're spending surplus or about to hit a wall. It also shows Gemini dollars spent in the last 24 hours and this month against your budget (`~/.config/sdd/budget.json`, default $5/day and $50/month), and `usage({recent: N})` lists the last N jobs with their cost and outcome. Every finished job is logged to `~/.local/state/sdd/ledger.jsonl`, including failed and cancelled ones. If you run a Claude usage governor, `usage` also leads with its state (`$USAGE_GOVERNOR_DIR/state.json`, default `~/.claude/usage-governor`): weekly %, 24h use, RUN/STOP.
+- **Cheap helper agents.** sdd ships three Claude Code agents: `sdd:gemini-judge` ranks, filters or checks a batch (files, screenshots, videos) with Gemini Decisions; `sdd:video-digest` turns a video into a transcript-plus-visuals digest; `sdd:spend-watch` reports Gemini, Claude-governor and codex spend in one answer. They spend Gemini dollars instead of Claude quota.
 - **Fan out.** Kick off a batch at once. Every dispatch runs in parallel and returns a job id right away, so Claude can start three jobs and collect them as they land.
 
 ## How it works
@@ -30,7 +31,7 @@ Three moves, and the first one never blocks:
 2. Check in with `status`, or block on `wait` until it's done.
 3. Collect the structured result with `result`.
 
-Eight MCP tools drive the whole thing: `dispatch`, `status`, `result`, `wait`, `cancel`, `list_adapters`, `check_adapter`, and `usage`. Job state lives in memory for the session, so a server restart clears it (that's fine for v1, no disk persistence yet).
+Eight MCP tools drive the whole thing: `dispatch`, `status`, `result`, `wait`, `cancel`, `list_adapters`, `check_adapter`, and `usage`. Job state lives in memory for the session, so a server restart clears it; what persists is one line per finished job in the spend ledger (`~/.local/state/sdd/ledger.jsonl`), which `usage` reads.
 
 You could background a process from Bash and grep its stdout. What you'd be missing is the backstop: every adapter validates an output-contract marker before it calls a job `done`, so a harness that exits 0 without doing the work gets reported as `failed` instead of quietly passing. A misparsed flag, a swallowed prompt, a model that answered the wrong question. Those show up as failures here. In a shell one-liner they show up as a green checkmark.
 
@@ -54,7 +55,6 @@ brew install yt-dlp
 brew install ffmpeg
 pip install -U mlx-whisper      # Apple Silicon speech-to-text
 brew install uv                 # optional — only for `shazam` (song identification)
-echo 'AI_GATEWAY_API_KEY=...' >> ~/.config/sdd/.env   # optional — only for `jev`; read per job, no restart
 echo 'GEMINI_API_KEY=...' >> ~/.config/sdd/.env       # optional — only for `gemini` (AI Studio key); read per job
 bun run src/lib/preflight.ts    # tells you what's present, what's missing
 ```
@@ -65,7 +65,7 @@ bun run src/lib/preflight.ts    # tells you what's present, what's missing
 
 ## The adapters
 
-Twelve ship today, and the ones that do more than one thing expose the extras as *kinds* on the same name (`agy` has `default`/`image`/`vision`; `codex` and `grok` have `default`/`image`; `gemini` has `default`/`vision`). `list_adapters` shows you which ones are installed, `check_adapter` tells you whether one is actually logged in and usable (installed isn't the same as usable), and `usage` tells you how much quota is left.
+Eleven ship today, and the ones that do more than one thing expose the extras as *kinds* on the same name (`agy` has `default`/`image`/`vision`; `codex` and `grok` have `default`/`image`; `gemini` has `default`/`vision`). `list_adapters` shows you which ones are installed, `check_adapter` tells you whether one is actually logged in and usable (installed isn't the same as usable), and `usage` tells you how much quota is left.
 
 | Group | Adapters | For |
 |---|---|---|
@@ -77,12 +77,11 @@ Twelve ship today, and the ones that do more than one thing expose the extras as
 | | `gemini` + `kind: "vision"` | The same fusion over the Gemini API on Flash-Lite, for when agy is out of quota: same opts, same JSON, about $0.007 for a 2-minute reel |
 | Video pipeline | `yt-dlp`, `whisper`, `ffmpeg-frames` | Pull a video, transcribe it, extract scene-cut keyframes |
 | | `shazam` | Name the song playing in it, by acoustic fingerprint — the one thing the transcript and the frames both can't tell you |
-| Decision models | `gemini` | The default decision model. The Gemini Decisions API answers yes/no, choice, and score questions with probabilities over text **or** images, video, audio, and PDFs, in about 1 s at $0.10 per million input tokens. It never writes text. Jev request files run on it unchanged |
-| | `jev` | Rank or route a text batch at volume: TypeSafe Jev, about 0.3 s and a fraction of a cent per item. It never writes text |
+| Decision model | `gemini` | The decision model. The Gemini Decisions API answers yes/no, choice, and score questions with probabilities over text **or** images, video, audio, and PDFs, in about 1 s at $0.10 per million input tokens. It never writes text. Legacy `state` / `boolean` request fields are accepted |
 
 ### What's paying for what
 
-Two of the harnesses ride an account you already log into. Six want an API key. Four are free. Worth knowing which is which before you fan out, because "spend the surplus I already bought" and "meter myself a few cents per review" are different decisions:
+Two of the harnesses ride an account you already log into. Five want an API key. Four are free. Worth knowing which is which before you fan out, because "spend the surplus I already bought" and "meter myself a few cents per review" are different decisions:
 
 | Harness | Auth | What a job costs |
 |---|---|---|
@@ -92,7 +91,6 @@ Two of the harnesses ride an account you already log into. Six want an API key. 
 | `yt-dlp`, `whisper`, `ffmpeg-frames` | none | Free. whisper and ffmpeg run locally on your own silicon. |
 | `shazam` | none | Free. Needs `uv` on PATH; it provisions the recognizer on first run and caches it. |
 | `gemini` | `GEMINI_API_KEY` (Google AI Studio) | Metered. Decisions: $0.10 per million input tokens, nothing for output; a 19-second clip with four questions is about $0.0002. Vision fallback: Flash-Lite list price, about $0.007 per 2-minute reel. Inputs, including local media files, go to Google. |
-| `jev` | `AI_GATEWAY_API_KEY` (Vercel AI Gateway) | Metered: $0.042 per million input tokens, so two short items cost about $0.00004. Each item's text is sent to TypeSafe through Vercel. |
 
 Each harness has its own quirks: flag ordering, the marker it emits, what auth it needs. The full per-harness reference (capabilities, auth, and every gotcha) lives in **[`skills/subagent-driven-development/references/harnesses.md`](skills/subagent-driven-development/references/harnesses.md)**. For the orchestration doctrine (when to fan out, when to serialize, how to use `wait`) see **[`skills/subagent-driven-development/SKILL.md`](skills/subagent-driven-development/SKILL.md)**.
 

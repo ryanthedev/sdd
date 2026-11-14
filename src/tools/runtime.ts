@@ -23,9 +23,17 @@ const DEFAULT_ADAPTERS_DIR = join(dirname(fileURLToPath(import.meta.url)), "..",
 export interface Runtime {
   jobStore: JobStore;
   adaptersDir: string;
+  /** Ledger / budget file overrides (tests). Undefined = the standard resolution in lib/ledger.ts. */
+  ledgerPath?: string;
+  budgetPath?: string;
+  /** Claude usage-governor state dir. Undefined = governor not reported (tests); the server passes the real dir. */
+  governorDir?: string;
 }
 
 export interface RuntimeOptions {
+  ledgerPath?: string;
+  budgetPath?: string;
+  governorDir?: string;
   /** Override for tests — a temp dir with fixture adapter files. */
   adaptersDir?: string;
   jobStoreOptions?: JobStoreOptions;
@@ -35,6 +43,9 @@ export function createRuntime(opts: RuntimeOptions = {}): Runtime {
   return {
     jobStore: new JobStore(opts.jobStoreOptions),
     adaptersDir: opts.adaptersDir ?? DEFAULT_ADAPTERS_DIR,
+    ledgerPath: opts.ledgerPath,
+    budgetPath: opts.budgetPath,
+    governorDir: opts.governorDir,
   };
 }
 

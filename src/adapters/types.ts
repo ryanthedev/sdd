@@ -10,7 +10,7 @@
  * Dependency direction (Clean Architecture): this boundary imports the core
  * domain types inward. Nothing in the core imports this port.
  */
-import type { AdapterResult, DispatchOpts, UsageSnapshot } from "../types.ts";
+import type { AdapterResult, DispatchOpts, UsageRecord, UsageSnapshot } from "../types.ts";
 
 /**
  * Pure DATA describing how to read a harness's account limits. The adapter
@@ -76,6 +76,14 @@ export interface Capability {
    * actually did the work).
    */
   parseResult(stdout: string, stderr: string, exitCode: number): AdapterResult;
+
+  /**
+   * OPTIONAL pure extraction of what the job spent. Separate from `parseResult`
+   * so it runs on EVERY settle (done, failed, signal-killed, cancelled) and can
+   * never change the terminal status. Return null when nothing was reported;
+   * the JobStore treats a throw as null.
+   */
+  parseUsage?(stdout: string, stderr: string): UsageRecord | null;
 }
 
 /**
@@ -88,6 +96,8 @@ export interface Capability {
 export interface WorkUnit extends Capability {
   /** Harness name, for job records and error messages. */
   name: string;
+  /** Capability kind this unit was resolved from; recorded on the job and ledger. */
+  kind?: string;
 }
 
 /** Capability key used when an adapter exposes a single, unnamed capability. */
@@ -216,16 +226,16 @@ export function resolveWorkUnit(adapter: Adapter, kind?: string): WorkUnit | { e
     if (!chosen) {
       return { error: `adapter "${adapter.name}" has no kind "${kind}" — available: ${listing}` };
     }
-    return { name: adapter.name, ...chosen };
+    return { name: adapter.name, ...chosen, kind };
   }
 
   if (kinds.length === 1) {
     const only = adapter.capabilities[kinds[0]!]!;
-    return { name: adapter.name, ...only };
+    return { name: adapter.name, ...only, kind: kinds[0]! };
   }
 
   const fallback = adapter.defaultKind !== undefined ? adapter.capabilities[adapter.defaultKind] : undefined;
-  if (fallback) return { name: adapter.name, ...fallback };
+  if (fallback) return { name: adapter.name, ...fallback, kind: adapter.defaultKind! };
 
   return { error: `adapter "${adapter.name}" needs an explicit kind — available: ${listing}` };
 }
