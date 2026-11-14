@@ -101,6 +101,10 @@ What follows is orchestration discipline you must apply yourself — advice, not
 - **Grill before you generate.** A vague request ("make me an image") wastes a whole generation round-trip on a guess. Ask 2–4 batched questions — subject & action, style/medium, composition/lighting/mood, aspect ratio & any in-image text — in one message, each with example answers. Skip the interview entirely when the request already carries subject + style + one of composition/lighting/mood, when the user says "just do it" / "surprise me", or when iterating on a prior image (change only what they asked). Fill unanswered slots with a sensible default silently; don't re-ask.
 - **Write the prompt as a narrative scene, not keyword tags.** Nano Banana is built on Gemini's language understanding — a descriptive paragraph beats a Midjourney-style comma list (Google's own guidance: "describe the scene, don't just list keywords"). Anatomy: `[style/medium] [shot type] of [subject] [action], set in [setting], illuminated by [lighting], creating [mood]; [camera/lens for photos]; text "[quoted]" in [font style]; [aspect ratio] format.` Frame exclusions positively ("empty street", never "no cars"). Put any in-image text in quotes. State the aspect ratio in the prompt — it's prompt-driven (1:1, 16:9, 9:16, 4:3, 21:9, …).
 
+## Ready-made codex subagents
+
+For the common cases there are two plugin subagents that run the codex procedure for you (quota gate, baseline, dispatch, independent verification): `sdd:codex-builder` for scoped implementation (flags out-of-scope edits, runs tests itself, leaves the diff uncommitted) and `sdd:codex-reviewer` for a second-opinion review (verifies each finding, labels it CONFIRMED / UNCONFIRMED, confirms the tree is unchanged). Prefer them over hand-rolling the same dispatch sequence. Definitions: `agents/codex-builder.md`, `agents/codex-reviewer.md`.
+
 ## 4. Which adapter for which job
 
 | Job | Adapter |

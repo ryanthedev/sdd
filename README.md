@@ -96,6 +96,15 @@ Two of the harnesses ride an account you already log into. Six want an API key. 
 
 Each harness has its own quirks: flag ordering, the marker it emits, what auth it needs. The full per-harness reference (capabilities, auth, and every gotcha) lives in **[`skills/subagent-driven-development/references/harnesses.md`](skills/subagent-driven-development/references/harnesses.md)**. For the orchestration doctrine (when to fan out, when to serialize, how to use `wait`) see **[`skills/subagent-driven-development/SKILL.md`](skills/subagent-driven-development/SKILL.md)**.
 
+## Codex subagents
+
+The plugin ships two Claude Code subagents that hand the heavy lifting to codex through the MCP server, so Claude spends few tokens:
+
+- **`sdd:codex-builder`**: takes a scoped build task, checks codex quota first, dispatches codex, then independently diffs against a baseline, flags any file changed outside the stated scope, and runs the project's tests itself. The diff is left uncommitted for you.
+- **`sdd:codex-reviewer`**: a second-opinion review of a diff or files. It checks that codex left the tree unchanged and labels every finding CONFIRMED or UNCONFIRMED after checking it against the code.
+
+Both need a git repo as the target directory (codex refuses non-git dirs). Their definitions live in [`agents/`](agents/).
+
 ## Adding an adapter
 
 Drop a file in `src/adapters/` that exports the `Adapter` shape (`name`, `buildArgs`, `injectContract`, `parseResult`, plus optional `binary`/`probeable`). There's no registry to edit. Discovery picks it up, skips anything malformed with a warning instead of crashing, and ignores infra files (`_`-prefixed helpers, tests, `discover.ts`/`types.ts`). See the harness reference and any existing adapter for the pattern.
