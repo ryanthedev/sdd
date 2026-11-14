@@ -27,6 +27,7 @@ const state = (readAt: number) =>
       all: { decision: "RUN", pct: 31, used_24h: 24, hard_stop: 90, daily_burst: 30 },
       fable: { decision: "STOP", pct: 95, used_24h: 5, hard_stop: 90, daily_burst: 10 },
       gemini: { decision: "RUN", usd_24h: 0.25, usd_month: 0.25, daily_usd: 5, monthly_usd: 50 },
+      gemini_vision: { decision: "RUN", usd_24h: 0.5, usd_month: 0.5, daily_usd: 15, monthly_usd: 150 },
     },
     read_at: readAt,
   });
@@ -52,7 +53,7 @@ test("fresh state parses meters and is not stale", () => {
   expect(v.decision).toBe("RUN");
   expect(v.stale).toBe(false);
   expect(v.ageSeconds).toBe(60);
-  expect(v.meters.map((m) => m.name)).toEqual(["all", "fable", "gemini"]);
+  expect(v.meters.map((m) => m.name)).toEqual(["all", "fable", "gemini", "gemini_vision"]);
   expect(v.meters[0]).toMatchObject({ pct: 31, used24h: 24, hardStop: 90, dailyBurst: 30 });
   expect(v.meters[2]).toMatchObject({ usd24h: 0.25, dailyUsd: 5 });
 });
@@ -67,13 +68,14 @@ test("state older than 15 minutes, or without read_at, is stale", () => {
   expect(v.ageSeconds).toBeNull();
 });
 
-test("renderGovernor omits the gemini meter and flags staleness", () => {
+test("renderGovernor omits the gemini and gemini_vision meters and flags staleness", () => {
   const d = fresh();
   writeFileSync(join(d, "state.json"), state(NOW / 1000 - 60));
   const out = renderGovernor(readGovernor(d, NOW)!);
   expect(out).toContain("all RUN weekly 31%");
   expect(out).toContain("fable STOP weekly 95%");
   expect(out).not.toContain("gemini");
+  expect(out).not.toContain("gemini_vision");
   expect(out).not.toContain("STALE");
   writeFileSync(join(d, "state.json"), state(NOW / 1000 - 3600));
   expect(renderGovernor(readGovernor(d, NOW)!)).toContain("STALE");

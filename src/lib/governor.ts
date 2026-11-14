@@ -85,12 +85,15 @@ export function readGovernor(dir: string = governorDir(), nowMs: number = Date.n
 
 const pct = (v: number | null) => (v === null ? "?" : `${v}%`);
 
-/** One line per Claude meter (all, fable); the gemini dollar meter is left to sdd's own spend line. */
+/** Dollar-spend meters (decision and vision pools): reported by sdd's own spend line, never as Claude quota. */
+const SPEND_METERS = new Set(["gemini", "gemini_vision"]);
+
+/** One line per Claude meter (all, fable). */
 export function renderGovernor(v: GovernorView): string {
   const age = v.ageSeconds === null ? "age unknown" : `read ${Math.round(v.ageSeconds / 60)}m ago`;
   const head = `claude (usage governor): ${v.decision}${v.stale ? " (STALE state: the governor treats this as STOP)" : ""} · ${age}`;
   const parts = v.meters
-    .filter((m) => m.name !== "gemini")
+    .filter((m) => !SPEND_METERS.has(m.name))
     .map((m) => `${m.name} ${m.decision} weekly ${pct(m.pct)} (stop ${pct(m.hardStop)}), 24h ${pct(m.used24h)} of ${pct(m.dailyBurst)}`);
   return [head, ...parts.map((p) => `  ${p}`)].join("\n");
 }
