@@ -31,7 +31,8 @@ import { type WriteStream, closeSync, createWriteStream, mkdirSync, mkdtempSync,
 import { tmpdir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import type { WorkUnit } from "../adapters/types.ts";
-import type { AdapterResult, DispatchOpts, Job } from "../types.ts";
+import type { AdapterResult, DispatchOpts, Job, UsageRecord } from "../types.ts";
+import type { LedgerInput } from "./ledger.ts";
 import { newJobId } from "./ids.ts";
 import { log } from "./log.ts";
 
@@ -39,6 +40,8 @@ import { log } from "./log.ts";
 const DEFAULT_WAIT_MS = 30_000;
 /** Documented upper bound for a single `wait` block (10 minutes). */
 const MAX_WAIT_MS = 600_000;
+/** SIGTERM -> SIGKILL grace, so a script can flush its usage marker before dying. */
+const KILL_GRACE_MS = 1500;
 
 /** Tunables for a JobStore instance. All optional; sane defaults for production. */
 export interface JobStoreOptions {
@@ -50,6 +53,14 @@ export interface JobStoreOptions {
   defaultTimeoutMs?: number;
   /** Hard cap a caller's `wait` timeout is clamped to. */
   maxTimeoutMs?: number;
+  /**
+   * Sink for one ledger line per terminal job. Defaults to a no-op so unit tests
+   * never touch the real ~/.local/state; the server passes `appendLedger`.
+   * Must not throw (appendLedger never does); a throw is contained anyway.
+   */
+  ledger?: (entry: LedgerInput) => void;
+  /** Grace between SIGTERM and SIGKILL on cancel/shutdown, ms. Default 1500. */
+  killGraceMs?: number;
 }
 
 /** Partial view returned by `wait`. `unknown` reports ids that name no tracked job. */
@@ -73,6 +84,12 @@ interface TrackedJob {
   stderr: string[];
   /** Guards against finalizing twice (both `close` and `error` can fire). */
   settled: boolean;
+  /** Set once we sent the job a terminating signal (cancel/shutdown). */
+  terminated: boolean;
+  /** Exit facts captured at close, for the ledger. */
+  exitCode: number | null;
+  signal: string | null;
+  killTimer?: ReturnType<typeof setTimeout>;
   /** Resolves when the job reaches a terminal state (done | failed). */
   done: Promise<void>;
   resolveDone: () => void;
@@ -83,6 +100,8 @@ export class JobStore {
   readonly #logDir: string;
   readonly #defaultTimeoutMs: number;
   readonly #maxTimeoutMs: number;
+  readonly #ledger: (entry: LedgerInput) => void;
+  readonly #killGraceMs: number;
   #signalHandlers?: { sigint: () => void; sigterm: () => void };
   #shuttingDown = false;
 
@@ -90,6 +109,8 @@ export class JobStore {
     this.#logDir = opts.logDir ?? mkdtempLogDir();
     this.#defaultTimeoutMs = opts.defaultTimeoutMs ?? DEFAULT_WAIT_MS;
     this.#maxTimeoutMs = opts.maxTimeoutMs ?? MAX_WAIT_MS;
+    this.#ledger = opts.ledger ?? (() => {});
+    this.#killGraceMs = opts.killGraceMs ?? KILL_GRACE_MS;
     if (opts.installSignalHandlers) this.#installSignalHandlers();
   }
 
@@ -295,13 +316,27 @@ export class JobStore {
       state: "running",
       logPath,
       createdAt: Date.now(),
+      kind: adapter.kind ?? "default",
     };
 
     let resolveDone!: () => void;
     const done = new Promise<void>((res) => {
       resolveDone = res;
     });
-    const tracked: TrackedJob = { job, adapter, child, logStream, stdout, stderr, settled: false, done, resolveDone };
+    const tracked: TrackedJob = {
+      job,
+      adapter,
+      child,
+      logStream,
+      stdout,
+      stderr,
+      settled: false,
+      terminated: false,
+      exitCode: null,
+      signal: null,
+      done,
+      resolveDone,
+    };
     this.#jobs.set(id, tracked);
 
     // A job turns terminal only once its log stream has CLOSED: flushed to disk,
@@ -312,7 +347,14 @@ export class JobStore {
       if (tracked.settled) return;
       tracked.settled = true;
       const settle = (): void => {
+        if (tracked.killTimer) clearTimeout(tracked.killTimer);
+        // The leader settling does not mean its group is empty: a grandchild that
+        // ignored SIGTERM would otherwise outlive a cancel/shutdown. One last
+        // SIGKILL to the GROUP only (never the bare pid, which may be reused).
+        if (tracked.terminated && child.pid !== undefined) this.#signalGroup(child.pid, "SIGKILL", false);
         finish();
+        job.finishedAt = Date.now();
+        this.#record(tracked); // ledger line + usage, on EVERY terminal state; never throws
         tracked.resolveDone();
       };
       if (logStream.closed) {
@@ -323,7 +365,11 @@ export class JobStore {
       logStream.end();
     };
 
-    child.on("close", (code, signal) => finalize(() => this.#classify(tracked, code, signal)));
+    child.on("close", (code, signal) => {
+      tracked.exitCode = code;
+      tracked.signal = signal;
+      finalize(() => this.#classify(tracked, code, signal));
+    });
     child.on("error", (err) =>
       finalize(() => {
         job.state = "failed";
@@ -352,6 +398,14 @@ export class JobStore {
     const exitCode = code ?? -1;
     job.exitCode = exitCode;
 
+    // A job we terminated (cancel/shutdown) that caught SIGTERM to flush and
+    // exit by itself is still a terminated job: never trust a parser on it.
+    if (tracked.terminated) {
+      job.state = "failed";
+      job.result = { status: "failed", summary: `cancelled (exit code ${exitCode})`, artifacts: [], raw: stdout };
+      return;
+    }
+
     let result: AdapterResult;
     try {
       result = adapter.parseResult(stdout, stderr, exitCode);
@@ -365,18 +419,65 @@ export class JobStore {
     job.state = result.status === "done" ? "done" : "failed";
   }
 
-  /** SIGKILL a job's whole process group; fall back to the bare pid if the group is gone. */
+  /**
+   * Terminate a job's whole process group: SIGTERM first so a script can flush
+   * its usage marker, then SIGKILL after the grace period if the job has not
+   * settled. Falls back to the bare pid if the group is gone.
+   */
   #killGroup(tracked: TrackedJob): void {
     const pid = tracked.child.pid;
     if (pid === undefined) return;
+    tracked.terminated = true;
+    this.#signalGroup(pid, "SIGTERM");
+    if (tracked.killTimer || tracked.settled) return;
+    tracked.killTimer = setTimeout(() => {
+      if (!tracked.settled) this.#signalGroup(pid, "SIGKILL");
+    }, this.#killGraceMs);
+  }
+
+  #signalGroup(pid: number, signal: NodeJS.Signals, fallbackToPid = true): void {
     try {
-      process.kill(-pid, "SIGKILL"); // negative pid = the process group led by the detached child
+      process.kill(-pid, signal); // negative pid = the process group led by the detached child
     } catch {
+      if (!fallbackToPid) return; // ESRCH: group already empty
       try {
-        process.kill(pid, "SIGKILL");
+        process.kill(pid, signal);
       } catch {
         /* process already exited — nothing to kill */
       }
+    }
+  }
+
+  /**
+   * Usage + ledger for a job that just turned terminal. Runs for done, failed,
+   * signal-killed, cancelled and parseResult-threw alike; touches no job state,
+   * so it can never change a classification.
+   */
+  #record(tracked: TrackedJob): void {
+    const { job, adapter } = tracked;
+    let usage: UsageRecord | null = null;
+    try {
+      usage = adapter.parseUsage?.(tracked.stdout.join(""), tracked.stderr.join("")) ?? null;
+    } catch {
+      usage = null;
+    }
+    try {
+      const ts = job.finishedAt ?? Date.now();
+      this.#ledger({
+        ts,
+        jobId: job.id,
+        adapter: job.adapter,
+        kind: job.kind,
+        cwd: job.cwd,
+        state: job.state === "done" ? "done" : "failed",
+        exitCode: tracked.exitCode,
+        signal: tracked.signal,
+        durationMs: Math.max(0, ts - job.createdAt),
+        summary: job.result?.summary ?? "",
+        usage,
+      });
+    } catch (e) {
+      log(`job ${job.id}: ledger write failed: ${errMessage(e)}`);
     }
   }
 

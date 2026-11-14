@@ -39,7 +39,7 @@ Everything here was mined from the user's own past operations (the-problem2 jam 
 |---|---|
 | **The user is away** | Never ask them a question to proceed. Make a reversible call, log it under Decisions in the charter, keep going. |
 | **You approve routine work** | Reads, tests, edits and local commits inside an agent's own worktree: approve them yourself. |
-| **Escalate only the risky** | Push, deploy, publish, delete data, spend money, message a person: never approve these on the user's behalf unless the charter quotes the user allowing that exact action. ("commander and jev and decide, escalate risky.") |
+| **Escalate only the risky** | Push, deploy, publish, delete data, spend money, message a person: never approve these on the user's behalf unless the charter quotes the user allowing that exact action. ("commander and gemini and decide, escalate risky.") |
 | **Don't ship unproven** | Nothing merges to main, pushes or publishes until it is verified (section 7) and, where the user asked, shown to them. |
 | **Hands off their machine** | Never drive the user's mouse, screen or Chrome. Browsers run headless. |
 | **Keep going** | The operation ends when the goal is met or every remaining path is blocked on the user. Never stop just to report progress. |
@@ -72,7 +72,7 @@ grep -qx '.commander/' .git/info/exclude || echo '.commander/' >> .git/info/excl
 |---|---|---|
 | **Interactive commander (hc)** | A long, multi-step track that will hit approval prompts, need steering, or outlive a single turn | `hc run --bg` a Claude Code, codex or agy session (section 5) |
 | **Agent-tool subagent** | A bounded research, review or build step with a clear return | The Agent tool. Brief it with the `oberskills:agent` contract |
-| **sdd job** | A second opinion, an ensemble review, an image, Jev ranking | `dispatch` per `subagent-driven-development`, including its recipes (quota-first, worktree writers, ranked ensemble) |
+| **sdd job** | A second opinion, an ensemble review, an image, decision-model ranking | `dispatch` per `subagent-driven-development`, including its recipes (quota-first, worktree writers, ranked ensemble) |
 | **Workflow tool** | A scripted fan-out of many agents | Only when the user explicitly asked for a workflow. The tool requires that opt-in |
 
 Which harness can be a commander is decided by whether it reports status to hc (`working`, `blocked`, `done`). Without that, `hc wait` only returns on exit and a blocked agent looks like a busy one.

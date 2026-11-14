@@ -63,6 +63,7 @@ test("test_DW_1_3_core_types_are_constructable", () => {
     state,
     logPath: "/tmp/job_1.log",
     createdAt: Date.now(),
+    kind: "default",
   };
 
   expect(result.artifacts).toEqual(["/tmp/out.png"]);

@@ -1,6 +1,6 @@
 # Recipes: running sdd at full strength
 
-Four recipes that combine the eight tools into bigger moves. Each one says what was measured and what is still a bet, because the skill's rule holds here too: don't oversell. Numbers marked *tellme* come from the Jev experiments in `~/repos/tellme` (Oct 2026, `experiments/RESULTS.md` there).
+Four recipes that combine the eight tools into bigger moves. Each one says what is still a bet, because the skill's rule holds here too: don't oversell. Nothing in the decision-model steps has been measured yet: rank by the probabilities, never threshold them.
 
 ## Contents
 
@@ -9,11 +9,11 @@ Four recipes that combine the eight tools into bigger moves. Each one says what 
 | [1. Quota-first routing](#1-quota-first-routing) | Before any fan-out of three or more jobs | Spend prepaid quota before metered keys |
 | [2. Parallel writers in worktrees](#2-parallel-writers-in-worktrees) | Two or more implementation jobs, or a bake-off | One `git worktree` per writer, Claude merges |
 | [3. Ensemble review, ranked](#3-ensemble-review-ranked) | A diff that matters enough for more than one reviewer | Five vendors, findings clustered and ranked by agreement |
-| [4. Repo-scale targeting with Jev](#4-repo-scale-targeting-with-jev) | Auditing more code than anyone can read | Jev ranks every routine; reviewers read the top slice |
+| [4. Repo-scale targeting](#4-repo-scale-targeting) | Auditing more code than anyone can read | `gemini` ranks every routine; reviewers read the top slice |
 
 ## 1. Quota-first routing
 
-codex and agy run on accounts you already pay for, and their quota windows reset whether you used them or not. grok, kimi, qwen, mistral and jev bill per token. So the cheapest job is the one that spends surplus you have already bought.
+codex and agy run on accounts you already pay for, and their quota windows reset whether you used them or not. grok, kimi, qwen, mistral and gemini bill per token. So the cheapest job is the one that spends surplus you have already bought.
 
 1. **Read the meter once:** `usage(adapter:"codex")` before a fan-out. It costs no tokens and is cached about 60 s, so one call covers the whole batch.
 2. **Route by what it says:**
@@ -67,72 +67,70 @@ Under ## Findings, one finding per line, exactly:
 **Step 3: rank.** Order the clusters by:
 
 1. **Agreement `k`, high to low.** Independent vendors converging on one line is the strongest signal this recipe has.
-2. **Reviewer severity, high to low** (the highest severity any reviewer gave). This is the signal that measured best in tellme: the reviewer's own severity ranked real findings at AUC 0.74 (AUC 0.5 is a coin flip).
-3. **Jev, as a tie-breaker only** (step 4, optional).
+2. **Reviewer severity, high to low** (the highest severity any reviewer gave).
+3. **The decision model, as a tie-breaker only** (step 4, optional).
 
-**Step 4 (optional): ask Jev, as an experiment.** Write one request with an item per cluster and dispatch `jev`:
+**Step 4 (optional): ask the decision model, as an experiment.** Write one request with an item per cluster and dispatch `gemini`:
 
 ```json
 {
   "questions": {
-    "real": {"type": "boolean",
+    "real": {"type": "noul",
       "instructions": "Considering the finding and the code, is it a genuine defect rather than a false alarm?",
-      "criteria": {"true": "A reviewer who traced the code would agree this is a real defect.",
-                   "false": "On inspection the code is fine; the finding is a false alarm."}},
+      "criteria": {"true_description": "A reviewer who traced the code would agree this is a real defect.",
+                   "false_description": "On inspection the code is fine; the finding is a false alarm."}},
     "severity": {"type": "score",
       "instructions": "How severe would this be in production if it is real?",
-      "criteria": ["Low: unlikely to matter.", "Medium: wrong results in an edge case.",
-                   "High: likely data loss, outage, or security impact.",
-                   "Critical: exploitable or certain to corrupt data."]}
+      "criteria": "1-2: unlikely to matter. 3-5: wrong results in an edge case. 6-8: likely data loss, outage, or security impact. 9-10: exploitable or certain to corrupt data."}
   },
   "items": [
-    {"id": "c1", "state": "Raised independently by 3 of 5 reviewers (codex, grok, qwen).\nClaims:\n- [high] codex: ...\n- [high] grok: ...\n- [medium] qwen: ...\n\nCode (path:40-80):\n<the hunk>"}
+    {"id": "c1", "input": "Raised independently by 3 of 5 reviewers (codex, grok, qwen).\nClaims:\n- [high] codex: ...\n- [high] grok: ...\n- [medium] qwen: ...\n\nCode (path:40-80):\n<the hunk>"}
   ]
 }
 ```
 
-`dispatch(adapter:"jev", prompt:"<request path>", outputPath:"<results path>")`. Use `real` to order clusters that tie on agreement and severity. Nothing more.
+`dispatch(adapter:"gemini", prompt:"<request path>", outputPath:"<results path>")`. A `noul` answer is headlined in the summary as P(yes); every answer in the results JSON has a uniform `p`. Use `real` to order clusters that tie on agreement and severity. Nothing more.
 
-**What's measured and what's a bet:**
+**What's a bet:**
 
-- **Measured, and against Jev:** judging whether another model's finding is true scored AUC 0.54–0.64 in tellme, below the reviewer's own severity (0.74). That held with the reader's report attached, with the whole file attached, and with a 9-question panel. So Jev never outranks agreement or severity here.
-- **The untested angle:** tellme's Jev never saw several vendors agreeing. Putting `k of n` and every reviewer's wording into the state is new. It might help; nobody has measured it.
-- **Raw probabilities are uncalibrated** (tellme ECE 0.16 on the defect question). Order by them; never act on "above 0.9".
+- **Nothing here is measured.** Whether the decision model can tell a true finding from a false alarm is untested, so it never outranks agreement or severity.
+- **The untested angle:** putting `k of n` and every reviewer's wording into the input is new. It might help; nobody has measured it.
+- **Calibration is unmeasured.** Order by the probabilities; never act on "above 0.9".
 
 **Step 5: verify, and record the label.** Claude reads the code for the top clusters and marks each one confirmed or rejected. That verdict is free ground truth. If you ran step 4, append one line per verified cluster to `~/.local/state/sdd/ensemble-labels.jsonl`:
 
 ```json
-{"date": "2026-10-29", "repo": "sdd", "cluster": "c1", "k": 3, "n": 5, "reviewerSeverity": "high", "jevReal": 0.91, "jevSeverity": 2.4, "provider": "typesafe-ai", "verdict": "confirmed"}
+{"date": "2026-10-29", "repo": "sdd", "cluster": "c1", "k": 3, "n": 5, "reviewerSeverity": "high", "modelReal": 0.91, "modelSeverity": 2.4, "verdict": "confirmed"}
 ```
 
-After about 100 labels, compare how well `k`, reviewer severity and `jevReal` each separate confirmed from rejected. That answers whether Jev earns a higher slot in step 3, with your own data instead of tellme's.
+After about 100 labels, compare how well `k`, reviewer severity and `modelReal` each separate confirmed from rejected. That answers whether the decision model earns a higher slot in step 3, with your own data.
 
-## 4. Repo-scale targeting with Jev
+## 4. Repo-scale targeting
 
-When there is more code than any reader can get through (an audit of a whole repo, a vendored dependency, an unfamiliar codebase), let Jev rank every routine and send the reviewers only the top slice.
+When there is more code than any reader can get through (an audit of a whole repo, a vendored dependency, an unfamiliar codebase), let `gemini` rank every routine and send the reviewers only the top slice.
 
-1. **Make items.** One item per function if you can extract them (ast-grep, a language's own AST tool); otherwise one per file, splitting anything over 120,000 characters. Include the path in each state.
-2. **Ask the measured question, verbatim:**
+1. **Make items.** One item per function if you can extract them (ast-grep, a language's own AST tool); otherwise one per file, splitting anything very large. Include the path in each input.
+2. **Ask one yes/no question per routine:**
 
 ```json
-{"questions": {"defect": {"type": "boolean",
+{"questions": {"defect": {"type": "noul",
   "instructions": "Does this routine contain a security defect a careful reviewer would flag?",
-  "criteria": {"true": "A careful reviewer would flag a security defect here.",
-               "false": "A careful reviewer would find no security defect here."}}},
- "items": [{"id": "pkg/auth.go:Verify", "state": "// pkg/auth.go\nfunc Verify(...) {...}"}],
+  "criteria": {"true_description": "A careful reviewer would flag a security defect here.",
+               "false_description": "A careful reviewer would find no security defect here."}}},
+ "items": [{"id": "pkg/auth.go:Verify", "input": "// pkg/auth.go\nfunc Verify(...) {...}"}],
  "maxItems": 5000}
 ```
 
-3. **Rank by `defect` probability and take the top 20–30%.** Hand those files to the review roster (recipe 3) or read them yourself.
-4. **Cost:** about $0.042 per million input tokens. Two thousand routines of about 500 tokens each cost about $0.04.
+3. **Rank by `defect` probability and take the top 20-30%.** Hand those files to the review roster (recipe 3) or read them yourself. The `answers=` headline in the summary shows P(yes) per item for a small batch; the results JSON carries `p` for every answer.
+4. **Cost:** $0.10 per million input tokens, nothing for output. Two thousand routines of about 500 tokens each cost about $0.10. `"dryRun": true` prints an estimate first, and `maxCostUsd` caps the batch.
 
-**What's measured:**
+**What's a bet:**
 
-- **Per routine:** AUC 0.84 on 125 held-out advisories from 125 repos, Go and Python. 66% of the vulnerable routines landed in the top 20%, and 80% in the top 30% (tellme). claude-haiku-5-5 asked the same question scored 0.87, so Jev is the cheaper and faster ranker here, not the smarter one.
-- **Per file is an extrapolation.** It was measured on routines. A file-level rank is plausible but unmeasured.
+- **The ranking quality is unmeasured on `gemini`.** Treat the top slice as a way to spend reviewer time first where a defect is likelier, not as a verdict.
+- **Per file is an extrapolation** from per-routine ranking. Plausible, unmeasured.
 
 **Where it must not be used:**
 
-- **Never prune inside a file for a PR review.** Sending a reader only Jev's top routines per file cut recall from 71% to 47% in tellme and saved no wall time. For a PR, read the whole diff. Jev ranks which files to read across a repository; it doesn't decide what to skip in one.
+- **Never prune inside a file for a PR review.** Reading only the top-ranked routines per file risks missing the defect that ranked low. For a PR, read the whole diff. The model ranks which files to read across a repository; it doesn't decide what to skip in one.
 - **Never threshold.** Rank only (see recipe 3).
-- **Every state leaves the machine** (TypeSafe through Vercel). Don't rank code you can't send out.
+- **Every input leaves the machine** (to Google). Don't rank code you can't send out.

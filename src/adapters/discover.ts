@@ -69,6 +69,7 @@ function toAdapter(mod: Record<string, unknown>): Adapter | { missing: string[] 
     if (typeof mod.buildArgs !== "function") missing.push("buildArgs");
     if (typeof mod.injectContract !== "function") missing.push("injectContract");
     if (typeof mod.parseResult !== "function") missing.push("parseResult");
+    if (mod.parseUsage !== undefined && typeof mod.parseUsage !== "function") missing.push("parseUsage");
   }
 
   // A declared default that names a capability the adapter doesn't have would
@@ -116,6 +117,7 @@ function toAdapter(mod: Record<string, unknown>): Adapter | { missing: string[] 
         buildArgs: mod.buildArgs as Capability["buildArgs"],
         injectContract: mod.injectContract as Capability["injectContract"],
         parseResult: mod.parseResult as Capability["parseResult"],
+        ...(typeof mod.parseUsage === "function" ? { parseUsage: mod.parseUsage as Capability["parseUsage"] } : {}),
       },
     },
     defaultKind: typeof defaultKind === "string" ? defaultKind : undefined,
@@ -144,10 +146,12 @@ function toCapabilities(value: unknown): Record<string, Capability> | null {
     if (typeof cap.buildArgs !== "function") return null;
     if (typeof cap.injectContract !== "function") return null;
     if (typeof cap.parseResult !== "function") return null;
+    if (cap.parseUsage !== undefined && typeof cap.parseUsage !== "function") return null;
     out[kind] = {
       buildArgs: cap.buildArgs as Capability["buildArgs"],
       injectContract: cap.injectContract as Capability["injectContract"],
       parseResult: cap.parseResult as Capability["parseResult"],
+      ...(typeof cap.parseUsage === "function" ? { parseUsage: cap.parseUsage as Capability["parseUsage"] } : {}),
     };
   }
   return out;

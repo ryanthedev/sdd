@@ -2,7 +2,18 @@
  * Batch decision calls to the Gemini Decisions API, for the sdd `gemini`
  * adapter's default kind.
  *
- *     bun run gemini-decide.ts <request.json> <results.json>
+ *     bun run gemini-decide.ts [flags] <request.json> <results.json>
+ *     bun run gemini-decide.ts [flags] --inline '<request json>' <results.json>
+ *     ... with --out-auto in place of <results.json> (a fresh temp dir is used)
+ *
+ * Leading flags (all optional, always BEFORE the positionals; the original
+ * `<request.json> <results.json>` form is unchanged and still works):
+ *   --inline <json>      the request itself instead of a file path; relative
+ *                        media paths resolve against the job cwd
+ *   --out-auto           no results path: write `<mkdtemp>/results.json` and
+ *                        report it in the result marker
+ *   --model <id>         overrides request.model
+ *   --deadline-ms <n>    overall deadline: stop scheduling new items, flush
  *
  * `gemini-decision-1` is a decision model: it never writes text. It reads one
  * shared multimodal `input` (text, images, video, audio, PDF; up to 262,144
@@ -11,59 +22,133 @@
  * probabilities, confidence}, `score` -> {score, probabilities, legend,
  * confidence}. Verified live 2026-11-13 against
  * `POST https://generativelanguage.googleapis.com/v1beta/decisions`.
- * List price $0.10 per 1M input tokens, $0 output.
+ * List price $0.10 per 1M input tokens, $0 output. A score question's
+ * `criteria` is a string rubric (verified 2026-11-14: an object is rejected).
+ * A choice question's `criteria` is an object `{label: description}`; a plain
+ * list of labels is converted (verified 2026-11-14: the API rejects a list).
  *
  * KEY: `GEMINI_API_KEY` from the environment when set, otherwise from a
  * `GEMINI_API_KEY=` line in the user-level `~/.config/sdd/.env`
  * (`$XDG_CONFIG_HOME/sdd/.env` when that is set), read by path on every job.
  * Never the job cwd's `.env`: the adapter runs bun with `--no-env-file`.
  *
- * REQUEST (the file the adapter's prompt names):
+ * REQUEST (the file the adapter's prompt names, or the inline JSON):
  *   {
- *     "questions": { "<name>": {"type": "noul"|"choice"|"score",
+ *     "questions": { "<name>": {"type": "noul"|"choice"|"score"|"boolean",
  *                                "instructions": "...", "criteria": ...}, ... },
  *     "items": [ {"id": "<unique>", "input": <string | block | block[]>}, ... ],
  *     "model"?: "gemini-decision-1",
- *     "resolution"?: "low"|"medium"|"high"   (default for media blocks; "low"),
+ *     "resolution"?: "low"|"medium"|"high"|"ultra_high"   (default for media blocks; "low"),
  *     "concurrency"?: 1..32 (default 16),
- *     "maxItems"?: raise the default 500-item cap (hard ceiling 10000)
+ *     "maxItems"?: raise the default 500-item cap (hard ceiling 10000),
+ *     "maxCostUsd"?: per-job cost cap, default 1.00: no new item is scheduled once
+ *                    the accumulated cost reaches it; the rest are recorded as
+ *                    {id, error:"skipped: maxCostUsd reached"} and the summary says stopped=budget,
+ *     "dryRun"?: true  validate, stat media, estimate tokens and cost, call nothing,
+ *     "allowOutsidePaths"?: true  allow media `path`s outside the request directory / job cwd
  *   }
  * A block is `{"type":"text","text":...}` or a media block
  * `{"type":"image"|"video"|"audio"|"document", "path"|"uri"|"data", "mime_type"?, "resolution"?}`.
  * `path` is a LOCAL file (relative paths resolve against the request file's
- * directory): up to 20 MB it is sent inline as base64, above that it is
- * uploaded once through the Files API and referenced by uri. `uri` passes a
- * Files API uri or an HTTPS URL (15 MB cap) straight through. YouTube URLs
- * are NOT accepted by the API: download first (the `yt-dlp` adapter).
+ * directory, or the job cwd for --inline) and must resolve (realpath) inside
+ * that directory or the job cwd unless `allowOutsidePaths` is true. An item
+ * whose inline media totals up to 14 MB raw is sent inline as base64; above
+ * that its largest files are uploaded once through the Files API and
+ * referenced by uri. `uri` passes a Files API uri or an HTTPS URL (15 MB cap)
+ * straight through. YouTube URLs are NOT accepted by the API: download first
+ * (the `yt-dlp` adapter).
  *
- * JEV-COMPATIBLE: a jev request runs unchanged. An item's `state` string is
- * read as its text `input`, and a question `type: "boolean"` is sent as
- * `noul`. Answers come back in Gemini's shape, not jev's.
+ * LEGACY FIELDS: an item's `state` is read as its text `input`, and a question
+ * `type: "boolean"` (criteria `{true, false}`) is sent as `noul`; its answer
+ * carries `probability` (= noul) next to the native fields.
+ * Every answer also carries a uniform headline `p` (P(yes) for noul, the
+ * chosen label's probability for choice, the score's probability for score).
+ *
+ * RESULTS JSON: {model, requestedModel, questionTypes, items, ok, failed,
+ * inputTokens, costUsd, stopped?, results:[{id, answers, inputTokens, costUsd,
+ * seconds} | {id, error}]}. Per item, inputTokens and costUsd are null (never 0)
+ * when the API reported no usage or the model has no known price. The top-level
+ * costUsd is the figure the budget is charged: known costs plus
+ * UNKNOWN_COST_CHARGE_USD per unknown-cost call (inputTokens is null then).
  *
  * CONTRACT (parsed by src/adapters/_gemini-decide.ts — keep in sync):
- *   SDD_GEMINI_SUMMARY:items=<n> ok=<n> failed=<n> input_tokens=<n> cost_usd=<x>
+ *   SDD_GEMINI_USAGE:<json>   cumulative UsageRecord (docs/usage-contract.md); the LAST one wins;
+ *                             also flushed on SIGTERM (then exit 143) and before any die()
+ *                             after a billed call
+ *   SDD_GEMINI_SUMMARY:items=<n> ok=<n> failed=<n> input_tokens=<n|unknown> cost_usd=<x|unknown> [skipped=<n>]
+ *                       [stopped=<budget|deadline|fatal|circuit>] [failed_ids=<first 5>] [first_error=<...>]
+ *   SDD_GEMINI_ANSWERS:<compact json>   only when <= 8 KB: {"<id>": {"<question>": <headline>} | {"error": ...}}
  *   SDD_GEMINI_RESULT:<absolute path to the results JSON>
  * Per-item failures (a safety block, a bad media file) are recorded in the
  * results JSON and do not fail the job. If NO item succeeded the file is still
  * written but the script exits 1 with the first error on stderr.
  *
+ * QUESTION SHAPES are validated (and friendly shapes converted) before ANY API
+ * call: a score's criteria is a string rubric (an object or list is converted);
+ * a choice's criteria is `{label: description}` (a list of labels or of
+ * `{label, description}` is converted); a noul's criteria is optional
+ * `{true_description, false_description}`. Anything else dies with the exact
+ * correct JSON for that question type.
+ *
+ * FAIL FAST: the first item runs alone; HTTP 401/403 on it, or a 400 whose
+ * message names a request-level field (questions, criteria, instructions),
+ * aborts the job (the rest recorded as skipped) rather than firing the same
+ * failure N times. Any other 400 (typically that item's own bad media) is
+ * recorded per item and the batch continues.
+ * 5 consecutive identical non-retryable errors abort it too.
+ * PARTIAL RESULTS: each finished item is appended to `<results>.partial.jsonl`,
+ * deleted after the final file is written (so it survives only a killed job).
+ *
+ * BUDGET (docs/usage-contract.md section 4): before the first API call the
+ * script refuses (exit 1) if the gemini spend in the sdd spend ledger reaches
+ * the budget file's daily (rolling 24 h) or monthly (local calendar month)
+ * limit. The per-job cap is min(request maxCostUsd (default 1), daily
+ * remaining, monthly remaining); every unknown-cost call (no usage in the
+ * reply, timeout, unreadable body) counts at a flat UNKNOWN_COST_CHARGE_USD
+ * toward it, and the stop message says so (`stopped=budget`). Parallel jobs
+ * can still start together before the ledger catches up; see effectiveCap in
+ * gemini-common.ts for that residual race.
+ *
  * DATA EGRESS: every item's input, including any local file it names, is sent
  * to Google.
  */
-import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { basename, dirname, extname, join, resolve } from "node:path";
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { basename, dirname, extname, join, resolve, sep } from "node:path";
+import {
+  UNKNOWN_COST_CHARGE_USD,
+  budgetRefusal,
+  effectiveCap,
+  emitUsage,
+  resolveKey,
+  retryAfterMs,
+  type JobCap,
+  type UsageRecord,
+  unpricedModelRefusal,
+} from "./gemini-common.ts";
 
 const API = "https://generativelanguage.googleapis.com";
 const DEFAULT_MODEL = "gemini-decision-1";
-const PRICE_PER_M_INPUT = 0.1;
+/** List price per 1M tokens, keyed by model. A model not listed has an unknown
+ *  cost (null), never a guess. */
+const PRICES: Record<string, { input: number; output: number }> = {
+  "gemini-decision-1": { input: 0.1, output: 0 },
+};
 const DEFAULT_MAX_ITEMS = 500;
 const HARD_MAX_ITEMS = 10_000;
 const DEFAULT_CONCURRENCY = 16;
 const MAX_CONCURRENCY = 32;
+const DEFAULT_MAX_COST_USD = 1.0;
 const MAX_ATTEMPTS = 7;
-/** Above this a local file goes through the Files API instead of inline base64. */
-const INLINE_MAX_BYTES = 20 * 1024 * 1024;
+const BREAKER_THRESHOLD = 5;
+/** An item's inline media (raw bytes, summed over its blocks) above this goes
+ *  through the Files API: 14 MB raw is about 18.7 MB base64, under the 20 MB
+ *  request cap with room for the questions. */
+const INLINE_MAX_BYTES = 14 * 1024 * 1024;
+const ANSWERS_MAX_BYTES = 8 * 1024;
+const DECISION_TIMEOUT_MS = 120_000;
+const UPLOAD_START_TIMEOUT_MS = 60_000;
+const POLL_TIMEOUT_MS = 30_000;
 const QUESTION_TYPES = new Set(["noul", "choice", "score", "boolean"]);
 const MEDIA_TYPES = new Set(["image", "video", "audio", "document"]);
 const RESOLUTIONS = new Set(["low", "medium", "high", "ultra_high"]);
@@ -89,18 +174,93 @@ interface Item {
 interface Request {
   model: string;
   questions: Record<string, unknown>;
+  /** The type each question was written with (`boolean` stays `boolean`). */
+  questionTypes: Record<string, string>;
+  /** Questions that arrived as legacy `boolean` and get a `probability` alias. */
+  booleanQuestions: Set<string>;
   items: Item[];
   concurrency: number;
   resolution: string;
   baseDir: string;
+  maxCostUsd: number;
+  dryRun: boolean;
+  allowOutsidePaths: boolean;
+  /** Real directories a media path may live in. */
+  roots: string[];
+  /** How many items reference each (resolved) path, to cache shared base64 only. */
+  pathRefs: Map<string, number>;
 }
 
 type ItemResult =
-  | { id: string; answers: Record<string, unknown>; inputTokens: number; seconds: number }
-  | { id: string; error: string };
+  | { id: string; answers: Record<string, unknown>; inputTokens: number | null; costUsd: number | null; seconds: number }
+  | { id: string; error: string; status?: number; retryable?: boolean; skipped?: boolean };
+
+type StopReason = "budget" | "deadline" | "fatal" | "circuit";
+
+/** Cumulative spend, the source of every usage marker. */
+const st = {
+  /** The REQUESTED model: it prices the job (a reply's `model` never does). */
+  model: null as string | null,
+  /** The model the API says answered, for the results file only. */
+  responseModel: null as string | null,
+  items: null as number | null,
+  /** Calls that reached the API and answered (usage present or not). */
+  calls: 0,
+  ok: 0,
+  failed: 0,
+  inputTokens: 0,
+  outputTokens: 0,
+  /** Sum of the per-call costs that WERE known. */
+  costKnown: 0,
+  /** Calls that may have been billed with no known cost (reply without usage,
+   *  unpriced model, timeout, unreadable body): each is charged UNKNOWN_COST_CHARGE_USD. */
+  unknownCalls: 0,
+  /** Requests sent whose outcome is not yet known. */
+  inFlight: 0,
+};
+
+/** The running total the per-job cap is checked against: known costs plus the
+ *  flat charge per unknown-cost call. (In-flight calls are not counted here:
+ *  they would stop a concurrent batch before it spent anything. They ARE counted
+ *  when a SIGTERM flushes, see usageRecord.) */
+function runningCost(): number {
+  return st.costKnown + UNKNOWN_COST_CHARGE_USD * st.unknownCalls;
+}
+
+/** Record a call that may have been billed without a usable usage payload. */
+function countUnknownCall(): void {
+  st.calls++;
+  st.unknownCalls++;
+}
+
+function usageRecord(includeInFlight = false): UsageRecord {
+  const flying = includeInFlight ? st.inFlight : 0;
+  const unknown = st.unknownCalls + flying;
+  // No billed call means a KNOWN zero. Otherwise cost is always a number: the
+  // known per-call costs plus the flat charge per unknown-cost call.
+  return {
+    model: st.model,
+    calls: st.calls + flying,
+    items: st.items,
+    ok: st.ok,
+    failed: st.failed,
+    inputTokens: unknown > 0 ? null : st.inputTokens,
+    outputTokens: unknown > 0 ? null : st.outputTokens,
+    costUsd: st.costKnown + UNKNOWN_COST_CHARGE_USD * unknown,
+    ...(unknown > 0 ? { unknownCalls: unknown } : {}),
+    costIsEstimate: true,
+  };
+}
+
+/** Always report usage once the script has started, even with zero billed calls,
+ *  so the ledger records $0 rather than an unknown (charged) cost. */
+function flushUsage(includeInFlight = false): void {
+  emitUsage(usageRecord(includeInFlight));
+}
 
 function die(msg: string): never {
   process.stderr.write(`gemini-decide: ${msg}\n`);
+  flushUsage();
   process.exit(1);
 }
 
@@ -108,10 +268,60 @@ function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
-function parseQuestions(raw: unknown): Record<string, unknown> {
+class PathPolicyError extends Error {}
+
+// ---------------------------------------------------------------- CLI ----
+
+interface Cli {
+  deadlineMs: number | null;
+  model: string | null;
+  inline: string | null;
+  outAuto: boolean;
+  positionals: string[];
+}
+
+function parseCli(argv: string[]): Cli {
+  const cli: Cli = { deadlineMs: null, model: null, inline: null, outAuto: false, positionals: [] };
+  let i = 0;
+  while (i < argv.length && (argv[i] as string).startsWith("--")) {
+    const flag = argv[i] as string;
+    if (flag === "--out-auto") {
+      cli.outAuto = true;
+      i += 1;
+      continue;
+    }
+    const value = argv[i + 1];
+    if (value === undefined) die(`${flag} needs a value`);
+    if (flag === "--deadline-ms") {
+      const n = Number(value);
+      if (!Number.isFinite(n) || n <= 0) die(`--deadline-ms must be a positive number, got: ${value}`);
+      cli.deadlineMs = n;
+    } else if (flag === "--model") {
+      if (!/^[a-z0-9][a-z0-9.-]{0,79}$/.test(value)) die(`--model must be a Gemini model id, got: ${value}`);
+      cli.model = value;
+    } else if (flag === "--inline") {
+      cli.inline = value;
+    } else {
+      die(`unknown flag ${flag}`);
+    }
+    i += 2;
+  }
+  cli.positionals = argv.slice(i);
+  const want = (cli.inline === null ? 1 : 0) + (cli.outAuto ? 0 : 1);
+  if (cli.positionals.length !== want) {
+    die("usage: gemini-decide.ts [--inline <json>] [--out-auto] [--model <id>] [--deadline-ms <n>] [<request.json>] [<results.json>]");
+  }
+  return cli;
+}
+
+// ------------------------------------------------------------ request ----
+
+function parseQuestions(raw: unknown): Pick<Request, "questions" | "questionTypes" | "booleanQuestions"> {
   if (!isRecord(raw) || Object.keys(raw).length === 0) die("request.questions must be a non-empty object of named questions");
   if (Object.keys(raw).length > 1000) die(`request has ${Object.keys(raw).length} questions; the API takes at most 1000`);
-  const out: Record<string, unknown> = {};
+  const questions: Record<string, unknown> = {};
+  const questionTypes: Record<string, string> = {};
+  const booleanQuestions = new Set<string>();
   for (const [qname, q] of Object.entries(raw)) {
     if (!/^[A-Za-z0-9_-]{1,64}$/.test(qname)) die(`question name "${qname}" must match [A-Za-z0-9_-] and be at most 64 chars`);
     if (!isRecord(q) || typeof q.type !== "string" || !QUESTION_TYPES.has(q.type)) {
@@ -120,23 +330,85 @@ function parseQuestions(raw: unknown): Record<string, unknown> {
     if (typeof q.instructions !== "string" || q.instructions.trim().length === 0) {
       die(`question "${qname}" needs non-empty instructions`);
     }
-    out[qname] = q.type === "boolean" || q.type === "noul" ? toNoul(q) : q;
+    questionTypes[qname] = q.type;
+    if (q.type === "boolean") booleanQuestions.add(qname);
+    questions[qname] = q.type === "boolean" || q.type === "noul" ? toNoul(qname, q) : q.type === "choice" ? toChoice(qname, q) : toScore(qname, q);
   }
-  return out;
+  return { questions, questionTypes, booleanQuestions };
 }
 
-/** A jev `boolean` (criteria `{true, false}`) becomes a Gemini `noul`
- *  (criteria `{true_description, false_description}`). Gemini-shaped criteria
- *  pass through untouched. */
-function toNoul(q: Record<string, unknown>): Record<string, unknown> {
+const SHAPES: Record<string, string> = {
+  noul: '{"type": "noul", "instructions": "Is the sky blue?", "criteria": {"true_description": "the sky is blue", "false_description": "the sky is not blue"}}  (criteria is optional)',
+  choice: '{"type": "choice", "instructions": "Which color is it?", "criteria": {"red": "a red hue", "blue": "a blue hue"}}  (criteria is an object {label: description}; a list of labels also works)',
+  score: '{"type": "score", "instructions": "How good is it?", "criteria": "1 = awful, 3 = fine, 5 = excellent"}  (criteria is ONE string rubric)',
+};
+
+function badShape(qname: string, type: string, problem: string): never {
+  return die(`question "${qname}" (${type}): ${problem}. Correct shape: ${SHAPES[type]}`);
+}
+
+const labelOf = (v: unknown): string | null => (typeof v === "string" && v.trim().length > 0 ? v.trim() : typeof v === "number" ? String(v) : null);
+
+/** A `score` question's criteria must be ONE string rubric (the API rejects an
+ *  object). An object like {"1": "bad", "5": "great"} or {low, high}, or a list
+ *  of strings / {score|label, description}, becomes a readable rubric. */
+function toScore(qname: string, q: Record<string, unknown>): Record<string, unknown> {
+  const c = q.criteria;
+  if (c === undefined) return q;
+  let rubric: string | null = null;
+  if (typeof c === "string") rubric = c;
+  else if (isRecord(c)) {
+    const lines = Object.entries(c).map(([k, v]) => (typeof v === "string" || typeof v === "number" ? `${k}: ${v}` : null));
+    rubric = lines.length > 0 && lines.every((l) => l !== null) ? lines.join("\n") : null;
+  } else if (Array.isArray(c)) {
+    const lines = c.map((x) => {
+      if (typeof x === "string") return x;
+      if (!isRecord(x)) return null;
+      const label = labelOf(x.label ?? x.score ?? x.value);
+      return label !== null && typeof x.description === "string" ? `${label}: ${x.description}` : null;
+    });
+    rubric = lines.length > 0 && lines.every((l) => l !== null) ? lines.join("\n") : null;
+  }
+  if (rubric === null || rubric.trim().length === 0) badShape(qname, "score", "criteria must be a non-empty string rubric");
+  return { ...q, criteria: rubric };
+}
+
+/** A `choice` question's criteria must be an object `{label: description}`
+ *  (the API rejects a list). A list of labels or of `{label, description}`
+ *  objects is converted. */
+function toChoice(qname: string, q: Record<string, unknown>): Record<string, unknown> {
+  const c = q.criteria;
+  let map: Record<string, string> | null = null;
+  if (isRecord(c)) {
+    const e = Object.entries(c);
+    if (e.length > 0 && e.every(([k, v]) => k.trim().length > 0 && typeof v === "string")) map = c as Record<string, string>;
+  } else if (Array.isArray(c) && c.length > 0) {
+    const entries = c.map((x): [string, string] | null => {
+      if (typeof x === "string") return x.trim().length > 0 ? [x, ""] : null;
+      if (!isRecord(x)) return null;
+      const label = labelOf(x.label);
+      const d = x.description ?? "";
+      return label !== null && typeof d === "string" ? [label, d] : null;
+    });
+    if (entries.every((e) => e !== null)) map = Object.fromEntries(entries as [string, string][]);
+  }
+  if (map === null) badShape(qname, "choice", "criteria must be a non-empty object {label: description}");
+  return { ...q, criteria: map };
+}
+
+/** A `noul` question: optional criteria `{true_description, false_description}`.
+ *  The legacy `boolean` form's `{true, false}` is mapped onto them. */
+function toNoul(qname: string, q: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = { ...q, type: "noul" };
   const c = q.criteria;
-  if (isRecord(c) && ("true" in c || "false" in c)) {
-    const mapped: Record<string, unknown> = {};
-    if (typeof c.true === "string") mapped.true_description = c.true;
-    if (typeof c.false === "string") mapped.false_description = c.false;
-    out.criteria = mapped;
+  if (c === undefined) return out;
+  const allowed = new Set(["true_description", "false_description", "true", "false"]);
+  if (!isRecord(c) || !Object.entries(c).every(([k, v]) => allowed.has(k) && typeof v === "string")) {
+    badShape(qname, "noul", "criteria must be an object with only true_description / false_description strings");
   }
+  const mapped: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(c)) mapped[k === "true" ? "true_description" : k === "false" ? "false_description" : k] = v;
+  out.criteria = mapped;
   return out;
 }
 
@@ -147,7 +419,7 @@ function parseItemInput(item: Record<string, unknown>, label: string): string | 
     return input;
   }
   const blocks = Array.isArray(input) ? input : isRecord(input) ? [input] : null;
-  if (!blocks || blocks.length === 0) die(`${label} needs an "input" (string, block, or array of blocks) or a jev-style "state"`);
+  if (!blocks || blocks.length === 0) die(`${label} needs an "input" (string, block, or array of blocks) or a legacy "state"`);
   for (const [i, b] of blocks.entries()) {
     if (!isRecord(b) || typeof b.type !== "string") die(`${label} input[${i}] must be an object with a "type"`);
     if (b.type === "text") {
@@ -167,9 +439,32 @@ function parseItemInput(item: Record<string, unknown>, label: string): string | 
   return blocks as Block[];
 }
 
-function parseRequest(raw: unknown, requestPath: string): Request {
+function realOrResolved(p: string): string {
+  try {
+    return realpathSync(p);
+  } catch {
+    return resolve(p);
+  }
+}
+
+/** Resolve a media `path` and enforce containment: the REAL path must sit in
+ *  the request directory or the job cwd unless the request allows otherwise.
+ *  Throws ENOENT for a missing file, PathPolicyError for an escape. */
+function mediaPath(req: Request, p: string): string {
+  const abs = resolve(req.baseDir, p);
+  if (req.allowOutsidePaths) return abs;
+  const real = realpathSync(abs);
+  if (!req.roots.some((r) => real === r || real.startsWith(r + sep))) {
+    throw new PathPolicyError(
+      `media path ${p} resolves to ${real}, outside the request directory and the job cwd; set "allowOutsidePaths": true in the request to allow it`,
+    );
+  }
+  return real;
+}
+
+function parseRequest(raw: unknown, baseDir: string, cli: Cli): Request {
   if (!isRecord(raw)) die("request must be a JSON object");
-  const questions = parseQuestions(raw.questions);
+  const q = parseQuestions(raw.questions);
 
   const items = raw.items;
   if (!Array.isArray(items) || items.length === 0) die("request.items must be a non-empty array");
@@ -192,26 +487,42 @@ function parseRequest(raw: unknown, requestPath: string): Request {
     typeof raw.concurrency === "number" && Number.isInteger(raw.concurrency)
       ? Math.max(1, Math.min(raw.concurrency, MAX_CONCURRENCY))
       : DEFAULT_CONCURRENCY;
-  const model = typeof raw.model === "string" && raw.model.length > 0 ? raw.model : DEFAULT_MODEL;
-  return { model, questions, items: parsed, concurrency, resolution, baseDir: dirname(requestPath) };
+  const model = cli.model ?? (typeof raw.model === "string" && raw.model.length > 0 ? raw.model : DEFAULT_MODEL);
+  if (raw.maxCostUsd !== undefined && (typeof raw.maxCostUsd !== "number" || !(raw.maxCostUsd > 0))) {
+    die("request.maxCostUsd must be a positive number");
+  }
+  const req: Request = {
+    model,
+    ...q,
+    items: parsed,
+    concurrency,
+    resolution,
+    baseDir,
+    maxCostUsd: typeof raw.maxCostUsd === "number" ? raw.maxCostUsd : DEFAULT_MAX_COST_USD,
+    dryRun: raw.dryRun === true,
+    allowOutsidePaths: raw.allowOutsidePaths === true,
+    roots: [...new Set([realOrResolved(baseDir), realOrResolved(process.cwd())])],
+    pathRefs: new Map(),
+  };
+
+  // Containment is a request-level policy: refuse before any call. A missing
+  // file is a per-item error later, not a policy violation.
+  for (const item of parsed) {
+    if (typeof item.input === "string") continue;
+    for (const b of item.input) {
+      if (typeof b.path !== "string") continue;
+      try {
+        const abs = mediaPath(req, b.path);
+        req.pathRefs.set(abs, (req.pathRefs.get(abs) ?? 0) + 1);
+      } catch (e) {
+        if (e instanceof PathPolicyError) die(`item "${item.id}": ${e.message}`);
+      }
+    }
+  }
+  return req;
 }
 
-/** Env first, then the user-level sdd config file — see header. */
-function resolveKey(): string {
-  const fromEnv = process.env.GEMINI_API_KEY;
-  if (fromEnv) return fromEnv;
-  const configHome = process.env.XDG_CONFIG_HOME || join(homedir(), ".config");
-  const file = join(configHome, "sdd", ".env");
-  let text = "";
-  try {
-    text = readFileSync(file, "utf8");
-  } catch {
-    // Missing file reads the same as a missing line.
-  }
-  const m = /^\s*(?:export\s+)?GEMINI_API_KEY\s*=\s*["']?([^"'\s]+)["']?\s*$/m.exec(text);
-  if (m?.[1]) return m[1];
-  die(`GEMINI_API_KEY is not set in the sdd server's environment or in ${file}`);
-}
+// -------------------------------------------------------------- media ----
 
 /** Upload a large local file through the Files API (resumable protocol) and
  *  wait until it is ACTIVE. Returns the file uri. */
@@ -228,6 +539,7 @@ async function uploadFile(key: string, path: string, mime: string): Promise<stri
       "Content-Type": "application/json",
     },
     body: JSON.stringify({ file: { display_name: basename(path) } }),
+    signal: AbortSignal.timeout(UPLOAD_START_TIMEOUT_MS),
   });
   const uploadUrl = start.headers.get("x-goog-upload-url");
   if (!start.ok || !uploadUrl) throw new Error(`Files API upload start failed: HTTP ${start.status} ${(await start.text()).slice(0, 200)}`);
@@ -235,6 +547,8 @@ async function uploadFile(key: string, path: string, mime: string): Promise<stri
     method: "POST",
     headers: { "X-Goog-Upload-Offset": "0", "X-Goog-Upload-Command": "upload, finalize" },
     body: Bun.file(path),
+    // Proportionate: two minutes plus two seconds per MB.
+    signal: AbortSignal.timeout(120_000 + Math.ceil(size / 1_000_000) * 2000),
   });
   if (!done.ok) throw new Error(`Files API upload failed: HTTP ${done.status} ${(await done.text()).slice(0, 200)}`);
   const file = ((await done.json()) as { file?: { name?: string; uri?: string; state?: string } }).file;
@@ -242,24 +556,64 @@ async function uploadFile(key: string, path: string, mime: string): Promise<stri
   let state = file.state;
   for (let i = 0; state === "PROCESSING" && i < 120; i++) {
     await Bun.sleep(2000);
-    const res = await fetch(`${API}/v1beta/${file.name}`, { headers: { "x-goog-api-key": key } });
+    const res = await fetch(`${API}/v1beta/${file.name}`, { headers: { "x-goog-api-key": key }, signal: AbortSignal.timeout(POLL_TIMEOUT_MS) });
     state = res.ok ? ((await res.json()) as { state?: string }).state : state;
   }
   if (state !== "ACTIVE") throw new Error(`uploaded file ${file.name} ended in state ${state ?? "unknown"}`);
   return file.uri;
 }
 
-/** Turn request blocks into API blocks: local paths become inline data or a
- *  Files API uri (each distinct path uploaded once per job). */
-async function materialize(
-  key: string,
-  req: Request,
-  input: string | Block[],
-  uploads: Map<string, Promise<string>>,
-): Promise<string | Block[]> {
+interface MediaCaches {
+  uploads: Map<string, Promise<string>>;
+  /** base64 of paths shared by more than one item (others are read per use). */
+  b64: Map<string, string>;
+}
+
+function readBase64(req: Request, caches: MediaCaches, abs: string): string {
+  const shared = (req.pathRefs.get(abs) ?? 0) > 1;
+  const hit = shared ? caches.b64.get(abs) : undefined;
+  if (hit !== undefined) return hit;
+  const data = readFileSync(abs).toString("base64");
+  if (shared) caches.b64.set(abs, data);
+  return data;
+}
+
+/** Turn request blocks into API blocks. Path blocks become inline data while
+ *  the item's inline total stays within INLINE_MAX_BYTES; the largest ones
+ *  that don't fit are uploaded once per job through the Files API. */
+async function materialize(key: string, req: Request, input: string | Block[], caches: MediaCaches): Promise<string | Block[]> {
   if (typeof input === "string") return input;
-  const out: Block[] = [];
+  interface Plan { b: Block; abs?: string; size: number; upload: boolean }
+  const plans: Plan[] = [];
+  let inlineTotal = 0;
   for (const b of input) {
+    if (b.type === "text") {
+      plans.push({ b, size: 0, upload: false });
+      continue;
+    }
+    if (typeof b.path === "string") {
+      const abs = mediaPath(req, b.path);
+      const size = statSync(abs).size;
+      plans.push({ b, abs, size, upload: false });
+      inlineTotal += size;
+    } else {
+      plans.push({ b, size: 0, upload: false });
+      if (typeof b.data === "string") inlineTotal += Math.floor((b.data.length * 3) / 4);
+    }
+  }
+  const pathPlans = plans.filter((p) => p.abs !== undefined).sort((a, b) => b.size - a.size);
+  for (const p of pathPlans) {
+    if (inlineTotal <= INLINE_MAX_BYTES) break;
+    p.upload = true;
+    inlineTotal -= p.size;
+  }
+  if (inlineTotal > INLINE_MAX_BYTES) {
+    throw new Error(`inline "data" blocks total ${(inlineTotal / 1048576).toFixed(1)} MB, over the ${INLINE_MAX_BYTES / 1048576} MB inline cap; use "path" or "uri" blocks`);
+  }
+
+  const out: Block[] = [];
+  for (const p of plans) {
+    const b = p.b;
     if (b.type === "text") {
       out.push(b);
       continue;
@@ -267,17 +621,15 @@ async function materialize(
     const { path, ...rest } = b;
     const block: Block = { ...rest };
     if (block.resolution === undefined && (b.type === "image" || b.type === "video")) block.resolution = req.resolution;
-    if (typeof path === "string") {
-      const abs = resolve(req.baseDir, path);
-      const mime = typeof b.mime_type === "string" ? b.mime_type : MIME_BY_EXT[extname(abs).toLowerCase()];
-      if (!mime) throw new Error(`cannot infer mime_type for ${abs}; set "mime_type" on the block`);
+    if (typeof path === "string" && p.abs) {
+      const mime = typeof b.mime_type === "string" ? b.mime_type : MIME_BY_EXT[extname(p.abs).toLowerCase()];
+      if (!mime) throw new Error(`cannot infer mime_type for ${p.abs}; set "mime_type" on the block`);
       block.mime_type = mime;
-      const size = statSync(abs).size;
-      if (size <= INLINE_MAX_BYTES) {
-        block.data = Buffer.from(readFileSync(abs)).toString("base64");
+      if (p.upload) {
+        if (!caches.uploads.has(p.abs)) caches.uploads.set(p.abs, uploadFile(key, p.abs, mime));
+        block.uri = await caches.uploads.get(p.abs)!;
       } else {
-        if (!uploads.has(abs)) uploads.set(abs, uploadFile(key, abs, mime));
-        block.uri = await uploads.get(abs)!;
+        block.data = readBase64(req, caches, p.abs);
       }
     }
     out.push(block);
@@ -285,98 +637,401 @@ async function materialize(
   return out;
 }
 
-async function decide(key: string, req: Request, item: Item, uploads: Map<string, Promise<string>>): Promise<ItemResult> {
-  let input: string | Block[];
-  try {
-    input = await materialize(key, req, item.input, uploads);
-  } catch (e) {
-    return { id: item.id, error: e instanceof Error ? e.message : String(e) };
+// ------------------------------------------------------------- answers ----
+
+function num(v: unknown): number | null {
+  return typeof v === "number" && Number.isFinite(v) ? v : null;
+}
+
+/** P(key) from a probabilities payload that may be an object keyed by label,
+ *  or an array of {label|choice|score|name, p|probability|value} entries. */
+function probOf(probs: unknown, key: string): number | null {
+  if (isRecord(probs)) return num(probs[key]);
+  if (Array.isArray(probs)) {
+    for (const e of probs) {
+      if (!isRecord(e)) continue;
+      const label = e.label ?? e.choice ?? e.score ?? e.name;
+      if (String(label) === key) return num(e.p ?? e.probability ?? e.value);
+    }
   }
-  const body = JSON.stringify({ model: req.model, input, questions: req.questions });
-  let lastError = "no attempt made";
-  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-    const t0 = performance.now();
+  return null;
+}
+
+/** The headline probability of one native answer, or null when it can't be read. */
+function headlineP(a: Record<string, unknown>): number | null {
+  if ("noul" in a) return num(a.noul);
+  if (typeof a.choice === "string") return probOf(a.probabilities, a.choice);
+  if ("score" in a) return probOf(a.probabilities, String(a.score));
+  return null;
+}
+
+/** Native answers plus the uniform `p` (and the legacy `probability` for a
+ *  question that arrived as `boolean`). */
+function enrichAnswers(req: Request, answers: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [qname, a] of Object.entries(answers)) {
+    if (!isRecord(a)) {
+      out[qname] = a;
+      continue;
+    }
+    const e: Record<string, unknown> = { ...a };
+    const p = headlineP(a);
+    if (p !== null) e.p = p;
+    if (req.booleanQuestions.has(qname) && "noul" in a) e.probability = a.noul;
+    out[qname] = e;
+  }
+  return out;
+}
+
+const r4 = (n: number): number => Math.round(n * 10_000) / 10_000;
+
+function headline(a: unknown): unknown {
+  if (!isRecord(a)) return null;
+  const p = headlineP(a);
+  if ("noul" in a) return p === null ? null : r4(p);
+  if (typeof a.choice === "string") return p === null ? { choice: a.choice } : { choice: a.choice, p: r4(p) };
+  if ("score" in a) return p === null ? { score: a.score } : { score: a.score, p: r4(p) };
+  return null;
+}
+
+/** `{"<id>": {"<question>": <headline>}}` compact, or null over 8 KB. */
+function answersMarker(results: ItemResult[]): string | null {
+  const compact: Record<string, unknown> = {};
+  for (const r of results) {
+    if ("error" in r) {
+      compact[r.id] = { error: r.error.replace(/\s+/g, " ").slice(0, 120) };
+      continue;
+    }
+    const per: Record<string, unknown> = {};
+    for (const [qname, a] of Object.entries(r.answers)) per[qname] = headline(a);
+    compact[r.id] = per;
+  }
+  const text = JSON.stringify(compact);
+  return Buffer.byteLength(text) <= ANSWERS_MAX_BYTES ? text : null;
+}
+
+// ------------------------------------------------------------- the API ----
+
+function costOf(model: string, inputTokens: number | null): number | null {
+  const price = PRICES[model];
+  return price && inputTokens !== null ? (inputTokens * price.input) / 1_000_000 : null;
+}
+
+function backoff(attempt: number): number {
+  return 500 * 2 ** attempt + Math.random() * 250;
+}
+
+/** The API's own message names a request-level field (not one item's media). */
+const REQUEST_LEVEL_RE = /question|criteria|instructions/i;
+
+type Attempt = { retry: string; waitMs?: number } | { result: ItemResult };
+
+/** One POST. Counts the call as in flight until its outcome is accounted for,
+ *  so a SIGTERM flush charges it as unknown instead of dropping it. */
+async function callOnce(key: string, req: Request, item: Item, body: string, attempt: number): Promise<Attempt> {
+  const t0 = performance.now();
+  st.inFlight++;
+  try {
     let res: Response;
     try {
       res = await fetch(`${API}/v1beta/decisions`, {
         method: "POST",
         headers: { "x-goog-api-key": key, "Content-Type": "application/json" },
         body,
+        signal: AbortSignal.timeout(DECISION_TIMEOUT_MS),
       });
     } catch (e) {
-      lastError = `network error: ${e instanceof Error ? e.message : String(e)}`;
-      await Bun.sleep(500 * 2 ** attempt + Math.random() * 250);
-      continue;
+      // A timeout may have been processed (and billed) server-side.
+      if (e instanceof Error && (e.name === "TimeoutError" || e.name === "AbortError")) countUnknownCall();
+      return { retry: `network error: ${e instanceof Error ? e.message : String(e)}`, waitMs: backoff(attempt) };
+    }
+    let text: string;
+    try {
+      text = await res.text();
+    } catch (e) {
+      // Body unreadable: a 2xx was still billed; its cost is unknown.
+      if (res.ok) countUnknownCall();
+      return { result: { id: item.id, error: `could not read the response body (HTTP ${res.status}): ${e instanceof Error ? e.message : String(e)}`, status: res.status, retryable: false } };
     }
     if (res.status === 429 || res.status >= 500) {
-      lastError = `HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`;
-      await Bun.sleep(500 * 2 ** attempt + Math.random() * 250);
-      continue;
+      return { retry: `HTTP ${res.status}: ${text.slice(0, 200)}`, waitMs: retryAfterMs(res) ?? backoff(attempt) };
     }
-    if (!res.ok) return { id: item.id, error: `HTTP ${res.status}: ${(await res.text()).slice(0, 300)}` };
-    const data = (await res.json()) as Record<string, any>;
-    if (!isRecord(data.answers)) return { id: item.id, error: `response carried no answers object: ${JSON.stringify(data).slice(0, 200)}` };
-    return {
-      id: item.id,
-      answers: data.answers,
-      inputTokens: Number(data.usage?.total_input_tokens ?? 0),
-      seconds: (performance.now() - t0) / 1000,
-    };
+    if (!res.ok) {
+      return { result: { id: item.id, error: `HTTP ${res.status}: ${text.slice(0, 300)}`, status: res.status, retryable: false } };
+    }
+    let data: Record<string, any>;
+    try {
+      data = JSON.parse(text) as Record<string, any>;
+    } catch {
+      countUnknownCall();
+      return { result: { id: item.id, error: `response was not valid JSON: ${text.slice(0, 200)}`, retryable: false } };
+    }
+    // The call reached the API and answered: it is billed whatever the body holds.
+    const inTok = num(data?.usage?.total_input_tokens);
+    const outTok = num(data?.usage?.total_output_tokens);
+    const cost = costOf(req.model, inTok); // priced by the REQUESTED model
+    if (cost === null) countUnknownCall();
+    else {
+      st.calls++;
+      st.costKnown += cost;
+    }
+    if (inTok !== null) st.inputTokens += inTok;
+    if (outTok !== null) st.outputTokens += outTok;
+    if (typeof data?.model === "string" && data.model.length > 0) st.responseModel = data.model;
+    if (!isRecord(data?.answers)) {
+      return { result: { id: item.id, error: `response carried no answers object: ${JSON.stringify(data).slice(0, 200)}`, retryable: false } };
+    }
+    return { result: { id: item.id, answers: enrichAnswers(req, data.answers), inputTokens: inTok, costUsd: cost, seconds: (performance.now() - t0) / 1000 } };
+  } finally {
+    st.inFlight--;
   }
-  return { id: item.id, error: `retries exhausted (last: ${lastError})` };
 }
 
-async function pool<T, R>(items: T[], n: number, fn: (t: T) => Promise<R>): Promise<R[]> {
-  const out: R[] = new Array(items.length);
-  let next = 0;
-  await Promise.all(
-    Array.from({ length: Math.min(n, items.length) }, async () => {
-      while (next < items.length) {
-        const i = next++;
-        out[i] = await fn(items[i] as T);
+async function decide(key: string, req: Request, item: Item, caches: MediaCaches): Promise<ItemResult> {
+  let input: string | Block[];
+  try {
+    input = await materialize(key, req, item.input, caches);
+  } catch (e) {
+    return { id: item.id, error: e instanceof Error ? e.message : String(e), retryable: false };
+  }
+  const body = JSON.stringify({ model: req.model, input, questions: req.questions });
+  let lastError = "no attempt made";
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    // Retries of a timed-out item spend too: stop once the cap is reached.
+    if (attempt > 0 && runningCost() >= jobCap.usd) {
+      return { id: item.id, error: `stopped retrying: cost cap reached (last: ${lastError})`, retryable: true };
+    }
+    const r = await callOnce(key, req, item, body, attempt);
+    if ("result" in r) return r.result;
+    lastError = r.retry;
+    await Bun.sleep(r.waitMs ?? backoff(attempt));
+  }
+  return { id: item.id, error: `retries exhausted (last: ${lastError})`, retryable: true };
+}
+
+// ------------------------------------------------------------- dry run ----
+
+/** Rough input-token estimate for one item (text ~4 chars/token; media from
+ *  file size at typical bitrates). An estimate, not a quote. */
+function estimateTokens(req: Request, item: Item, qTokens: number, problems: { id: string; error: string }[]): number {
+  let t = qTokens;
+  if (typeof item.input === "string") return t + Math.ceil(item.input.length / 4);
+  for (const b of item.input) {
+    if (b.type === "text") {
+      t += Math.ceil(String(b.text).length / 4);
+      continue;
+    }
+    let size = 0;
+    if (typeof b.path === "string") {
+      try {
+        size = statSync(mediaPath(req, b.path)).size;
+      } catch (e) {
+        problems.push({ id: item.id, error: e instanceof PathPolicyError ? e.message : `cannot stat ${b.path}: ${e instanceof Error ? e.message : String(e)}` });
       }
-    }),
-  );
-  return out;
+    } else if (typeof b.data === "string") {
+      size = Math.floor((b.data.length * 3) / 4);
+    }
+    if (b.type === "image") t += 600;
+    else if (b.type === "video") t += Math.ceil(size / 2500);
+    else if (b.type === "audio") t += Math.ceil(size / 500);
+    else t += Math.ceil(size / 200);
+  }
+  return t;
+}
+
+// ---------------------------------------------------------------- main ----
+
+/** The per-job cap, set in main() once the budget has been read. */
+let jobCap: JobCap = { usd: Infinity, why: "uncapped" };
+
+const STOP_TEXT: Record<StopReason, string> = {
+  budget: "maxCostUsd reached",
+  deadline: "deadline reached",
+  fatal: "aborted after a fatal error on the first item",
+  circuit: `aborted after ${BREAKER_THRESHOLD} identical errors in a row`,
+};
+
+function oneLine(s: string, max: number): string {
+  const t = s.replace(/\s+/g, " ").trim();
+  return t.length > max ? `${t.slice(0, max)}…` : t;
 }
 
 async function main(): Promise<void> {
-  const [requestArg, outArg] = process.argv.slice(2);
-  if (!requestArg || !outArg || process.argv.length !== 4) die("usage: gemini-decide.ts <request.json> <results.json>");
-
-  const key = resolveKey();
-  const requestPath = resolve(requestArg);
-  const outPath = resolve(outArg);
-  let raw: unknown;
-  try {
-    raw = JSON.parse(readFileSync(requestPath, "utf8"));
-  } catch (e) {
-    die(`cannot read request ${requestPath}: ${e instanceof Error ? e.message : String(e)}`);
+  // A cancelled job still reports what it spent (docs/usage-contract.md section 2).
+  for (const sig of ["SIGTERM", "SIGINT"] as const) {
+    process.on(sig, () => {
+      flushUsage(true); // in-flight calls may be billed: charge them as unknown
+      process.exit(143);
+    });
   }
-  const req = parseRequest(raw, requestPath);
+  const startedAt = Date.now();
+  const cli = parseCli(process.argv.slice(2));
 
-  const uploads = new Map<string, Promise<string>>();
-  const results = await pool(req.items, req.concurrency, (item) => decide(key, req, item, uploads));
-  const ok = results.filter((r) => !("error" in r));
-  const failed = results.length - ok.length;
-  const inputTokens = ok.reduce((sum, r) => sum + ("inputTokens" in r ? r.inputTokens : 0), 0);
-  const costUsd = (inputTokens / 1_000_000) * PRICE_PER_M_INPUT;
+  let raw: unknown;
+  let baseDir: string;
+  if (cli.inline !== null) {
+    baseDir = process.cwd();
+    try {
+      raw = JSON.parse(cli.inline);
+    } catch (e) {
+      die(`inline request is not valid JSON: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  } else {
+    const requestPath = resolve(cli.positionals[0] as string);
+    baseDir = dirname(requestPath);
+    try {
+      raw = JSON.parse(readFileSync(requestPath, "utf8"));
+    } catch (e) {
+      die(`cannot read request ${requestPath}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+  const req = parseRequest(raw, baseDir, cli);
+  st.model = req.model;
+  const unpriced = unpricedModelRefusal(req.model, (m) => m in PRICES, "gemini-decide");
+  if (unpriced) die(unpriced);
+  st.items = req.items.length;
 
+  const outArg = cli.outAuto ? null : (cli.positionals[cli.positionals.length - 1] as string);
+  const outPath = outArg !== null ? resolve(outArg) : join(mkdtempSync(join(tmpdir(), "sdd-gemini-")), "results.json");
   mkdirSync(dirname(outPath), { recursive: true });
+
+  if (req.dryRun) {
+    const qTokens = Math.ceil(JSON.stringify(req.questions).length / 4);
+    const problems: { id: string; error: string }[] = [];
+    const inputTokens = req.items.reduce((n, item) => n + estimateTokens(req, item, qTokens, problems), 0);
+    const costUsd = costOf(req.model, inputTokens);
+    writeFileSync(
+      outPath,
+      JSON.stringify(
+        { dryRun: true, model: req.model, requestedModel: req.model, questionTypes: req.questionTypes, items: req.items.length, estimate: { inputTokens, costUsd, note: "rough: text at 4 chars/token, media from file size" }, problems },
+        null,
+        2,
+      ),
+    );
+    process.stdout.write(
+      `SDD_GEMINI_SUMMARY:dry_run=1 items=${req.items.length} est_input_tokens=${inputTokens} est_cost_usd=${costUsd === null ? "unknown" : costUsd.toFixed(6)} problems=${problems.length}\n`,
+    );
+    process.stdout.write(`SDD_GEMINI_RESULT:${outPath}\n`);
+    flushUsage(); // calls: 0, so the ledger records $0 and not an unknown (charged) cost
+    return;
+  }
+
+  const { key } = resolveKey();
+  if (!key) die(`GEMINI_API_KEY is not set in the sdd server's environment or in ${resolveKey().file}`);
+  const refusal = budgetRefusal("gemini-decide");
+  if (refusal) die(refusal);
+  jobCap = effectiveCap("gemini-decide", req.maxCostUsd);
+
+  const deadlineAt = cli.deadlineMs !== null ? startedAt + cli.deadlineMs : Infinity;
+  const caches: MediaCaches = { uploads: new Map(), b64: new Map() };
+  const partialPath = `${outPath}.partial.jsonl`;
+  rmSync(partialPath, { force: true });
+
+  const results: (ItemResult | undefined)[] = new Array(req.items.length);
+  let stop: StopReason | null = null;
+  let fatalMessage = "";
+  let streak = { msg: "", n: 0 };
+  let lastUsagePrint = 0;
+
+  const finish = (i: number, r: ItemResult): void => {
+    results[i] = r;
+    if ("error" in r) st.failed++;
+    else st.ok++;
+    appendFileSync(partialPath, `${JSON.stringify(r)}\n`);
+    if ("error" in r) {
+      if (r.retryable === false) {
+        streak = streak.msg === r.error ? { msg: r.error, n: streak.n + 1 } : { msg: r.error, n: 1 };
+        if (streak.n >= BREAKER_THRESHOLD && !stop) stop = "circuit";
+      }
+    } else {
+      streak = { msg: "", n: 0 };
+    }
+    if (runningCost() >= jobCap.usd && !stop) stop = "budget";
+    // Throttled running total, so even a SIGKILLed job leaves a recent figure.
+    if (st.calls > 0 && Date.now() - lastUsagePrint > 2000) {
+      lastUsagePrint = Date.now();
+      flushUsage();
+    }
+  };
+  const runOne = async (i: number): Promise<void> => {
+    finish(i, await decide(key, req, req.items[i] as Item, caches));
+  };
+
+  // The first item runs alone: a request that fails the same way for every
+  // item (bad key, bad question shape) fails once, not N times.
+  await runOne(0);
+  const first = results[0];
+  if (first && "error" in first && (first.status === 401 || first.status === 403 || (first.status === 400 && REQUEST_LEVEL_RE.test(first.error)))) {
+    stop = "fatal";
+    fatalMessage = first.error;
+  }
+  let next = 1;
+  await Promise.all(
+    Array.from({ length: Math.min(req.concurrency, req.items.length - 1) }, async () => {
+      while (next < req.items.length && !stop) {
+        if (Date.now() >= deadlineAt) {
+          stop = "deadline";
+          break;
+        }
+        await runOne(next++);
+      }
+    }),
+  );
+
+  const reasonText =
+    stop === "fatal" ? `${STOP_TEXT.fatal}: ${oneLine(fatalMessage, 150)}` : stop === "budget" ? `${STOP_TEXT.budget} (cap ${jobCap.why}; unknown-cost calls count $${UNKNOWN_COST_CHARGE_USD} each)` : stop ? STOP_TEXT[stop] : "";
+  const final: ItemResult[] = req.items.map((item, i) => results[i] ?? { id: item.id, error: `skipped: ${reasonText}`, skipped: true });
+  const ok = final.filter((r) => !("error" in r));
+  const failed = final.length - ok.length;
+  const skipped = final.filter((r) => "error" in r && r.skipped).length;
+  const usage = usageRecord();
+
   writeFileSync(
     outPath,
-    JSON.stringify({ model: req.model, items: results.length, ok: ok.length, failed, inputTokens, costUsd, results }, null, 2),
+    JSON.stringify(
+      {
+        model: st.responseModel ?? req.model,
+        requestedModel: req.model,
+        questionTypes: req.questionTypes,
+        items: final.length,
+        ok: ok.length,
+        failed,
+        ...(skipped > 0 ? { skipped } : {}),
+        ...(stop ? { stopped: stop } : {}),
+        inputTokens: usage.inputTokens,
+        costUsd: usage.costUsd,
+        results: final.map((r) => {
+          if (!("error" in r)) return r;
+          const { retryable: _r, status: _s, skipped: _k, ...rest } = r;
+          return rest;
+        }),
+      },
+      null,
+      2,
+    ),
   );
+  rmSync(partialPath, { force: true });
 
   // Markers last, so a partially written file can never look like a success.
-  process.stdout.write(
-    `SDD_GEMINI_SUMMARY:items=${results.length} ok=${ok.length} failed=${failed} input_tokens=${inputTokens} cost_usd=${costUsd.toFixed(6)}\n`,
-  );
+  flushUsage();
+  const real = final.filter((r): r is Extract<ItemResult, { error: string }> => "error" in r && !r.skipped);
+  let summary =
+    `SDD_GEMINI_SUMMARY:items=${final.length} ok=${ok.length} failed=${failed}` +
+    ` input_tokens=${usage.inputTokens ?? "unknown"} cost_usd=${usage.costUsd === null ? "unknown" : usage.costUsd.toFixed(6)}`;
+  if (skipped > 0) summary += ` skipped=${skipped}`;
+  if (stop) summary += ` stopped=${stop}`;
+  if (real.length > 0) {
+    summary += ` failed_ids=${real.slice(0, 5).map((r) => r.id.replace(/[\s,]/g, "_")).join(",")}`;
+    summary += ` first_error=${oneLine((real[0] as { error: string }).error, 200)}`;
+  }
+  process.stdout.write(`${summary}\n`);
+  const answers = answersMarker(final);
+  if (answers !== null) process.stdout.write(`SDD_GEMINI_ANSWERS:${answers}\n`);
   process.stdout.write(`SDD_GEMINI_RESULT:${outPath}\n`);
 
   if (ok.length === 0) {
-    const first = results.find((r) => "error" in r);
-    die(`every item failed; first error: ${first && "error" in first ? first.error : "unknown"}`);
+    const firstErr = final.find((r) => "error" in r);
+    die(`every item failed; first error: ${firstErr && "error" in firstErr ? firstErr.error : "unknown"}`);
   }
 }
 
