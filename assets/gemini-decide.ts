@@ -247,6 +247,7 @@ function usageRecord(includeInFlight = false): UsageRecord {
     inputTokens: unknown > 0 ? null : st.inputTokens,
     outputTokens: unknown > 0 ? null : st.outputTokens,
     costUsd: st.costKnown + UNKNOWN_COST_CHARGE_USD * unknown,
+    ...(unknown > 0 ? { unknownCalls: unknown } : {}),
     costIsEstimate: true,
   };
 }

@@ -18,6 +18,7 @@ import {
   ledgerSummary,
   loadBudget,
   readLedger,
+  readLedgerChecked,
   summarizeSpend,
   UNKNOWN_COST_CHARGE_USD,
 } from "../src/lib/ledger.ts";
@@ -529,4 +530,41 @@ export function parseResult(o) { return { status: "done", summary: o.trim(), art
   expect(results[0]).not.toHaveProperty("raw");
   expect(r.content[0]!.text).toContain("hello result");
   expect(r.content[0]!.text).toContain("echo/default");
+});
+
+// ── review fixes ────────────────────────────────────────────────────────────
+
+test("readLedgerChecked: missing file is no error; an unreadable path reports the error", () => {
+  const d = fresh();
+  expect(readLedgerChecked({ path: join(d, "none.jsonl") })).toEqual({ entries: [], error: null });
+  const r = readLedgerChecked({ path: d }); // a directory: EISDIR
+  expect(r.entries).toEqual([]);
+  expect(r.error).not.toBeNull();
+});
+
+test("a usage record with unknownCalls keeps its (already-charged) cost and counts as an unknown-cost job once", () => {
+  const path = join(fresh(), "l.jsonl");
+  appendLedger(input({ usage: usage({ costUsd: 0.35, unknownCalls: 1 }) }), path);
+  const s = summarizeSpend(readLedger({ path }), { now: Date.now() + 1000, adapter: "gemini" });
+  expect(s.last24h.costUsd).toBeCloseTo(0.35, 10); // not 0.60: the charge is not added twice
+  expect(s.last24h.unknownCostJobs).toBe(1);
+});
+
+test("parseUsageMarker passes unknownCalls through only when positive", () => {
+  const line = (u: object) => `SDD_X:${JSON.stringify({ calls: 1, costUsd: 0.5, ...u })}\n`;
+  expect(parseUsageMarker(line({ unknownCalls: 2 }), "SDD_X")?.unknownCalls).toBe(2);
+  expect(parseUsageMarker(line({ unknownCalls: 0 }), "SDD_X")).not.toHaveProperty("unknownCalls");
+  expect(parseUsageMarker(line({}), "SDD_X")).not.toHaveProperty("unknownCalls");
+});
+
+test("usage tool reports spend and history as UNAVAILABLE (not $0) when the ledger cannot be read", async () => {
+  const d = fresh();
+  writeFileSync(join(d, "gemini.ts"), PLAIN("gemini"));
+  const { tool } = toolRuntime(d, fresh()); // ledger path is a directory
+  const spend = await tool.handler({ adapter: "gemini" });
+  expect(spend.content[0]!.text).toContain("UNAVAILABLE");
+  expect(spend.content[0]!.text).not.toContain("$0.00 in 24h");
+  const recent = await tool.handler({ recent: 5 });
+  expect(recent.isError).toBe(true);
+  expect(recent.content[0]!.text).toContain("job history unavailable");
 });

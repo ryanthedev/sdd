@@ -35,6 +35,7 @@ export function parseUsageMarker(stdout: string, marker: string): UsageRecord | 
       inputTokens: num(o.inputTokens),
       outputTokens: num(o.outputTokens),
       costUsd: num(o.costUsd),
+      ...unknownCallsOf(o.unknownCalls),
       costIsEstimate: true,
     };
   } catch {
@@ -44,4 +45,10 @@ export function parseUsageMarker(stdout: string, marker: string): UsageRecord | 
 
 function num(v: unknown): number | null {
   return typeof v === "number" && Number.isFinite(v) ? v : null;
+}
+
+/** `{unknownCalls}` only when it is a positive count; absent otherwise. */
+function unknownCallsOf(v: unknown): { unknownCalls?: number } {
+  const n = num(v);
+  return n !== null && n > 0 ? { unknownCalls: n } : {};
 }

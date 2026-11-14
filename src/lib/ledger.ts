@@ -108,14 +108,21 @@ export interface ReadLedgerOpts {
 
 /** All valid entries, oldest first. Missing file = []. Torn/invalid lines are skipped. */
 export function readLedger(opts: ReadLedgerOpts = {}): LedgerEntry[] {
+  return readLedgerChecked(opts).entries;
+}
+
+/** Like readLedger, but a read failure (anything but a missing file) is returned
+ *  in `error` so callers can report spend as unavailable instead of as $0. */
+export function readLedgerChecked(opts: ReadLedgerOpts = {}): { entries: LedgerEntry[]; error: string | null } {
   const path = opts.path ?? ledgerPath();
   let text: string;
   try {
-    if (!existsSync(path)) return [];
+    if (!existsSync(path)) return { entries: [], error: null };
     text = readFileSync(path, "utf8");
   } catch (e) {
-    log(`ledger: could not read ${path}: ${e instanceof Error ? e.message : String(e)}`);
-    return [];
+    const error = e instanceof Error ? e.message : String(e);
+    log(`ledger: could not read ${path}: ${error}`);
+    return { entries: [], error };
   }
   const out: LedgerEntry[] = [];
   for (const raw of text.split("\n")) {
@@ -133,7 +140,7 @@ export function readLedger(opts: ReadLedgerOpts = {}): LedgerEntry[] {
     if (opts.adapter !== undefined && e.adapter !== opts.adapter) continue;
     out.push(e);
   }
-  return out;
+  return { entries: out, error: null };
 }
 
 function coerceEntry(o: unknown): LedgerEntry | null {
@@ -158,6 +165,7 @@ function coerceEntry(o: unknown): LedgerEntry | null {
       inputTokens: n(x.inputTokens),
       outputTokens: n(x.outputTokens),
       costUsd: n(x.costUsd),
+      ...((n(x.unknownCalls) ?? 0) > 0 ? { unknownCalls: n(x.unknownCalls)! } : {}),
       costIsEstimate: true,
     };
   }
@@ -263,8 +271,10 @@ function addTo(w: SpendWindow, e: LedgerEntry): void {
     if (u.inputTokens !== null) w.inputTokens += u.inputTokens;
     if (u.outputTokens !== null) w.outputTokens += u.outputTokens;
   }
-  if (u && u.costUsd !== null) w.costUsd += u.costUsd;
-  else if (u && u.calls === 0) return; // nothing was billed
+  if (u && u.costUsd !== null) {
+    w.costUsd += u.costUsd; // already includes the flat charge for any unknown-cost calls
+    if ((u.unknownCalls ?? 0) > 0) w.unknownCostJobs += 1;
+  } else if (u && u.calls === 0) return; // nothing was billed
   else {
     w.unknownCostJobs += 1;
     w.costUsd += UNKNOWN_COST_CHARGE_USD;

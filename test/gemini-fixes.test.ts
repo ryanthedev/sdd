@@ -33,6 +33,7 @@ globalThis.fetch = (async (_url, init) => {
   if (mode === "badbody" && n === 1) {
     return new Response(new ReadableStream({ start(c) { c.error(new Error("boom")); } }), { status: 200 });
   }
+  if (mode === "nullbody") return new Response("null", { status: 200 });
   if (mode === "mixed") return ok(n === 2 ? {} : { total_input_tokens: 1000000 });
   if (mode === "nousage") return ok({});
   if (mode === "respmodel") return ok({ total_input_tokens: 1000000 }, "some-other-model");
@@ -146,6 +147,7 @@ describe("usage accounting (findings 4, 5)", () => {
     expect(r.usage?.costUsd).toBeCloseTo(0.1 + 0.25 + 0.1, 6);
     expect(r.usage?.costUsd).not.toBeNull();
     expect(r.usage?.costIsEstimate).toBe(true);
+    expect(r.usage?.unknownCalls).toBe(1); // the fallback-priced call is flagged, not passed off as known cost
   });
 
   test("the job is priced by the REQUESTED model, not by the model the reply names", async () => {
@@ -290,5 +292,39 @@ describe("vision timeouts are unknown-cost calls (finding 5)", () => {
     expect(r.stderr).toContain("1 timed-out call(s)");
     const usage = vision.parseUsage(r.stdout);
     expect(usage).toMatchObject({ calls: 1, costUsd: 0.25 });
+  }, 20_000);
+});
+
+describe("review fixes: unreadable ledger, null body, unknown-cost flag", () => {
+  test("a ledger that cannot be read (EISDIR) refuses paid calls with a zero-call usage marker", async () => {
+    const asDir = join(dir, "ledger-is-a-dir");
+    mkdirSync(asDir, { recursive: true });
+    const r = await run({ questions: noul, items: items(1) }, "ok", { SDD_LEDGER_PATH: asDir });
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain("budget unknown");
+    expect(r.usage).toMatchObject({ calls: 0, costUsd: 0 });
+  });
+
+  test("a missing ledger (ENOENT) is still a known $0 and does not refuse", async () => {
+    const r = await run({ questions: noul, items: items(1) }, "ok");
+    expect(r.code).toBe(0);
+  });
+
+  test("a usage-less call is flagged unknownCalls in the usage marker", async () => {
+    const r = await run({ questions: noul, items: items(2), concurrency: 1 }, "nousage");
+    expect(r.usage?.unknownCalls).toBe(2);
+  });
+
+  test("vision: an HTTP 200 with JSON null is an unknown-cost call, counted and capped", async () => {
+    const art = mkdtempSync(join(tmpdir(), "sdd-gemini-vnull-"));
+    writeFileSync(join(art, "f.png"), "x");
+    writeFileSync(join(art, "manifest.json"), JSON.stringify({ frames: [{ file: "f.png", tSeconds: 0 }] }));
+    const argv = vision.buildArgs("describe", { addDir: art, outputPath: join(art, "fused.json") });
+    argv.splice(argv.indexOf("run") + 1, 0, "--preload", mock);
+    const r = await spawn(argv, { MOCK_MODE: "nullbody", XDG_CONFIG_HOME: config("cfg-vision-null", { dailyUsd: 0.2, monthlyUsd: 50 }) });
+    rmSync(art, { recursive: true, force: true });
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain("stopped=budget");
+    expect(vision.parseUsage(r.stdout)).toMatchObject({ calls: 1, costUsd: 0.25, unknownCalls: 1 });
   }, 20_000);
 });

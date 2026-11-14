@@ -21,7 +21,7 @@ import {
   type LedgerEntry,
   ledgerSummary,
   loadBudget,
-  readLedger,
+  readLedgerChecked,
   SUMMARY_MAX,
   type SpendSummary,
   type SpendWindow,
@@ -76,6 +76,8 @@ export interface SpendReport extends SpendWindow {
   /** Calendar month, local time (all fields). */
   month: SpendWindow;
   budget: AdapterBudget | null;
+  /** Set when the ledger could not be read: the totals above are NOT real. */
+  unavailable?: string;
 }
 
 type Report =
@@ -168,15 +170,23 @@ function hasSpend(a: Adapter, budget: Record<string, AdapterBudget>, entries: Le
   return entries.some((e) => e.adapter === a.name && e.usage !== null);
 }
 
-function lazyLedger(rt: Runtime): () => LedgerEntry[] {
-  let cache: LedgerEntry[] | undefined;
-  return () => (cache ??= readLedger({ path: rt.ledgerPath }));
+function lazyLedger(rt: Runtime): () => LedgerEntry[] & { error?: string } {
+  let cache: (LedgerEntry[] & { error?: string }) | undefined;
+  return () => {
+    if (!cache) {
+      const r = readLedgerChecked({ path: rt.ledgerPath });
+      cache = Object.assign(r.entries, r.error === null ? {} : { error: r.error });
+    }
+    return cache;
+  };
 }
 
-function spendFor(adapter: string, entries: LedgerEntry[], budget: Record<string, AdapterBudget>, now: number): SpendEntry {
+function spendFor(adapter: string, entries: LedgerEntry[] & { error?: string }, budget: Record<string, AdapterBudget>, now: number): SpendEntry {
   const s: SpendSummary = summarizeSpend(entries, { now, adapter, budget });
   // Flat fields mirror the rolling-24h window (the one a pre-dispatch gate cares about).
-  return { adapter, spend: { adapter, ...s.last24h, last24h: s.last24h, month: s.month, budget: s.budget } };
+  // An unreadable ledger is not $0 spend: say so instead of reporting empty totals.
+  const unavailable = entries.error === undefined ? {} : { unavailable: entries.error };
+  return { adapter, spend: { adapter, ...s.last24h, last24h: s.last24h, month: s.month, budget: s.budget, ...unavailable } };
 }
 
 async function reportFor(adapter: { name: string }, refresh: boolean): Promise<Report> {
@@ -204,6 +214,9 @@ export function usd(n: number): string {
 }
 
 function renderSpend(s: SpendReport): string {
+  if (s.unavailable !== undefined) {
+    return `${s.adapter} spend: UNAVAILABLE — the spend ledger could not be read (${s.unavailable}); spend is unknown, not $0, and paid calls will be refused`;
+  }
   const day = s.budget?.dailyUsd !== undefined ? ` of ${usd(s.budget.dailyUsd)} daily` : "";
   const mon = s.budget?.monthlyUsd !== undefined ? ` of ${usd(s.budget.monthlyUsd)}` : "";
   const failed = s.last24h.failedJobs > 0 ? ` (${s.last24h.failedJobs} failed)` : "";
@@ -221,7 +234,10 @@ function renderSpend(s: SpendReport): string {
 }
 
 function recentRows(rt: Runtime, adapter: string | undefined, n: number) {
-  const entries = readLedger({ path: rt.ledgerPath, adapter });
+  const { entries, error } = readLedgerChecked({ path: rt.ledgerPath, adapter });
+  if (error !== null) {
+    return err(`job history unavailable: the ledger could not be read (${error})`, { code: "ledger_unreadable" });
+  }
   const rows = entries.slice(-n).reverse().map((e) => ({
     ts: e.ts,
     jobId: e.jobId,

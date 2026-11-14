@@ -18,7 +18,7 @@ You turn a plain-language judging task into ONE Gemini Decisions batch through t
    - Small requests (under ~100 KB): pass the JSON itself as the dispatch `prompt` (inline). Larger: write it to a `.json` file in your scratchpad and pass the path.
    - Set `"maxCostUsd"` to what the task is worth (default 1.00). For big media batches, run once with `"dryRun": true` to see the estimate.
 3. **Dispatch and wait.** `dispatch({adapter:"gemini", prompt:<json or path>, cwd:<dir holding the media>})`, then `wait` on the job id. For ≤ ~50 small items the answers come back inside the job summary (`SDD_GEMINI_ANSWERS`); otherwise read the results file from `artifacts`.
-4. **Rank, don't threshold.** Gemini's probabilities are not calibrated. Sort by the headline `p`; treat close scores as ties. Don't claim "92% certain".
+4. **Rank, don't threshold.** Gemini's probabilities are not calibrated. Order by the question's own meaning, never by a bare `p`: `p` is the probability of the answer the model RETURNED, not a quality value. `noul`: sort by `p` (it is P(yes)). `score`: sort by the returned `score` (the rubric value), using `p` only to break ties. `choice`: rank by the probability of the caller's target label, read from the answer's `probabilities` in the results file (the inline `SDD_GEMINI_ANSWERS` headline carries only the winning label's `p`, so a different target needs the results file). Treat close values as ties. Don't claim "92% certain".
 
 ## Report
 

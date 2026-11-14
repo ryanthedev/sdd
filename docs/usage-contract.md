@@ -17,6 +17,7 @@ interface UsageRecord {
   inputTokens: number | null;  // null = unknown (never 0 for "unknown")
   outputTokens: number | null;
   costUsd: number | null;      // list price x tokens; null = unknown, NEVER rendered as $0
+  unknownCalls?: number;       // calls priced at the flat $0.25 fail-closed charge (already inside costUsd); each such job counts as unknownCostJobs
   costIsEstimate: true;        // it is an estimate from list price, not a bill
 }
 ```

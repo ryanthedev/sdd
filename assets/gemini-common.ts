@@ -24,6 +24,8 @@ export interface UsageRecord {
   inputTokens: number | null;
   outputTokens: number | null;
   costUsd: number | null;
+  /** Calls priced at the flat fail-closed charge (already inside costUsd). */
+  unknownCalls?: number;
   costIsEstimate: true;
 }
 
@@ -112,17 +114,22 @@ export interface Spend {
   usd24h: number;
   usdMonth: number;
   unknownCostJobs: number;
+  /** Why the ledger could not be read (anything but a missing file), else null. */
+  unreadable: string | null;
 }
 
 /** Sum gemini `usage.costUsd` from the ledger over the rolling 24h and the
- *  local calendar month. Missing file = $0; torn/invalid lines are skipped;
+ *  local calendar month. Missing file (ENOENT) = $0; any other read error sets
+ *  `unreadable` so callers fail closed; torn/invalid lines are skipped;
  *  a null cost counts as `unknownCostJobs`, never as 0. */
 export function readSpend(now: number = Date.now()): Spend {
-  const spend: Spend = { usd24h: 0, usdMonth: 0, unknownCostJobs: 0 };
+  const spend: Spend = { usd24h: 0, usdMonth: 0, unknownCostJobs: 0, unreadable: null };
   let text: string;
   try {
     text = readFileSync(ledgerPath(), "utf8");
-  } catch {
+  } catch (e) {
+    // Only a missing ledger is a known $0; EACCES/EIO/EISDIR leave the balance unknown.
+    if ((e as NodeJS.ErrnoException)?.code !== "ENOENT") spend.unreadable = e instanceof Error ? e.message : String(e);
     return spend;
   }
   const d = new Date(now);
@@ -132,7 +139,7 @@ export function readSpend(now: number = Date.now()): Spend {
   // timestamp in the future (clock skew, a bad line) counts in neither window.
   for (const line of text.split("\n")) {
     if (!line.includes('"gemini"')) continue;
-    let rec: { adapter?: unknown; ts?: unknown; usage?: { costUsd?: unknown; calls?: unknown } | null };
+    let rec: { adapter?: unknown; ts?: unknown; usage?: { costUsd?: unknown; calls?: unknown; unknownCalls?: unknown } | null };
     try {
       rec = JSON.parse(line);
     } catch {
@@ -145,7 +152,9 @@ export function readSpend(now: number = Date.now()): Spend {
     const raw = rec.usage?.costUsd;
     let cost: number;
     if (typeof raw === "number" && Number.isFinite(raw)) {
-      cost = raw;
+      cost = raw; // already includes the flat charge for any unknown-cost calls
+      const uc = rec.usage?.unknownCalls;
+      if (inDay && typeof uc === "number" && uc > 0) spend.unknownCostJobs++;
     } else {
       // Fail closed: a job that made billed calls but reports no cost is charged a
       // conservative flat amount. A job with no usage record at all (killed before
@@ -165,6 +174,7 @@ export function readSpend(now: number = Date.now()): Spend {
 export function budgetRefusal(who: string, now: number = Date.now()): string | null {
   const b = readBudget(who);
   const s = readSpend(now);
+  if (s.unreadable !== null) return `budget unknown: the spend ledger could not be read (${s.unreadable}); refusing paid calls`;
   if (s.usd24h >= b.dailyUsd) return `budget exceeded: $${s.usd24h.toFixed(4)} in 24h of $${b.dailyUsd} daily`;
   if (s.usdMonth >= b.monthlyUsd) return `budget exceeded: $${s.usdMonth.toFixed(4)} this month of $${b.monthlyUsd} monthly`;
   return null;
@@ -191,6 +201,7 @@ export interface JobCap {
 export function effectiveCap(who: string, requested: number, now: number = Date.now()): JobCap {
   const b = readBudget(who);
   const s = readSpend(now);
+  if (s.unreadable !== null) return { usd: 0, why: `$0.0000: the spend ledger could not be read (${s.unreadable})` };
   const daily = Math.max(0, b.dailyUsd - s.usd24h);
   const monthly = Math.max(0, b.monthlyUsd - s.usdMonth);
   const usd = Math.min(requested, daily, monthly);

@@ -127,6 +127,8 @@ function currentUsage(includeInFlight = false): UsageRecord {
   const known = base.calls > 0 ? (base.costUsd ?? UNKNOWN_COST_CHARGE_USD) : 0;
   return {
     ...base,
+    // Every charged-at-fallback call (incl. a billed reply with no cost) is counted unknown.
+    unknownCalls: extra + (base.calls > 0 && base.costUsd === null ? 1 : 0),
     calls: base.calls + extra,
     inputTokens: null,
     outputTokens: null,
@@ -278,7 +280,9 @@ async function main(): Promise<void> {
       die(`HTTP ${res.status} from ${model}: ${(await res.text().catch(() => "")).slice(0, 300)}`);
     }
     try {
-      data = (await res.json()) as Record<string, any>;
+      const parsed: unknown = await res.json();
+      if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) throw new Error("response is not a JSON object");
+      data = parsed as Record<string, any>;
     } catch (e) {
       // The API answered 200 but the body is unreadable: billed, usage unknown.
       inFlight = false;

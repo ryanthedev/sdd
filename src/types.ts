@@ -162,6 +162,8 @@ export interface UsageRecord {
   inputTokens: number | null;
   outputTokens: number | null;
   costUsd: number | null;
+  /** Calls priced at the flat fail-closed charge (already inside `costUsd`); absent/0 = none. */
+  unknownCalls?: number;
   /** Always true: list price x tokens, an estimate and not a bill. */
   costIsEstimate: true;
 }
