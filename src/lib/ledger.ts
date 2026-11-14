@@ -7,7 +7,7 @@
  * The ledger never contains prompts, request contents, or env — only the job's
  * identity, outcome, a truncated result summary, and its UsageRecord.
  */
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir, hostname } from "node:os";
 import { dirname, join } from "node:path";
 import type { UsageRecord } from "../types.ts";
@@ -63,8 +63,10 @@ export function appendLedger(entry: LedgerInput, path: string = ledgerPath()): v
       usage: entry.usage,
       host: hostname(),
     };
-    mkdirSync(dirname(path), { recursive: true });
-    appendFileSync(path, `${JSON.stringify(line)}\n`);
+    // Private to the user: the ledger names project dirs and job summaries.
+    mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+    appendFileSync(path, `${JSON.stringify(line)}\n`, { mode: 0o600 });
+    try { chmodSync(path, 0o600); } catch { /* best effort on an existing file */ }
   } catch (e) {
     if (warned) return;
     warned = true;
