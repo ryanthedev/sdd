@@ -66,6 +66,8 @@ export function appendLedger(entry: LedgerInput, path: string = ledgerPath()): v
     };
     // Private to the user: the ledger names project dirs and job summaries.
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+    // mkdir's mode only applies on creation: tighten a pre-existing dir too.
+    try { chmodSync(dirname(path), 0o700); } catch { /* best effort */ }
     appendFileSync(path, `${JSON.stringify(line)}\n`, { mode: 0o600 });
     try { chmodSync(path, 0o600); } catch { /* best effort on an existing file */ }
   } catch (e) {
