@@ -1,5 +1,7 @@
 # Usage & spend contract (v0.8.0)
 
+Status: implemented in sdd 0.8.0 and usage-governor (gemini meter).
+
 Shared contract between the sdd server, the gemini scripts, and the usage governor
 (`~/repos/usage-governor`). Every part below is a cross-repo interface: change it here first.
 
@@ -65,8 +67,11 @@ The existing `SDD_GEMINI_SUMMARY:` and `SDD_GEMINI_RESULT:` / `SDD_GEMINI_VISION
 - File: `~/.config/sdd/budget.json` (`$XDG_CONFIG_HOME/sdd/budget.json`). Missing = defaults.
 - Default: `{"gemini": {"dailyUsd": 5, "monthlyUsd": 50}}`.
 - Windows: daily = rolling 24 h by ledger `ts`; monthly = calendar month in LOCAL time.
-- Spend = sum of `usage.costUsd` over ledger lines with `adapter == "gemini"` (null costs counted separately as
-  `unknownCostJobs`, never as 0).
+- Spend = sum of `usage.costUsd` over ledger lines with `adapter == "gemini"`. FAIL CLOSED: a line whose cost is
+  unknown (usage null, or `costUsd` null) is charged **$0.25** and counted in `unknownCostJobs`; a line whose usage
+  says `calls: 0` is free. Scripts always print a usage marker (with `calls: 0` when nothing was billed) so harmless
+  failures are recorded as $0. The scripts, the sdd `usage` tool and the governor all use this same rule and value.
+- Models without a known price are refused unless the budget file's gemini block sets `"allowUnpricedModels": true`.
 - Enforced in TWO places:
   1. The gemini scripts check it before the first API call and refuse (`exit 1`, stderr
      `gemini-…: budget exceeded: $X in 24h of $5 daily` etc.). This also covers ska/vana, which have no governor.
