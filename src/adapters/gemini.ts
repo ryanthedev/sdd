@@ -22,6 +22,7 @@
  */
 import * as decide from "./_gemini-decide.ts";
 import * as vision from "./_gemini-vision.ts";
+import type { UsageRecord } from "./_usage-marker.ts";
 import { DEFAULT_KIND } from "./types.ts";
 import type { Capability, MultiAdapterModule } from "./types.ts";
 
@@ -30,9 +31,13 @@ export const name = "gemini";
 export const binary = "bun";
 export const probeable = false;
 
-export const capabilities: Record<string, Capability> = {
-  [DEFAULT_KIND]: { buildArgs: decide.buildArgs, injectContract: decide.injectContract, parseResult: decide.parseResult },
-  vision: { buildArgs: vision.buildArgs, injectContract: vision.injectContract, parseResult: vision.parseResult },
+/** Capability plus the optional pure usage parser (docs/usage-contract.md
+ *  section 1); collapses into plain `Capability` once the port declares it. */
+type UsageCapability = Capability & { parseUsage?: (stdout: string, stderr: string) => UsageRecord | null };
+
+export const capabilities: Record<string, UsageCapability> = {
+  [DEFAULT_KIND]: { buildArgs: decide.buildArgs, injectContract: decide.injectContract, parseResult: decide.parseResult, parseUsage: decide.parseUsage },
+  vision: { buildArgs: vision.buildArgs, injectContract: vision.injectContract, parseResult: vision.parseResult, parseUsage: vision.parseUsage },
 };
 
 /** Decisions are what `gemini` means with no `kind`. */

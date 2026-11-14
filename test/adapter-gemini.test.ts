@@ -5,9 +5,9 @@
  * key is enough).
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import * as gemini from "../src/adapters/gemini.ts";
 import * as decide from "../src/adapters/_gemini-decide.ts";
 import * as vision from "../src/adapters/_gemini-vision.ts";
@@ -52,8 +52,32 @@ describe("gemini decide buildArgs", () => {
     expect(argv.slice(runIdx + 2)).toEqual(["/tmp/req.json", "/tmp/out.json"]);
   });
 
-  test("requires outputPath", () => {
-    expect(() => decide.buildArgs("/tmp/req.json", {})).toThrow(/outputPath/);
+  test("outputPath is optional: --out-auto flag, request path stays positional", () => {
+    const argv = decide.buildArgs("/tmp/req.json", {});
+    const runIdx = argv.indexOf("run");
+    expect(argv.slice(runIdx + 2)).toEqual(["--out-auto", "/tmp/req.json"]);
+  });
+
+  test("an inline request goes through --inline, flags before positionals", () => {
+    const req = '  {"questions":{"q":{"type":"noul","instructions":"x"}},"items":[{"id":"a","input":"t"}]}';
+    const argv = decide.buildArgs(req, { outputPath: "/tmp/out.json" });
+    const runIdx = argv.indexOf("run");
+    expect(argv.slice(runIdx + 2)).toEqual(["--inline", req.trim(), "/tmp/out.json"]);
+  });
+
+  test("model and timeoutMs become leading flags", () => {
+    const argv = decide.buildArgs("/tmp/req.json", { outputPath: "/tmp/o.json", model: "gemini-decision-1", timeoutMs: 100_000 });
+    const runIdx = argv.indexOf("run");
+    expect(argv.slice(runIdx + 2)).toEqual(["--model", "gemini-decision-1", "--deadline-ms", "90000", "/tmp/req.json", "/tmp/o.json"]);
+    expect(() => decide.buildArgs("/tmp/req.json", { outputPath: "/tmp/o.json", model: "--evil" })).toThrow(TypeError);
+    expect(() => decide.buildArgs("/tmp/req.json", { outputPath: "/tmp/o.json", model: "a b" })).toThrow(TypeError);
+  });
+
+  test("rejects a natural-language prompt, bad inline JSON, and an oversized inline request", () => {
+    expect(() => decide.buildArgs("Is this video a cooking video?", { outputPath: "/tmp/o.json" })).toThrow(/must be a request/);
+    expect(() => decide.buildArgs("{not json", { outputPath: "/tmp/o.json" })).toThrow(/not valid JSON/);
+    const big = JSON.stringify({ questions: {}, items: [{ id: "a", input: "x".repeat(101 * 1024) }] });
+    expect(() => decide.buildArgs(big, { outputPath: "/tmp/o.json" })).toThrow(/KB/);
   });
 
   test("rejects option-shaped, control-character, and cwd-escaping paths", () => {
@@ -65,6 +89,7 @@ describe("gemini decide buildArgs", () => {
   test("resolves a relative path inside the job cwd", () => {
     const argv = decide.buildArgs("req.json", { outputPath: "out.json", cwd: dir });
     expect(argv.slice(-2)).toEqual([join(dir, "req.json"), join(dir, "out.json")]);
+    expect(decide.buildArgs("req.json", { cwd: dir }).slice(-2)).toEqual(["--out-auto", join(dir, "req.json")]);
   });
 });
 
@@ -96,6 +121,42 @@ describe("gemini decide parseResult", () => {
     const r = decide.parseResult("", "noise\ngemini-decide: GEMINI_API_KEY is not set\n", 1);
     expect(r.status).toBe("failed");
     expect(r.summary).toContain("GEMINI_API_KEY is not set");
+    expect(r.artifacts).toEqual([]);
+  });
+
+  test("all-failed exit 1 still reports the results file it wrote, status failed", () => {
+    const out = `SDD_GEMINI_SUMMARY:items=2 ok=0 failed=2 input_tokens=unknown cost_usd=unknown failed_ids=a,b first_error=HTTP 400: bad\nSDD_GEMINI_RESULT:${jsonPath}\n`;
+    const r = decide.parseResult(out, "gemini-decide: every item failed; first error: HTTP 400: bad\n", 1);
+    expect(r.status).toBe("failed");
+    expect(r.artifacts).toEqual([jsonPath]);
+    expect(r.summary).toContain("every item failed");
+  });
+
+  test("the ANSWERS headline rides in the summary", () => {
+    const answers = '{"a":{"q":0.91,"c":{"choice":"x","p":0.5}},"b":{"error":"HTTP 400"}}';
+    const r = decide.parseResult(`${ok(jsonPath)}SDD_GEMINI_ANSWERS:${answers}\nSDD_GEMINI_RESULT:${jsonPath}\n`, "", 0);
+    expect(r.status).toBe("done");
+    expect(r.summary).toContain(`answers=${answers}`);
+  });
+});
+
+describe("parseUsage (usage marker, last wins)", () => {
+  const rec = (calls: number, cost: number | null) =>
+    `SDD_GEMINI_USAGE:${JSON.stringify({ model: "gemini-decision-1", calls, items: 3, ok: calls, failed: 0, inputTokens: calls * 100, outputTokens: 0, costUsd: cost, costIsEstimate: true })}\n`;
+
+  test("both kinds parse the cumulative marker; the last line wins", () => {
+    const out = `${rec(1, 0.00001)}noise\n${rec(3, 0.00003)}`;
+    for (const cap of Object.values(gemini.capabilities)) {
+      const u = cap.parseUsage?.(out, "");
+      expect(u?.calls).toBe(3);
+      expect(u?.costUsd).toBe(0.00003);
+    }
+    expect(decide.parseUsage(rec(2, null))?.costUsd).toBeNull();
+  });
+
+  test("no marker or a torn one is null", () => {
+    expect(decide.parseUsage("SDD_GEMINI_SUMMARY:items=1\n")).toBeNull();
+    expect(vision.parseUsage('SDD_GEMINI_USAGE:{"model":"x","calls":')).toBeNull();
   });
 });
 
@@ -148,13 +209,21 @@ describe("gemini vision parseResult", () => {
   });
 });
 
-/** Run a bundled script with a fake key; validation errors exit before any
- *  network call. */
-async function runScript(script: string, args: string[]): Promise<{ code: number; stderr: string }> {
-  const argv = [...(script === "decide" ? decide.buildArgs(args[0]!, { outputPath: args[1]! }) : vision.buildArgs(args[2] ?? "x", { addDir: args[0]!, outputPath: args[1]! }))];
-  const proc = Bun.spawn(argv, { env: { ...process.env, GEMINI_API_KEY: "fake-key-for-tests" }, stdout: "pipe", stderr: "pipe" });
+/** Spawn argv with a fake key and hermetic ledger/config locations; validation
+ *  and budget errors exit before any network call. */
+async function spawn(argv: string[], env: Record<string, string> = {}): Promise<{ code: number; stdout: string; stderr: string }> {
+  const proc = Bun.spawn(argv, {
+    env: { ...process.env, GEMINI_API_KEY: "fake-key-for-tests", SDD_LEDGER_PATH: join(dir, "no-ledger.jsonl"), XDG_CONFIG_HOME: join(dir, "no-config"), ...env },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   const code = await proc.exited;
-  return { code, stderr: await new Response(proc.stderr).text() };
+  return { code, stdout: await new Response(proc.stdout).text(), stderr: await new Response(proc.stderr).text() };
+}
+
+async function runScript(script: string, args: string[], env: Record<string, string> = {}): Promise<{ code: number; stdout: string; stderr: string }> {
+  const argv = script === "decide" ? decide.buildArgs(args[0]!, { outputPath: args[1]! }) : vision.buildArgs(args[2] ?? "x", { addDir: args[0]!, outputPath: args[1]! });
+  return spawn(argv, env);
 }
 
 describe("bundled script validation (no network)", () => {
@@ -190,5 +259,252 @@ describe("bundled script validation (no network)", () => {
     rmSync(art, { recursive: true, force: true });
     expect(r.code).toBe(1);
     expect(r.stderr).toContain("points outside");
+  });
+
+  test("decide rejects a media path outside the request dir and cwd, unless allowed", async () => {
+    const reqDir = mkdtempSync(join(tmpdir(), "sdd-gemini-req-"));
+    const outside = mkdtempSync(join(tmpdir(), "sdd-gemini-outside-"));
+    writeFileSync(join(outside, "pic.png"), "x");
+    const body = (extra: object) =>
+      JSON.stringify({
+        questions: { q: { type: "noul", instructions: "x" } },
+        items: [{ id: "a", input: [{ type: "image", path: join(outside, "pic.png") }] }],
+        dryRun: true,
+        ...extra,
+      });
+    writeFileSync(join(reqDir, "req.json"), body({}));
+    const denied = await runScript("decide", [join(reqDir, "req.json"), join(reqDir, "o.json")]);
+    expect(denied.code).toBe(1);
+    expect(denied.stderr).toContain("outside the request directory");
+    writeFileSync(join(reqDir, "req2.json"), body({ allowOutsidePaths: true }));
+    const allowed = await runScript("decide", [join(reqDir, "req2.json"), join(reqDir, "o2.json")]);
+    expect(allowed.code).toBe(0);
+    rmSync(reqDir, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  });
+
+  test("decide dryRun: stats media, estimates, calls nothing, writes a results file saying dryRun", async () => {
+    const reqDir = mkdtempSync(join(tmpdir(), "sdd-gemini-dry-"));
+    writeFileSync(join(reqDir, "pic.png"), "x".repeat(1000));
+    writeFileSync(
+      join(reqDir, "req.json"),
+      JSON.stringify({
+        questions: { q: { type: "noul", instructions: "x" } },
+        items: [
+          { id: "a", input: [{ type: "image", path: "pic.png" }] },
+          { id: "b", input: "hello there" },
+          { id: "c", input: [{ type: "image", path: "missing.png" }] },
+        ],
+        dryRun: true,
+      }),
+    );
+    // No key at all: a dry run must not need one.
+    const r = await runScript("decide", [join(reqDir, "req.json"), join(reqDir, "o.json")], { GEMINI_API_KEY: "" });
+    expect(r.code).toBe(0);
+    const resultPath = /^SDD_GEMINI_RESULT:(.+)$/m.exec(r.stdout)?.[1];
+    expect(resultPath).toBe(join(reqDir, "o.json"));
+    const res = JSON.parse(readFileSync(resultPath!, "utf8"));
+    expect(res.dryRun).toBe(true);
+    expect(res.items).toBe(3);
+    expect(res.estimate.inputTokens).toBeGreaterThan(600);
+    expect(res.problems).toHaveLength(1);
+    expect(r.stdout).toContain("SDD_GEMINI_SUMMARY:dry_run=1 items=3");
+    expect(r.stdout).not.toContain("SDD_GEMINI_USAGE");
+    rmSync(reqDir, { recursive: true, force: true });
+  });
+
+  test("decide --inline with --out-auto writes a temp results file and reports it", async () => {
+    const req = JSON.stringify({ questions: { q: { type: "noul", instructions: "x" } }, items: [{ id: "a", input: "t" }], dryRun: true });
+    const r = await spawn(decide.buildArgs(req, {}));
+    expect(r.code).toBe(0);
+    const resultPath = /^SDD_GEMINI_RESULT:(.+)$/m.exec(r.stdout)?.[1];
+    expect(resultPath).toBeTruthy();
+    expect(JSON.parse(readFileSync(resultPath!, "utf8")).dryRun).toBe(true);
+    rmSync(dirname(resultPath!), { recursive: true, force: true });
+  });
+});
+
+describe("spend budget (hermetic ledger + config)", () => {
+  const request = JSON.stringify({ questions: { q: { type: "noul", instructions: "x" } }, items: [{ id: "a", input: "t" }] });
+  const line = (cost: number | null, ageMs: number, adapter = "gemini") =>
+    `${JSON.stringify({ v: 1, ts: Date.now() - ageMs, adapter, usage: cost === null ? null : { calls: 1, costUsd: cost } })}\n`;
+  const limits = (name: string, gemini: object): string => {
+    const cfg = join(dir, name);
+    mkdirSync(join(cfg, "sdd"), { recursive: true });
+    writeFileSync(join(cfg, "sdd", "budget.json"), JSON.stringify({ gemini }));
+    return cfg;
+  };
+
+  test("refuses before any API call when the 24h spend reaches the default daily limit", async () => {
+    const ledger = join(dir, "ledger-daily.jsonl");
+    // $3 + $2.5 in 24h (>= $5), a torn line, another adapter's spend, and old spend that must not count.
+    writeFileSync(ledger, line(3, 1000) + "{torn\n" + line(2.5, 3600_000) + line(99, 1000, "codex") + line(99, 40 * 24 * 3600_000));
+    const r = await spawn(decide.buildArgs(request, {}), { SDD_LEDGER_PATH: ledger });
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain("budget exceeded: $5.5000 in 24h of $5 daily");
+    expect(r.stdout).not.toContain("SDD_GEMINI_USAGE");
+  });
+
+  test("the config overrides the defaults; the monthly limit is enforced too", async () => {
+    const ledger = join(dir, "ledger-month.jsonl");
+    writeFileSync(ledger, line(0.6, 1000));
+    const r = await spawn(decide.buildArgs(request, {}), { SDD_LEDGER_PATH: ledger, XDG_CONFIG_HOME: limits("cfg-month", { dailyUsd: 100, monthlyUsd: 0.5 }) });
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain("this month of $0.5 monthly");
+  });
+
+  test("a missing ledger is $0 spend (a $0 limit still refuses, and the script never writes the ledger)", async () => {
+    const absent = join(dir, "absent.jsonl");
+    const r = await spawn(decide.buildArgs(request, {}), { SDD_LEDGER_PATH: absent, XDG_CONFIG_HOME: limits("cfg-zero", { dailyUsd: 0, monthlyUsd: 0 }) });
+    expect(r.stderr).toContain("budget exceeded: $0.0000 in 24h of $0 daily");
+    expect(() => readFileSync(absent)).toThrow();
+  });
+
+  test("vision refuses on budget too, after validating its inputs", async () => {
+    const art = mkdtempSync(join(tmpdir(), "sdd-gemini-vart-"));
+    writeFileSync(join(art, "f.png"), "x");
+    writeFileSync(join(art, "manifest.json"), JSON.stringify({ frames: [{ file: "f.png", tSeconds: 0 }] }));
+    const ledger = join(dir, "ledger-vision.jsonl");
+    writeFileSync(ledger, line(6, 1000));
+    const r = await runScript("vision", [art, join(art, "fused.json")], { SDD_LEDGER_PATH: ledger });
+    rmSync(art, { recursive: true, force: true });
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain("gemini-vision: budget exceeded");
+  });
+});
+
+/** Run gemini-decide.ts with `fetch` replaced by a scripted mock (bun --preload),
+ *  so scheduling policy is testable without a network. */
+describe("decide scheduling policy (mocked fetch)", () => {
+  let mock: string;
+  beforeAll(() => {
+    mock = join(dir, "mock-fetch.ts");
+    writeFileSync(
+      mock,
+      `let n = 0;
+const mode = process.env.MOCK_MODE;
+globalThis.fetch = (async () => {
+  n++;
+  const bad = mode === "all400" || (mode === "after1" && n > 1);
+  if (bad) return new Response(JSON.stringify({ error: { message: "bad request" } }), { status: 400 });
+  const usage = mode === "nousage" ? {} : { total_input_tokens: 1000000 };
+  return new Response(JSON.stringify({ model: mode === "unpriced" ? undefined : "gemini-decision-1", answers: { q: { type: "noul", noul: 0.9, confidence: 0.9 } }, usage }));
+}) as typeof fetch;
+`,
+    );
+  });
+
+  const run = async (items: number, mode: string, extra: object = {}) => {
+    const reqPath = join(dir, `sched-${mode}-${items}.json`);
+    const outPath = join(dir, `sched-${mode}-${items}-out.json`);
+    writeFileSync(
+      reqPath,
+      JSON.stringify({
+        questions: { q: { type: "boolean", instructions: "x" } },
+        items: Array.from({ length: items }, (_, i) => ({ id: `i${i}`, input: "t" })),
+        concurrency: 1,
+        ...extra,
+      }),
+    );
+    const argv = decide.buildArgs(reqPath, { outputPath: outPath });
+    argv.splice(argv.indexOf("run") + 1, 0, "--preload", mock);
+    const r = await spawn(argv, { MOCK_MODE: mode });
+    return { ...r, outPath, results: () => JSON.parse(readFileSync(outPath, "utf8")) };
+  };
+
+  test("a 400 on the first item aborts: one call, the rest skipped, file still written, exit 1", async () => {
+    const r = await run(50, "all400");
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain("HTTP 400");
+    const res = r.results();
+    expect(res.stopped).toBe("fatal");
+    expect(res.results).toHaveLength(50);
+    expect(res.results[1].error).toStartWith("skipped:");
+    const parsed = decide.parseResult(r.stdout, r.stderr, r.code);
+    expect(parsed.status).toBe("failed");
+    expect(parsed.artifacts).toEqual([r.outPath]);
+  });
+
+  test("5 identical non-retryable errors in a row trip the breaker", async () => {
+    const r = await run(30, "after1");
+    expect(r.code).toBe(0);
+    const res = r.results();
+    expect(res.stopped).toBe("circuit");
+    expect(res.ok).toBe(1);
+    expect(res.results.filter((x: { error?: string }) => x.error?.startsWith("HTTP 400")).length).toBe(5);
+    expect(r.stdout).toContain("stopped=circuit");
+    expect(r.stdout).toContain("failed_ids=i1,i2,i3,i4,i5");
+    expect(r.stdout).toContain("first_error=HTTP 400");
+  });
+
+  test("maxCostUsd stops scheduling; the rest are skipped; usage and answers are reported", async () => {
+    // Each call is 1M tokens = $0.10; the cap of $0.25 allows 3 calls.
+    const r = await run(10, "ok", { maxCostUsd: 0.25 });
+    expect(r.code).toBe(0);
+    const res = r.results();
+    expect(res.stopped).toBe("budget");
+    expect(res.ok).toBe(3);
+    expect(res.results[3]).toEqual({ id: "i3", error: "skipped: maxCostUsd reached" });
+    expect(r.stdout).toContain("stopped=budget");
+    const usage = decide.parseUsage(r.stdout);
+    expect(usage?.calls).toBe(3);
+    expect(usage?.costUsd).toBeCloseTo(0.3, 6);
+    expect(usage?.inputTokens).toBe(3_000_000);
+    // Native answers gain the uniform `p`, and a jev boolean gains `probability`.
+    expect(res.results[0].answers.q.p).toBe(0.9);
+    expect(res.results[0].answers.q.probability).toBe(0.9);
+    expect(res.results[0].costUsd).toBeCloseTo(0.1, 6);
+    expect(res.questionTypes).toEqual({ q: "boolean" });
+    expect(res.requestedModel).toBe("gemini-decision-1");
+    expect(r.stdout).toContain('SDD_GEMINI_ANSWERS:{"i0":{"q":0.9}');
+    expect(existsSync(`${r.outPath}.partial.jsonl`)).toBe(false);
+  });
+
+  test("a response without total_input_tokens is unknown tokens and unknown cost, never 0", async () => {
+    const r = await run(1, "nousage");
+    expect(r.code).toBe(0);
+    const usage = decide.parseUsage(r.stdout);
+    expect(usage?.calls).toBe(1);
+    expect(usage?.inputTokens).toBeNull();
+    expect(usage?.costUsd).toBeNull();
+    expect(r.stdout).toContain("input_tokens=unknown cost_usd=unknown");
+    expect(r.results().costUsd).toBeNull();
+  });
+
+  test("SIGTERM flushes the usage so far, keeps the partial file, and exits 143", async () => {
+    const reqPath = join(dir, "sigterm.json");
+    const outPath = join(dir, "sigterm-out.json");
+    writeFileSync(reqPath, JSON.stringify({ questions: { q: { type: "noul", instructions: "x" } }, items: [0, 1, 2].map((i) => ({ id: `i${i}`, input: "t" })), concurrency: 1 }));
+    const slow = join(dir, "mock-slow.ts");
+    writeFileSync(
+      slow,
+      `let n = 0;
+globalThis.fetch = (async () => {
+  if (++n > 1) await new Promise(() => {});
+  return new Response(JSON.stringify({ model: "gemini-decision-1", answers: { q: { noul: 0.5 } }, usage: { total_input_tokens: 500 } }));
+}) as typeof fetch;
+`,
+    );
+    const argv = decide.buildArgs(reqPath, { outputPath: outPath });
+    argv.splice(argv.indexOf("run") + 1, 0, "--preload", slow);
+    const proc = Bun.spawn(argv, { env: { ...process.env, GEMINI_API_KEY: "k", SDD_LEDGER_PATH: join(dir, "none.jsonl"), XDG_CONFIG_HOME: join(dir, "no-config") }, stdout: "pipe", stderr: "pipe" });
+    await Bun.sleep(1500);
+    proc.kill("SIGTERM");
+    const code = await proc.exited;
+    const stdout = await new Response(proc.stdout).text();
+    expect(code).toBe(143);
+    const usage = decide.parseUsage(stdout);
+    expect(usage?.calls).toBe(1);
+    expect(usage?.inputTokens).toBe(500);
+    expect(readFileSync(`${outPath}.partial.jsonl`, "utf8").trim().split("\n")).toHaveLength(1);
+  });
+
+  test("an unpriced model reports cost unknown", async () => {
+    const reqPath = join(dir, "unpriced.json");
+    writeFileSync(reqPath, JSON.stringify({ questions: { q: { type: "noul", instructions: "x" } }, items: [{ id: "a", input: "t" }], model: "some-other-model" }));
+    const argv = decide.buildArgs(reqPath, { outputPath: join(dir, "unpriced-out.json") });
+    argv.splice(argv.indexOf("run") + 1, 0, "--preload", mock);
+    const r = await spawn(argv, { MOCK_MODE: "unpriced" });
+    expect(decide.parseUsage(r.stdout)?.costUsd).toBeNull();
   });
 });

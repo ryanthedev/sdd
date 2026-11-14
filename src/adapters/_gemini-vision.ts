@@ -30,14 +30,15 @@
  */
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { hermeticBunArgv, lastMatch, stderrReason, validatePath } from "./_gemini-shared.ts";
+import { MODEL_RE, hermeticBunArgv, lastMatch, stderrReason, validatePath } from "./_gemini-shared.ts";
+import { parseUsageMarker } from "./_usage-marker.ts";
+import type { UsageRecord } from "./_usage-marker.ts";
 import type { Capability } from "./types.ts";
 import type { AdapterResult, DispatchOpts } from "../types.ts";
 
 const WHO = "gemini vision";
 const SCRIPT_RELATIVE = join("assets", "gemini-vision.ts");
 export const DEFAULT_VISION_MODEL = "gemini-3.1-flash-lite";
-const MODEL_RE = /^[a-z0-9][a-z0-9.-]{0,79}$/;
 const SAVED_MARKER_RE = /^SDD_GEMINI_VISION_SAVED:(.+?)\r?$/gm;
 const SUMMARY_MARKER_RE = /^SDD_GEMINI_SUMMARY:(.+?)\r?$/gm;
 
@@ -62,6 +63,13 @@ export function buildArgs(prompt: string, opts: DispatchOpts): string[] {
  *  system instruction, not in the prompt. */
 export function injectContract(prompt: string): string {
   return prompt;
+}
+
+/** Cumulative usage from the script's `SDD_GEMINI_USAGE` marker (last wins). The
+ *  script prints it as soon as the reply arrives, so a MAX_TOKENS or bad-JSON
+ *  (failed) job still reports what it was billed. */
+export function parseUsage(stdout: string): UsageRecord | null {
+  return parseUsageMarker(stdout, "SDD_GEMINI_USAGE");
 }
 
 export function parseResult(stdout: string, stderr: string, exitCode: number): AdapterResult {
@@ -99,5 +107,5 @@ export function parseResult(stdout: string, stderr: string, exitCode: number): A
   };
 }
 
-const _check: Capability = { buildArgs, injectContract, parseResult };
+const _check: Capability & { parseUsage: (stdout: string) => UsageRecord | null } = { buildArgs, injectContract, parseResult, parseUsage };
 void _check;

@@ -11,6 +11,9 @@ import { fileURLToPath } from "node:url";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { DispatchOpts } from "../types.ts";
 
+/** A Gemini model id as an argv element: lowercase alphanumerics, dots, dashes. */
+export const MODEL_RE = /^[a-z0-9][a-z0-9.-]{0,79}$/;
+
 /** The empty bunfig that stops the job cwd's bunfig.toml `preload` from
  *  running code inside the job (same reason as jev; see jev.ts HERMETIC RUN). */
 const BUNFIG_RELATIVE = join("assets", "gemini-bunfig.toml");
