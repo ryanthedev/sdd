@@ -1,6 +1,6 @@
 # Harness roster — capabilities & auth
 
-A *harness* here is an external CLI (`codex`, `agy`, and friends) that `sdd` spawns as a child process in the current working tree to do one bounded task — review, second opinion, implementation, image generation, or a step of the video pipeline — and report back a structured `{status, summary, artifacts, raw}` result. Each harness is wrapped by an adapter in `src/adapters/`; `list_adapters` enumerates all eleven, and reports a `kinds` list for any harness that does more than one thing.
+A *harness* here is an external CLI (`codex`, `agy`, and friends) that `sdd` spawns as a child process in the current working tree to do one bounded task — review, second opinion, implementation, image generation, or a step of the video pipeline — and report back a structured `{status, summary, artifacts, raw}` result. Each harness is wrapped by an adapter in `src/adapters/`; `list_adapters` enumerates all twelve, and reports a `kinds` list for any harness that does more than one thing.
 
 The load-bearing distinction: **a harness that shows up in `list_adapters` with `binaryPresent: true` is INSTALLED, not necessarily USABLE.** `binaryPresent` is a `Bun.which` PATH check and nothing more — it cannot see whether the CLI is logged in, has an active subscription, or has an API key in the environment. The honest way to tell whether a harness will actually run is `check_adapter(name)`, which runs a real minimal probe through the dispatch path and reports what happened. See [Auth is not presence](#auth-is-not-presence) below.
 
@@ -27,6 +27,7 @@ Every agent harness here runs **unconditionally permissive** — the adapter alw
 | `codex` + `kind:"image"` | codex's `imagegen` system skill → built-in `image_gen` tool, `codex exec` | `codex` | Text prompt → exactly one PNG saved to an explicit absolute path | codex's own login flow (same as `codex`) |
 | `grok` + `kind:"image"` | grok's `imagine` skill → built-in `image_gen`/`image_edit`, `grok -p` | `grok` | Text prompt → exactly one PNG saved to an explicit absolute path | same env key as `grok` |
 | `agy` + `kind:"vision"` | agy's vision model (default `Gemini 4 Argon (High)`), `agy --print --sandbox` | `agy` | Transcript + keyframes (`addDir`, read-only) → one fused-understanding JSON at `outputPath` | agy's own login flow (same as `agy`) |
+| `gemini` + `kind:"vision"` | Gemini API `generateContent` (default `gemini-3.1-flash-lite`), through the bundled `assets/gemini-vision.ts` | `bun` (name ≠ binary) | The API-key fallback for agy's vision: same `addDir` + `outputPath`, same output JSON. One call, no tools, frames at low media resolution | `GEMINI_API_KEY`, from the server's env or else `~/.config/sdd/.env` |
 
 ### Video pipeline
 
@@ -44,11 +45,21 @@ Orchestrated by the [`video-ingest`](../../video-ingest/SKILL.md) skill — read
 - **A no-match is `done`, not `failed`.** "Not in the catalog" is a real answer to the question. Read `matched` in the JSON; never read an empty title as a broken job.
 - **Hand it the media file, not a pre-made wav, if you like** — it transcodes with `ffmpeg` before fingerprinting. That transcode is load-bearing, not a convenience: fed an `.mp4` directly, the underlying library sniffs it as raw mpeg audio and produces a fingerprint that fails to match while looking exactly like an honest negative.
 
-### Decision model
+### Decision models
 
 | Adapter | Provider / CLI | PATH binary | What it's for | Auth requirement |
 |---|---|---|---|---|
+| `gemini` (default kind) | Gemini Decisions API (`POST /v1beta/decisions`, model `gemini-decision-1`), through the bundled `assets/gemini-decide.ts` | `bun` (name ≠ binary) | A request JSON (`questions` + `items[{id, input}]`) → one results JSON at `outputPath`. Inputs may be text OR local images, video, audio, PDFs. Ranks, routes, classifies; never writes text, never touches the tree | `GEMINI_API_KEY`, from the server's env or else a `GEMINI_API_KEY=` line in `~/.config/sdd/.env` (read on every job, so no restart). Billed to the AI Studio project the key belongs to |
 | `jev` | TypeSafe Jev via the Vercel AI Gateway (`/v1/evaluate`), through the bundled `assets/jev-evaluate.ts` | `bun` (name ≠ binary) | A request JSON (`questions` + `items[{id, state}]`) → one results JSON at `outputPath` with a probability per answer per item. Ranks and routes; never writes text, never touches the tree | `AI_GATEWAY_API_KEY`, from the server's env or else an `AI_GATEWAY_API_KEY=` line in `~/.config/sdd/.env` (read on every job, so no restart). The key in use has a $25/month spend cap |
+
+`gemini` is the default decision model: it does everything `jev` does, and also reads media. Verified live 2026-11-13. Things to know before dispatching it:
+
+- **The prompt is a request file path,** not a question. `{"questions": {"<name>": {"type": "noul"|"choice"|"score", "instructions", "criteria"}}, "items": [{"id", "input"}]}`. An `input` is a string, or blocks: `{"type":"text","text"}` or `{"type":"image"|"video"|"audio"|"document","path"|"uri"|"data"}`. `path` is a local file, resolved against the request file's directory; up to 20 MB it goes inline, above that it is uploaded once through the Files API. Up to 1,000 questions per item, 262,144 tokens of input.
+- **A jev request runs unchanged** (verified with recipe 3's request). `state` is read as the text input, `type:"boolean"` is sent as `noul`, and boolean `criteria: {true, false}` become `{true_description, false_description}`. But code that READS results must change: answers come back in Gemini's shape, and a jev boolean's `{probability}` is a Gemini `{noul}`: `noul` → `{noul, confidence}`, `choice` → `{choice, probabilities, confidence}`, `score` → `{score, probabilities, legend, confidence}`.
+- **YouTube URLs are refused by the API.** Download with `yt-dlp` first and pass the file `path`.
+- **Cost and speed:** $0.10 per million input tokens, $0 output, about 1 s per item. A 19-second 720p clip with four questions was 2,192 tokens ($0.0002). Default media resolution is `low`; set `"resolution"` in the request (or per block) for fine detail.
+- **Every input leaves the machine,** including any local file it names. Never put secrets in one.
+- **Calibration is unmeasured.** Google reports a `confidence` per answer, but until it has been measured like Jev was, rank by the probabilities and don't threshold them.
 
 `jev` is not an agent. It returns probabilities for typed questions (`boolean`, `choice` up to 255 options, `score` 1–10) at about 0.3 s and $0.042 per million input tokens, so it is for **ranking and routing at volume**. The [recipes](recipes.md) say where it has measured well and where it hasn't. Three things to know before dispatching it:
 
@@ -73,7 +84,7 @@ They differ along two axes:
 
 `binaryPresent` answers exactly one question: is the CLI binary on `PATH`? It says nothing about whether a dispatch will succeed, because every harness has a second gate that PATH can't see:
 
-- **Env-key adapters** (`grok`, `kimi`, `qwen`, `mistral`, `jev`) fail at spawn time if their key (`XAI_API_KEY`/`GROK_API_KEY`/`GROK_DEPLOYMENT_KEY`, `MOONSHOT_API_KEY`, `DASHSCOPE_API_KEY`, `MISTRAL_API_KEY`, `AI_GATEWAY_API_KEY`) is unset in the environment the server inherited. `jev` also reads `~/.config/sdd/.env` when the variable is unset, and reports the missing key by name in its `failed` summary.
+- **Env-key adapters** (`grok`, `kimi`, `qwen`, `mistral`, `jev`, `gemini`) fail at spawn time if their key (`XAI_API_KEY`/`GROK_API_KEY`/`GROK_DEPLOYMENT_KEY`, `MOONSHOT_API_KEY`, `DASHSCOPE_API_KEY`, `MISTRAL_API_KEY`, `AI_GATEWAY_API_KEY`, `GEMINI_API_KEY`) is unset in the environment the server inherited. `jev` and `gemini` also read `~/.config/sdd/.env` when the variable is unset, and report the missing key by name in their `failed` summary.
 - **Login-flow harnesses** (`codex`, `agy` — including their `image`/`vision` kinds, which share the same binary and account) fail if the underlying CLI isn't logged in or the subscription/quota is inactive.
 - **The video-pipeline adapters** (`yt-dlp`, `whisper`, `ffmpeg-frames`, `shazam`) have no auth gate at all — but they are also not managed by `bun install`, so their gate is the preflight check (`bun run src/lib/preflight.ts`), not `check_adapter`.
 
@@ -84,7 +95,7 @@ None of this is visible to `list_adapters`. The honest verification is **`check_
 | `ok` | Binary present **and** the live probe completed — the harness ran and is authenticated. The reliable signal. |
 | `failed` | Binary present but the probe failed; `detail` carries the CLI's own error text (typically an auth / subscription / quota message, tailed from the job log where stderr lands). |
 | `timeout` | Probe still running at the timeout — inconclusive (slow model, network, or a hang); the probe job is cancelled. Retry with a larger `timeoutMs`. |
-| `present_unverified` | Binary present but the adapter opts out of automatic probing (`probeable: false`): `yt-dlp`, `whisper`, `ffmpeg-frames`, `shazam`, `jev` — a probe would bill a real generation, hit the network, or run a slow transcode, and a generic health-check prompt can't supply the `outputPath`/`outputDir`/`addDir` their `buildArgs` demand. Dispatch a real job to confirm. Every agent harness is probeable. |
+| `present_unverified` | Binary present but the adapter opts out of automatic probing (`probeable: false`): `yt-dlp`, `whisper`, `ffmpeg-frames`, `shazam`, `jev`, `gemini` — a probe would bill a real generation, hit the network, or run a slow transcode, and a generic health-check prompt can't supply the `outputPath`/`outputDir`/`addDir` their `buildArgs` demand. Dispatch a real job to confirm. Every agent harness is probeable. |
 | `missing` | Binary not on `PATH` — not installed. |
 
 `check_adapter(adapter, timeoutMs?, cwd?)` defaults to a 60s probe timeout (clamped to the JobStore wait cap). Before you rely on a harness you have **not** already exercised this session, check it.
@@ -104,4 +115,5 @@ A job's terminal state is decided by exit code **and** the adapter's `parseResul
 | `whisper` | An `output_dir` scraped from mlx-whisper's `Args: {...}` line, with **both** `transcript.srt` and `transcript.txt` present on disk. Missing either → `failed`. |
 | `ffmpeg-frames` | An output dir recovered from ffmpeg's own `Output #0, …, to '<path>':` line, with the frames + `manifest.json` present on disk. |
 | `shazam` | A `SDD_SHAZAM_RESULT:<path>` line from the bundled script, the JSON present on disk, and either a title/artist pair or an explicit `SDD_SHAZAM_NOMATCH` — a result marker with neither is a broken run, not a negative. |
+| `gemini` | Default kind: `SDD_GEMINI_RESULT:<path>` (plus an `SDD_GEMINI_SUMMARY:` line with token count and cost) and the results JSON on disk; per-item errors (a safety block, an unreadable file) stay in the JSON, and only an all-items failure exits 1. `vision`: `SDD_GEMINI_VISION_SAVED:<path>` and the fused JSON on disk; the script validates the response parses and has `summary` + `moments` before writing it. |
 | `jev` | `SDD_JEV_RESULT:<path>` (plus an `SDD_JEV_SUMMARY:` count line) from the bundled script and the results JSON present on disk. Per-item errors are recorded in the JSON and don't fail the job; if no item succeeded the script exits 1 and the job is `failed` with its stderr reason. |

@@ -2,15 +2,16 @@
 name: subagent-driven-development
 description: >-
   Orchestration doctrine for delegating scoped work units to CLI agent
-  harnesses (codex, agy, grok, kimi, qwen, mistral) and the Jev decision
-  model through the sdd MCP server's eight tools (dispatch, status, result,
+  harnesses (codex, agy, grok, kimi, qwen, mistral) and the Gemini and Jev decision
+  models through the sdd MCP server's eight tools (dispatch, status, result,
   wait, list_adapters, cancel, check_adapter, usage). Covers which adapter fits
   which job, the caller-owned concurrency rule, poll-vs-block waits, harness
   gotchas, auth health checks, and four recipes: quota-first routing, parallel
   writers in git worktrees, a five-vendor ensemble review ranked by agreement,
   and repo-scale targeting with Jev. Use when delegating a task to a CLI
   harness, getting a second opinion or ensemble review, generating an image,
-  fanning out or racing implementations, ranking a batch with Jev, or checking
+  fanning out or racing implementations, ranking or classifying a batch with
+  Gemini Decisions or Jev (text or media), or checking
   a harness's quota or login.
   Not for: in-process Agent-tool subagents (use oberskills:agent), running a
   whole task as a multi-agent operation (use commander), or writing new MCP
@@ -19,7 +20,7 @@ when_to_use: >-
   Trigger phrases: "get a second opinion", "review this with codex/agy", "have
   all the models review this", "ensemble review", "generate an image",
   "delegate this to a subagent", "fan this out", "have codex and agy both try
-  it", "run these in parallel", "rank these with jev", "audit this whole repo",
+  it", "run these in parallel", "rank these with jev", "classify these with gemini", "ask gemini about this video", "audit this whole repo",
   "how much codex quota is left", "is the harness logged in". Use before
   calling any sdd MCP tool.
 ---
@@ -111,9 +112,10 @@ What follows is orchestration discipline you must apply yourself — advice, not
 | Ensemble review (multi-model, parallel) | fan out `codex` + `grok`/`kimi`/`qwen`/`mistral`, then rank with [recipe 3](references/recipes.md#3-ensemble-review-ranked) |
 | Implement a change in the working tree | `agy` or `codex` |
 | Generate an image | `agy`, `codex`, or `grok` with `kind: "image"` + `outputPath` |
-| Fuse a transcript + keyframes into one understanding JSON | `agy` with `kind: "vision"` |
+| Fuse a transcript + keyframes into one understanding JSON | `agy` with `kind: "vision"`; `gemini` with `kind: "vision"` (same opts) when agy is out of quota or down |
 | Ingest a video from a URL | the `video-ingest` skill (`yt-dlp` → `whisper` ∥ `ffmpeg-frames` → agy `kind:"vision"`) |
-| Rank or route a batch at volume (which files to audit, which findings tie-break first) | `jev` with a request file + `outputPath`. Ranks only; it never writes or edits |
+| Rank, route, or classify a batch at volume — text **or media** (which files to audit, which videos match a brief, which images show damage) | `gemini` (default kind) with a request file + `outputPath`: the Decisions API, $0.10 per million input tokens, reads images/video/audio/PDF. Never writes or edits. A jev request file runs on it unchanged |
+| The same, where Jev's measured track record matters (the recipes' AUC numbers were measured on Jev) | `jev` with a request file + `outputPath` |
 
 The review roster (`codex`, `grok`, `kimi`, `qwen`, `mistral`) are interchangeable second-opinion harnesses sharing one output contract (`VERDICT:` + `## Findings`) — fan them out in parallel for an ensemble review. They are *scoped* to reviewing by their prompt, not sandboxed to it: each still runs permissively and could touch the tree, so don't overlap them with an implementation job in the same `cwd`. Full per-harness capability + auth detail: [`references/harnesses.md`](references/harnesses.md).
 

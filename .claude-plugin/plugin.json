@@ -1,16 +1,30 @@
 {
   "name": "sdd",
-  "version": "0.6.0",
-  "description": "Subagent-Driven Development — delegate scoped work units to CLI agent harnesses (codex, agy, grok, kimi, qwen, mistral) as fresh-context subagents, fan out, collect structured results, and check account quota before you spend it; plus a video pipeline (yt-dlp, whisper, ffmpeg-frames, shazam) that turns a video URL into one transcript + visual-understanding JSON; plus the Jev decision model for ranking and routing at volume; plus a commander skill that runs a whole task as a multi-agent operation with interactive agents in herdr-core",
+  "version": "0.7.0",
+  "description": "Subagent-Driven Development — delegate scoped work units to CLI agent harnesses (codex, agy, grok, kimi, qwen, mistral) as fresh-context subagents, fan out, collect structured results, and check account quota before you spend it; plus a video pipeline (yt-dlp, whisper, ffmpeg-frames, shazam) that turns a video URL into one transcript + visual-understanding JSON; plus the Gemini Decisions API (multimodal: text, images, video, audio) and the Jev decision model for ranking, routing, and classifying at volume, with a Gemini API fallback for video fusion when agy is out of quota; plus a commander skill that runs a whole task as a multi-agent operation with interactive agents in herdr-core",
   "author": {
     "name": "r"
   },
   "license": "MIT",
-  "keywords": ["mcp", "subagent", "orchestration", "codex", "agy", "delegation", "quota", "jev"],
+  "keywords": [
+    "mcp",
+    "subagent",
+    "orchestration",
+    "codex",
+    "agy",
+    "delegation",
+    "quota",
+    "jev",
+    "gemini",
+    "decisions"
+  ],
   "mcpServers": {
     "sdd": {
       "command": "bun",
-      "args": ["run", "${CLAUDE_PLUGIN_ROOT}/src/server.ts"]
+      "args": [
+        "run",
+        "${CLAUDE_PLUGIN_ROOT}/src/server.ts"
+      ]
     }
   }
 }

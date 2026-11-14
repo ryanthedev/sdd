@@ -5,7 +5,8 @@ description: >-
   transcript + visual-understanding JSON artifact by sequencing the sdd
   video adapters: yt-dlp (fetch), whisper (transcribe), ffmpeg-frames
   (keyframes), and agy's sandboxed vision (fuse speech + on-screen content),
-  plus an optional shazam step that names the song by acoustic fingerprint.
+  falling back to the gemini API's vision when agy is out of quota or down,
+  plus optional gemini decision questions about the video, plus an optional shazam step that names the song by acoustic fingerprint.
   Covers the preflight gate, the fetch → transcribe ∥ frames → fuse fan-out,
   per-platform auth (Instagram burner cookies, nightly yt-dlp), frame budgets,
   timestamp interleaving, fetch-vs-fusion privilege split, and visual blind
@@ -73,7 +74,7 @@ dispatch(agy, kind:"vision", <short instruction>, {addDir: <artifactDir>, output
 
 - **Step 2 (fetch):** `yt-dlp` fetches a 720p-capped video *and* extracts a whisper-ready wav, keeping both. `result`'s `artifacts` array is `[audioWav, video, ...subtitles]` — audio first, video second, subtitles (best-effort) last. Read the first two paths for the fan-out.
 - **Step 3 (fan out — the parallel point):** `whisper` reads only the audio; `ffmpeg-frames` reads only the video. They are fully independent reads with no shared write target — **dispatch both in the same turn**, then `wait` on the pair. This is the pipeline's one concurrency win; do not serialize them. `shazam` (§10) belongs in this same fan-out on the turns where it runs at all — it is another independent read with its own output path.
-- **Step 4 (fuse):** agy's `vision` kind reads the transcript + frames + manifest from `<artifactDir>` (granted via `--add-dir`) and writes `fused.json`. Its prompt is a short instruction — the adapter's own `injectContract` supplies the full fusion contract and output schema; you just point it at the material. `wait`/`result`, then read `fused.json`.
+- **Step 4 (fuse):** if agy can't run it, use the gemini fallback in §11 with the same opts. agy's `vision` kind reads the transcript + frames + manifest from `<artifactDir>` (granted via `--add-dir`) and writes `fused.json`. Its prompt is a short instruction — the adapter's own `injectContract` supplies the full fusion contract and output schema; you just point it at the material. `wait`/`result`, then read `fused.json`.
 
 ## 3. Whisper is mandatory; captions are opportunistic
 
@@ -116,7 +117,7 @@ The pipeline is deliberately split across a privilege boundary — this is the c
 
 ## 8. Strong vision model — not Flash-Low
 
-The `vision` kind defaults to **`"Gemini 4 Argon (High)"`**. Omit `model` and let the adapter default apply: it is the one place the name lives, so the next agy model-roster change (agy auto-updates) needs a fix in one file, not in every dispatch. Override `model` only with a name `agy models` currently lists. **Do NOT use a weak/fast tier like `Gemini 3.8 Flash (Low)`** — it loops on the frame set and times out. This is a capability floor, not a cost preference: the fusion genuinely needs the strong tier to read `--add-dir` frames and produce the aligned output.
+The `vision` kind defaults to **`"Gemini 4 Argon (High)"`**. Omit `model` and let the adapter default apply: it is the one place the name lives, so the next agy model-roster change (agy auto-updates) needs a fix in one file, not in every dispatch. Override `model` only with a name `agy models` currently lists. **Do NOT use a weak/fast tier like `Gemini 3.8 Flash (Low)`** — it loops on the frame set and times out. (This is about agy's agent loop. The gemini fallback in §11 runs Flash-Lite as a single schema-constrained call, which can't loop.) This is a capability floor, not a cost preference: the fusion genuinely needs the strong tier to read `--add-dir` frames and produce the aligned output.
 
 ## 9. Known visual blind spots
 
@@ -146,7 +147,39 @@ dispatch(shazam, <audio or video path>, {outputPath: <artifactDir>/song.json})
 - **NO MATCH IS `done`, NOT `failed`.** "This audio is not in the catalog" is a real answer; only a breakdown (unreadable audio, API failure) fails. Read `matched` — never infer a failure from an empty title.
 - **Tooling:** it runs `uv`, which provisions the recognizer's interpreter and dependencies from the bundled script's inline metadata on first use. `uv` is reported in preflight's `optional[]` and never gates the run (§0). Absent `uv`, this step is unavailable and the rest of the pipeline is unaffected.
 
-## 11. Manual E2E (DEFERRED-MANUAL)
+## 11. When agy is out of quota: the gemini fallback
+
+`gemini` with `kind:"vision"` takes **the same opts** as agy's (`addDir` = the artifact dir, `outputPath` = `<artifactDir>/fused.json`) and writes **the same JSON shape**, so the swap is the adapter name and nothing else:
+
+```
+dispatch(gemini, kind:"vision", "Fuse this video.", {addDir: <artifactDir>, outputPath: <artifactDir>/fused.json})
+  → wait → result   ⇒ artifacts = [fused.json]
+```
+
+**When to switch.** agy reports no quota to `usage`, so you learn it from a failed fusion: an agy `vision` job whose summary mentions quota, rate limit, resource exhausted, or a login/auth error (the exact wording agy uses when out of quota has not been observed yet; treat any agy-side failure that isn't about your inputs as the signal). Re-dispatch the same step on `gemini`. Also use it when `list_adapters` shows agy missing, or when the user asks for the API path. Don't fall back on a failure that isn't agy's fault: a missing `manifest.json` or transcript fails the same way on both.
+
+**What it costs and how it differs.** It is one `generateContent` call (no agent, no tools) on `gemini-3.1-flash-lite`, the cheapest model the key can call, with the transcript as text and the keyframes at low media resolution. Measured 2026-11-13: a 130-second, 35-frame reel took about 11,000 input and 2,700 output tokens, **$0.007**, 6–10 s; a 5.5-minute, 60-frame talk took 27,000 in and 6,000 out, **$0.016**, 17 s. On the reel its digest caught 8 of the 10 concrete on-screen details agy's caught (one run; agy is the richer read, and it's paid by the subscription). Pass `model:"gemini-3.5-flash-lite"` for 9 of 10 at $0.010. Media resolution higher than low did **not** help. The detail came from the instruction to write one moment per frame and quote all on-screen text, which the bundled script already sends.
+
+**Security.** The call has no tools, so an injection in a frame or the transcript has no shell, network, or file to reach; the worst case is a wrong digest, still constrained to the fixed schema. That holds the §7 property: no agent with network access ever reads untrusted video content. But the frames and transcript do leave the machine for Google; with agy they go to agy's backend instead.
+
+**Limits.** Frames are sent inline, so their base64-encoded total must stay under 18 MB (about 150 typical 720p keyframes); over that, or if the reply hits the output-token limit, the job fails with a message to lower `frameCount`.
+
+**Needs** `GEMINI_API_KEY` in the server's env or `~/.config/sdd/.env`.
+
+## 12. Asking closed questions about the video (gemini decisions)
+
+When the job is to classify, filter, or route videos rather than describe them ("is this a cooking video?", "rate the production quality 0–2", "which of these 40 reels show a product demo?"), skip fusion and ask the Decisions API directly. It reads the downloaded video file itself, picture and audio, so it needs only the `yt-dlp` step:
+
+```json
+{"questions": {"topic": {"type": "choice", "instructions": "What is this video mainly about?",
+                          "criteria": {"cooking": "", "tech": "", "comedy": "", "other": ""}},
+               "on_camera": {"type": "noul", "instructions": "Does the speaker appear on camera?"}},
+ "items": [{"id": "reel1", "input": [{"type": "video", "path": "<artifactDir>/<id>.mp4"}]}]}
+```
+
+`dispatch(gemini, <request path>, {outputPath: <results.json>})`. About 100 tokens per second of video at the default `low` resolution ($0.0002 for a 19-second clip) and about one second per item. Files over 20 MB are uploaded through the Files API automatically. YouTube URLs are refused by the API; always pass the downloaded file.
+
+## 13. Manual E2E (DEFERRED-MANUAL)
 
 `yt-dlp` and `mlx-whisper` are **not installed in this build environment**, so the real-URL end-to-end run cannot be executed here and must be verified manually on a machine that has the tooling:
 
