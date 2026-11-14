@@ -24,6 +24,8 @@
  * `POST https://generativelanguage.googleapis.com/v1beta/decisions`.
  * List price $0.10 per 1M input tokens, $0 output. A score question's
  * `criteria` is a string rubric (verified 2026-11-14: an object is rejected).
+ * A choice question's `criteria` is an object `{label: description}`; a plain
+ * list of labels is converted (verified 2026-11-14: the API rejects a list).
  *
  * KEY: `GEMINI_API_KEY` from the environment when set, otherwise from a
  * `GEMINI_API_KEY=` line in the user-level `~/.config/sdd/.env`
@@ -284,9 +286,20 @@ function parseQuestions(raw: unknown): Pick<Request, "questions" | "questionType
     }
     questionTypes[qname] = q.type;
     if (q.type === "boolean") booleanQuestions.add(qname);
-    questions[qname] = q.type === "boolean" || q.type === "noul" ? toNoul(q) : q;
+    questions[qname] = q.type === "boolean" || q.type === "noul" ? toNoul(q) : q.type === "choice" ? toChoice(q) : q;
   }
   return { questions, questionTypes, booleanQuestions };
+}
+
+/** A `choice` question's criteria must be an object `{label: description}`.
+ *  A plain list of labels (the natural first guess, and jev's shape) is
+ *  converted to `{label: ""}`; the API rejects the list form. */
+function toChoice(q: Record<string, unknown>): Record<string, unknown> {
+  const c = q.criteria;
+  if (Array.isArray(c) && c.every((x) => typeof x === "string")) {
+    return { ...q, criteria: Object.fromEntries((c as string[]).map((label) => [label, ""])) };
+  }
+  return q;
 }
 
 /** A jev `boolean` (criteria `{true, false}`) becomes a Gemini `noul`

@@ -188,6 +188,7 @@ function renderReport(report: Report): string {
 
 /** Dollars for display. A known tiny cost keeps its precision; it is never rounded to look free. */
 export function usd(n: number): string {
+  if (n > 0 && n < 0.0001) return `$${n.toFixed(6)}`; // never round a real cost to a free-looking $0.0000
   if (n > 0 && n < 0.01) return `$${n.toFixed(4)}`;
   return `$${n.toFixed(2)}`;
 }
@@ -204,7 +205,7 @@ function renderSpend(s: SpendReport): string {
   ];
   let out = `${s.adapter} spend: ${parts.join(" · ")}`;
   if (s.last24h.unknownCostJobs > 0 || s.month.unknownCostJobs > 0) {
-    out += " (dollar sums exclude unknown-cost jobs: a lower bound)";
+    out += " (each unknown-cost job is charged $0.25 against the budget)";
   }
   return out;
 }

@@ -18,6 +18,7 @@ import {
   loadBudget,
   readLedger,
   summarizeSpend,
+  UNKNOWN_COST_CHARGE_USD,
 } from "../src/lib/ledger.ts";
 import { createRuntime } from "../src/tools/runtime.ts";
 import { createUsageTool } from "../src/tools/usage.ts";
@@ -142,7 +143,7 @@ test("summarizeSpend: calendar month uses LOCAL month start", () => {
   expect(s.last24h.jobs).toBe(0); // 14 days old
 });
 
-test("summarizeSpend: unknown cost is counted as unknown, never as $0; other adapters ignored; tokens/calls summed", () => {
+test("summarizeSpend: unknown cost is charged $0.25 (fail closed), never $0; other adapters ignored; tokens/calls summed", () => {
   const s = summarizeSpend(
     [
       entry({ ts: NOW - H, usage: usage({ costUsd: 0.25, calls: 2, inputTokens: 10, outputTokens: 1 }) }),
@@ -152,7 +153,7 @@ test("summarizeSpend: unknown cost is counted as unknown, never as $0; other ada
     ],
     { now: NOW, adapter: "gemini", budget: { gemini: { dailyUsd: 5 } } },
   );
-  expect(s.last24h.costUsd).toBe(0.25);
+  expect(s.last24h.costUsd).toBe(0.25 + 2 * UNKNOWN_COST_CHARGE_USD); // two unknown-cost jobs, charged
   expect(s.last24h.jobs).toBe(3);
   expect(s.last24h.unknownCostJobs).toBe(2);
   expect(s.last24h.calls).toBe(3);
@@ -365,7 +366,7 @@ test("usage({adapter:'gemini'}) returns the spend report with the documented ren
   const r = await tool.handler({ adapter: "gemini" });
   expect(r.isError).toBeUndefined();
   const text = r.content[0]!.text;
-  expect(text).toContain("gemini spend: $0.42 in 24h of $5.00 daily");
+  expect(text).toContain("gemini spend: $0.67 in 24h of $5.00 daily"); // $0.42 known + $0.25 charged for the unknown job
   expect(text).toContain("of $50.00");
   expect(text).toContain("2 jobs (1 failed)");
   expect(text).toContain("1 unknown-cost");
@@ -373,7 +374,7 @@ test("usage({adapter:'gemini'}) returns the spend report with the documented ren
   const reports = r.structuredContent!.reports as { adapter: string; spend: Record<string, unknown> }[];
   const spend = reports[0]!.spend as { costUsd: number; unknownCostJobs: number; jobs: number; budget: { dailyUsd: number } };
   expect(reports[0]!.adapter).toBe("gemini");
-  expect(spend.costUsd).toBe(0.42);
+  expect(spend.costUsd).toBeCloseTo(0.42 + UNKNOWN_COST_CHARGE_USD, 10);
   expect(spend.unknownCostJobs).toBe(1);
   expect(spend.jobs).toBe(2);
   expect(spend.budget.dailyUsd).toBe(5);
@@ -389,7 +390,8 @@ test("usage spend never renders an unknown cost as $0, and an empty ledger is a 
   const { tool } = toolRuntime(dir, ledger);
   const text = (await tool.handler({ adapter: "gemini" })).content[0]!.text;
   expect(text).toContain("1 unknown-cost");
-  expect(text).toContain("lower bound");
+  expect(text).toContain("charged $0.25");
+  expect(text).toContain("$0.25 in 24h");
 
   const empty = toolRuntime(dir, join(fresh(), "missing.jsonl"));
   expect((await empty.tool.handler({ adapter: "gemini" })).content[0]!.text).toContain("0 jobs");

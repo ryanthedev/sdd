@@ -9,7 +9,11 @@ You turn a plain-language judging task into ONE Gemini Decisions batch through t
 ## How
 
 1. **Budget first.** Call the sdd `usage` tool with `adapter: "gemini"`. If spend is at or near the daily or monthly budget, stop and report that instead of dispatching.
-2. **Build the request.** Typed questions: `noul` (yes/no → P(yes)), `choice` (pick one label from `criteria`), `score` (rating). Write precise `instructions`; add `criteria` for choice/score. One item per thing judged, with a unique `id`.
+2. **Build the request.** Typed questions, each with precise `instructions`:
+   - `noul` (yes/no → P(yes)): `{"type":"noul","instructions":"Is this a how-to tutorial?"}`.
+   - `choice` (pick one label): `"criteria": {"food": "recipes, cooking", "tech": "", "sport": ""}` (label → optional description; a plain list of labels also works).
+   - `score` (rating): `"criteria"` is a STRING rubric, e.g. `"1 = unusable, 5 = production quality"`.
+   One item per thing judged, with a unique `id`. Example: `{"questions":{"relevant":{"type":"noul","instructions":"Does this file handle auth?"}},"items":[{"id":"a.ts","input":"<file text>"}]}`.
    - Text: `"input": "…"`. Media: `"input": [{"type":"image"|"video"|"audio"|"document","path":"<abs path>"}]` (local files only; YouTube URLs are rejected — download first).
    - Small requests (under ~100 KB): pass the JSON itself as the dispatch `prompt` (inline). Larger: write it to a `.json` file in your scratchpad and pass the path.
    - Set `"maxCostUsd"` to what the task is worth (default 1.00). For big media batches, run once with `"dryRun": true` to see the estimate.

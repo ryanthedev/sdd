@@ -192,15 +192,20 @@ export function loadBudget(path: string = budgetPath()): Budget {
 
 // ── Spend summary (pure) ────────────────────────────────────────────────────
 
+/** A billed job whose cost is unknown is charged this much (fail closed). Must
+ *  equal the scripts' value (assets/gemini-common.ts) and the usage governor's,
+ *  so every view of spend agrees with what the budget enforces. */
+export const UNKNOWN_COST_CHARGE_USD = 0.25;
+
 export interface SpendWindow {
-  /** Sum of KNOWN costs only; see unknownCostJobs. A lower bound when that is > 0. */
+  /** Known costs plus UNKNOWN_COST_CHARGE_USD per unknown-cost job: the figure the budget enforces. */
   costUsd: number;
   jobs: number;
   failedJobs: number;
   calls: number;
   inputTokens: number;
   outputTokens: number;
-  /** Jobs whose cost is unknown (no usage, or a null cost). Never summed as $0. */
+  /** Billed jobs whose cost is unknown (no usage, or a null cost with calls != 0); each is charged UNKNOWN_COST_CHARGE_USD. */
   unknownCostJobs: number;
 }
 
@@ -225,7 +230,11 @@ function addTo(w: SpendWindow, e: LedgerEntry): void {
     if (u.outputTokens !== null) w.outputTokens += u.outputTokens;
   }
   if (u && u.costUsd !== null) w.costUsd += u.costUsd;
-  else w.unknownCostJobs += 1;
+  else if (u && u.calls === 0) return; // nothing was billed
+  else {
+    w.unknownCostJobs += 1;
+    w.costUsd += UNKNOWN_COST_CHARGE_USD;
+  }
 }
 
 /**
