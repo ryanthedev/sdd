@@ -471,7 +471,7 @@ globalThis.fetch = (async () => {
     expect(usage?.calls).toBe(3);
     expect(usage?.costUsd).toBeCloseTo(0.3, 6);
     expect(usage?.inputTokens).toBe(3_000_000);
-    // Native answers gain the uniform `p`, and a jev boolean gains `probability`.
+    // Native answers gain the uniform `p`, and a legacy `boolean` question gains `probability`.
     expect(res.results[0].answers.q.p).toBe(0.9);
     expect(res.results[0].answers.q.probability).toBe(0.9);
     expect(res.results[0].costUsd).toBeCloseTo(0.1, 6);

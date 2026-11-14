@@ -59,7 +59,7 @@ The existing `SDD_GEMINI_SUMMARY:` and `SDD_GEMINI_RESULT:` / `SDD_GEMINI_VISION
 ```jsonc
 {"v":1,"ts":1794639003485,"jobId":"…","adapter":"gemini","kind":"default","cwd":"/abs",
  "state":"done","exitCode":0,"signal":null,"durationMs":1234,
- "summary":"≤300 chars of result.summary","usage":{…UsageRecord…}|null,"host":"Ryans-Mac-Studio.local"}
+ "summary":"≤160 chars; for gemini only status tokens (counts, cost, stopped=, failed_ids=N), never answers or error text","usage":{…UsageRecord…}|null,"host":"Ryans-Mac-Studio.local"}
 ```
 
 ## 4. Budget
@@ -75,7 +75,9 @@ The existing `SDD_GEMINI_SUMMARY:` and `SDD_GEMINI_RESULT:` / `SDD_GEMINI_VISION
 - Enforced in TWO places:
   1. The gemini scripts check it before the first API call and refuse (`exit 1`, stderr
      `gemini-…: budget exceeded: $X in 24h of $5 daily` etc.). This also covers ska/vana, which have no governor.
-     Per-job cap: request field `maxCostUsd` (default 1.00) stops scheduling new items once crossed.
+     Per-job cap: min(request `maxCostUsd` (default 1.00), daily remaining, monthly remaining); unknown-cost calls
+     count $0.25 each toward it; it stops scheduling new items (and retries) once crossed. Residual race: N jobs that
+     start before the ledger records each other can together overshoot by up to ~N x the remaining budget.
   2. The usage governor computes a `gemini` meter from the same ledger + budget file and its PreToolUse gate
      blocks gemini dispatches only. A gemini STOP must NEVER make the governor's overall `decision` STOP
      (that would block every tool in every session).
