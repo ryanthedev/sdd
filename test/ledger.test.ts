@@ -165,12 +165,12 @@ test("summarizeSpend: unknown cost is charged $0.25 (fail closed), never $0; oth
 
 test("loadBudget: defaults when missing or garbage, file values otherwise", () => {
   const dir = fresh();
-  expect(loadBudget(join(dir, "none.json"))).toEqual({ gemini: { dailyUsd: 5, monthlyUsd: 50 } });
+  expect(loadBudget(join(dir, "none.json"))).toEqual({ gemini: { dailyUsd: 5, monthlyUsd: 50, vision: { dailyUsd: 15, monthlyUsd: 150 } } });
   writeFileSync(join(dir, "bad.json"), "{nope");
   expect(loadBudget(join(dir, "bad.json")).gemini?.dailyUsd).toBe(5);
   writeFileSync(join(dir, "b.json"), JSON.stringify({ gemini: { dailyUsd: 1, monthlyUsd: "x" } }));
   // Per-field merge over the defaults, like the scripts: a bad field falls back to $50, not to "unset".
-  expect(loadBudget(join(dir, "b.json"))).toEqual({ gemini: { dailyUsd: 1, monthlyUsd: 50 } });
+  expect(loadBudget(join(dir, "b.json"))).toEqual({ gemini: { dailyUsd: 1, monthlyUsd: 50, vision: { dailyUsd: 15, monthlyUsd: 150 } } });
 });
 
 test("loadBudget merges defaults per field: no gemini block, an empty one, negative or non-finite values", () => {
@@ -179,12 +179,48 @@ test("loadBudget merges defaults per field: no gemini block, an empty one, negat
     writeFileSync(join(dir, name), body);
     return loadBudget(join(dir, name));
   };
-  expect(load("a.json", "{}")).toEqual({ gemini: { dailyUsd: 5, monthlyUsd: 50 } });
-  expect(load("b.json", '{"gemini":{}}')).toEqual({ gemini: { dailyUsd: 5, monthlyUsd: 50 } });
-  expect(load("c.json", '{"gemini":{"dailyUsd":-3,"monthlyUsd":2}}').gemini).toEqual({ dailyUsd: 5, monthlyUsd: 2 });
-  expect(load("d.json", '{"gemini":{"dailyUsd":1e999,"monthlyUsd":null}}').gemini).toEqual({ dailyUsd: 5, monthlyUsd: 50 });
-  expect(load("e.json", '{"gemini":{"dailyUsd":0}}').gemini).toEqual({ dailyUsd: 0, monthlyUsd: 50 }); // zero is a real limit
-  expect(load("f.json", '{"codex":{"dailyUsd":2},"gemini":[1]}')).toEqual({ gemini: { dailyUsd: 5, monthlyUsd: 50 }, codex: { dailyUsd: 2 } });
+  expect(load("a.json", "{}")).toEqual({ gemini: { dailyUsd: 5, monthlyUsd: 50, vision: { dailyUsd: 15, monthlyUsd: 150 } } });
+  expect(load("b.json", '{"gemini":{}}')).toEqual({ gemini: { dailyUsd: 5, monthlyUsd: 50, vision: { dailyUsd: 15, monthlyUsd: 150 } } });
+  expect(load("c.json", '{"gemini":{"dailyUsd":-3,"monthlyUsd":2}}').gemini).toEqual({ dailyUsd: 5, monthlyUsd: 2, vision: { dailyUsd: 15, monthlyUsd: 150 } });
+  expect(load("d.json", '{"gemini":{"dailyUsd":1e999,"monthlyUsd":null}}').gemini).toEqual({ dailyUsd: 5, monthlyUsd: 50, vision: { dailyUsd: 15, monthlyUsd: 150 } });
+  expect(load("e.json", '{"gemini":{"dailyUsd":0}}').gemini).toEqual({ dailyUsd: 0, monthlyUsd: 50, vision: { dailyUsd: 15, monthlyUsd: 150 } }); // zero is a real limit
+  expect(load("f.json", '{"codex":{"dailyUsd":2},"gemini":[1]}')).toEqual({ gemini: { dailyUsd: 5, monthlyUsd: 50, vision: { dailyUsd: 15, monthlyUsd: 150 } }, codex: { dailyUsd: 2 } });
+});
+
+test("loadBudget: the nested vision block merges per field over $15/$150, independent of the decision limits", () => {
+  const dir = fresh();
+  const load = (name: string, body: string) => {
+    writeFileSync(join(dir, name), body);
+    return loadBudget(join(dir, name)).gemini!;
+  };
+  // Overriding only the decision pool leaves vision at its own defaults.
+  expect(load("a.json", '{"gemini":{"dailyUsd":8}}')).toEqual({ dailyUsd: 8, monthlyUsd: 50, vision: { dailyUsd: 15, monthlyUsd: 150 } });
+  // Overriding only vision leaves the decision pool at $5/$50.
+  expect(load("b.json", '{"gemini":{"vision":{"monthlyUsd":99}}}')).toEqual({ dailyUsd: 5, monthlyUsd: 50, vision: { dailyUsd: 15, monthlyUsd: 99 } });
+  // Invalid vision fields fall back per field; zero is a real limit; a non-object block is ignored.
+  expect(load("c.json", '{"gemini":{"vision":{"dailyUsd":-1,"monthlyUsd":"x"}}}').vision).toEqual({ dailyUsd: 15, monthlyUsd: 150 });
+  expect(load("d.json", '{"gemini":{"vision":{"dailyUsd":0}}}').vision).toEqual({ dailyUsd: 0, monthlyUsd: 150 });
+  expect(load("e.json", '{"gemini":{"vision":7}}').vision).toEqual({ dailyUsd: 15, monthlyUsd: 150 });
+});
+
+test("summarizeSpend with a pool: vision lines never count against decision and vice versa; a missing kind is decision", () => {
+  const entries = [
+    entry({ kind: "vision", usage: usage({ costUsd: 4 }) }),
+    entry({ kind: "default", usage: usage({ costUsd: 1 }) }),
+    entry({ kind: "", usage: usage({ costUsd: 2 }) }),
+    entry({ kind: "vision", state: "failed", usage: usage({ costUsd: null }) }), // unknown: charged $0.25 to VISION only
+  ].map((e) => ({ ...e, ts: NOW - H }));
+  const budget = loadBudget(join(fresh(), "none.json"));
+  const dec = summarizeSpend(entries, { now: NOW, adapter: "gemini", budget, pool: "decision" });
+  const vis = summarizeSpend(entries, { now: NOW, adapter: "gemini", budget, pool: "vision" });
+  expect(dec.last24h.costUsd).toBe(3);
+  expect(dec.last24h.jobs).toBe(2);
+  expect(dec.budget).toEqual({ dailyUsd: 5, monthlyUsd: 50 });
+  expect(vis.last24h.costUsd).toBeCloseTo(4 + UNKNOWN_COST_CHARGE_USD);
+  expect(vis.last24h.unknownCostJobs).toBe(1);
+  expect(vis.budget).toEqual({ dailyUsd: 15, monthlyUsd: 150 });
+  // No pool = the whole adapter, as before.
+  expect(summarizeSpend(entries, { now: NOW, adapter: "gemini" }).last24h.jobs).toBe(4);
 });
 
 test("a ledger line whose usage has no `calls` (and no cost) is unknown and charged, not free", () => {
@@ -429,8 +465,9 @@ test("usage({adapter:'gemini'}) returns the spend report with the documented ren
   const r = await tool.handler({ adapter: "gemini" });
   expect(r.isError).toBeUndefined();
   const text = r.content[0]!.text;
-  expect(text).toContain("gemini spend: $0.67 in 24h of $5.00 daily"); // $0.42 known + $0.25 charged for the unknown job
+  expect(text).toContain("gemini decision spend: $0.67 in 24h of $5.00 daily"); // $0.42 known + $0.25 charged for the unknown job
   expect(text).toContain("of $50.00");
+  expect(text).toContain("gemini vision spend: $0.00 in 24h of $15.00 daily · $0.00 this month of $150.00 · 0 jobs");
   expect(text).toContain("2 jobs (1 failed)");
   expect(text).toContain("1 unknown-cost");
   expect(text).not.toContain("does not report account limits");
@@ -443,6 +480,32 @@ test("usage({adapter:'gemini'}) returns the spend report with the documented ren
   expect(spend.budget.dailyUsd).toBe(5);
   expect(spend).toHaveProperty("last24h");
   expect(spend).toHaveProperty("month");
+  const vision = (reports[0] as unknown as { vision: { costUsd: number; jobs: number; budget: { dailyUsd: number; monthlyUsd: number } } }).vision;
+  expect(vision.jobs).toBe(0);
+  expect(vision.costUsd).toBe(0);
+  expect(vision.budget).toEqual({ dailyUsd: 15, monthlyUsd: 150 });
+});
+
+test("usage reports the two gemini pools separately, each against its own limits", async () => {
+  const dir = fresh();
+  writeFileSync(join(dir, "gemini.ts"), PLAIN("gemini"));
+  const ledger = join(fresh(), "l.jsonl");
+  const now = Date.now();
+  appendLedger(input({ ts: now - H, kind: "vision", usage: usage({ costUsd: 7 }) }), ledger);
+  appendLedger(input({ ts: now - H, kind: "default", usage: usage({ costUsd: 1.5 }) }), ledger);
+  const budgetFile = join(fresh(), "b.json");
+  writeFileSync(budgetFile, JSON.stringify({ gemini: { dailyUsd: 2, vision: { dailyUsd: 20 } } }));
+  const { tool } = toolRuntime(dir, ledger, budgetFile);
+  const r = await tool.handler({ adapter: "gemini" });
+  const lines = r.content[0]!.text.split("\n");
+  expect(lines).toHaveLength(2);
+  expect(lines[0]).toContain("gemini decision spend: $1.50 in 24h of $2.00 daily");
+  expect(lines[0]).toContain("1 jobs");
+  expect(lines[1]).toContain("gemini vision spend: $7.00 in 24h of $20.00 daily");
+  expect(lines[1]).toContain("of $150.00");
+  const e = (r.structuredContent!.reports as { spend: { costUsd: number }; vision: { costUsd: number } }[])[0]!;
+  expect(e.spend.costUsd).toBe(1.5); // flat fields stay the decision pool
+  expect(e.vision.costUsd).toBe(7);
 });
 
 test("usage spend never renders an unknown cost as $0, and an empty ledger is a $0.00 known-nothing report", async () => {
@@ -466,7 +529,8 @@ test("usage with no adapter includes spend alongside the unsupported list; a pla
   writeFileSync(join(dir, "plain.ts"), PLAIN("plain"));
   const { tool } = toolRuntime(dir, join(fresh(), "l.jsonl"));
   const r = await tool.handler({});
-  expect(r.content[0]!.text).toContain("gemini spend:");
+  expect(r.content[0]!.text).toContain("gemini decision spend:");
+  expect(r.content[0]!.text).toContain("gemini vision spend:");
   expect(r.content[0]!.text).toContain("no limits reporting: plain");
 });
 

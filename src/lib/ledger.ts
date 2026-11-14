@@ -190,13 +190,25 @@ function coerceEntry(o: unknown): LedgerEntry | null {
 
 // ── Budget ──────────────────────────────────────────────────────────────────
 
-export interface AdapterBudget {
+export interface PoolLimits {
   dailyUsd?: number;
   monthlyUsd?: number;
 }
+/** `dailyUsd`/`monthlyUsd` are the DECISION pool (every ledger kind but "vision");
+ *  the nested `vision` block is the VISION pool (kind "vision"). Contract section 4. */
+export interface AdapterBudget extends PoolLimits {
+  vision?: PoolLimits;
+}
 export type Budget = Record<string, AdapterBudget>;
+/** Which slice of an adapter's ledger lines a summary covers. */
+export type Pool = "decision" | "vision";
 
-export const DEFAULT_BUDGET: Budget = { gemini: { dailyUsd: 5, monthlyUsd: 50 } };
+export const DEFAULT_BUDGET: Budget = { gemini: { dailyUsd: 5, monthlyUsd: 50, vision: { dailyUsd: 15, monthlyUsd: 150 } } };
+
+/** Does this ledger entry belong to the pool? Vision = kind "vision"; decision = anything else. */
+export function inPool(e: { kind: string }, pool: Pool): boolean {
+  return (e.kind === "vision") === (pool === "vision");
+}
 
 /** `$XDG_CONFIG_HOME/sdd/budget.json` (default `~/.config/sdd/budget.json`). */
 export function budgetPath(): string {
@@ -229,6 +241,16 @@ export function loadBudget(path: string = budgetPath()): Budget {
     const m = limit(b.monthlyUsd);
     if (d !== undefined) entry.dailyUsd = d;
     if (m !== undefined) entry.monthlyUsd = m;
+    // Nested vision pool, merged per field over the vision defaults (or over nothing for other adapters).
+    const vb = b.vision;
+    if (typeof vb === "object" && vb !== null && !Array.isArray(vb)) {
+      const v = vb as Record<string, unknown>;
+      const vd = limit(v.dailyUsd);
+      const vm = limit(v.monthlyUsd);
+      entry.vision = { ...entry.vision };
+      if (vd !== undefined) entry.vision.dailyUsd = vd;
+      if (vm !== undefined) entry.vision.monthlyUsd = vm;
+    }
     out[adapter] = entry;
   }
   return out;
@@ -255,8 +277,11 @@ export interface SpendWindow {
 
 export interface SpendSummary {
   adapter: string;
+  /** Set when the summary covers one pool only. */
+  pool?: Pool;
   last24h: SpendWindow;
   month: SpendWindow;
+  /** The limits that apply to this summary: the pool's own (vision block for "vision"), else the adapter's top-level. */
   budget: AdapterBudget | null;
 }
 
@@ -285,11 +310,13 @@ function addTo(w: SpendWindow, e: LedgerEntry): void {
 
 /**
  * Rolling-24h (ts > now - 24h) and calendar-month (local time, ts >= first of
- * this month 00:00 local) totals for one adapter. Pure.
+ * this month 00:00 local) totals for one adapter. Pure. With `pool`, only that
+ * pool's entries count ("vision" = kind "vision", "decision" = every other kind)
+ * and `budget` carries that pool's limits.
  */
 export function summarizeSpend(
   entries: LedgerEntry[],
-  opts: { now: number; adapter: string; budget?: Budget },
+  opts: { now: number; adapter: string; budget?: Budget; pool?: Pool },
 ): SpendSummary {
   const dayStart = opts.now - DAY_MS;
   const d = new Date(opts.now);
@@ -298,8 +325,11 @@ export function summarizeSpend(
   const month = emptyWindow();
   for (const e of entries) {
     if (e.adapter !== opts.adapter || e.ts > opts.now) continue;
+    if (opts.pool !== undefined && !inPool(e, opts.pool)) continue;
     if (e.ts > dayStart) addTo(last24h, e);
     if (e.ts >= monthStart) addTo(month, e);
   }
-  return { adapter: opts.adapter, last24h, month, budget: opts.budget?.[opts.adapter] ?? null };
+  const ab = opts.budget?.[opts.adapter] ?? null;
+  const budget = opts.pool === "vision" ? (ab?.vision ?? null) : opts.pool === "decision" && ab ? { dailyUsd: ab.dailyUsd, monthlyUsd: ab.monthlyUsd } : ab;
+  return { adapter: opts.adapter, ...(opts.pool ? { pool: opts.pool } : {}), last24h, month, budget };
 }

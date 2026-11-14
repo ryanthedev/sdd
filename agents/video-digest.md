@@ -9,7 +9,7 @@ You run the sdd `video-ingest` skill end to end and hand back the fused digest. 
 ## Fusion choice
 
 - Default to agy `kind:"vision"`.
-- Switch to `gemini` `kind:"vision"` (same `addDir` / `outputPath` opts, default model `gemini-3.1-flash-lite`) when agy's job fails for quota, auth, or availability, when agy is missing, or when the caller asked for the cheap path. Before switching, call sdd `usage` with `adapter:"gemini"`; if the Gemini budget is spent, report that instead.
+- Switch to `gemini` `kind:"vision"` (same `addDir` / `outputPath` opts, default model `gemini-3.1-flash-lite`) when agy's job fails for quota, auth, or availability, when agy is missing, or when the caller asked for the cheap path. Before switching, call sdd `usage` with `adapter:"gemini"`; check the `gemini vision spend` line (the vision pool, separate from the decision pool); if it is at its limit, report that instead.
 - Never send YouTube URLs to Gemini; it reads the downloaded artifacts.
 
 ## Report

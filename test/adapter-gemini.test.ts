@@ -226,6 +226,24 @@ async function runScript(script: string, args: string[], env: Record<string, str
   return spawn(argv, env);
 }
 
+// Mock fetch preload: any decide run that reaches the network gets a canned answer, never the real API.
+const mockBody = `globalThis.fetch = (async (url) => {
+  if (String(url).includes(":generateContent")) {
+    const fused = JSON.stringify({ summary: "s", moments: [] });
+    return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: fused }] }, finishReason: "STOP" }], usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 10 } }));
+  }
+  return new Response(JSON.stringify({ model: "gemini-decision-1", answers: { q: { type: "noul", noul: 0.9, confidence: 0.9 } }, usage: { total_input_tokens: 1000 } }));
+}) as typeof fetch;\n`;
+
+/** Run a bundled script non-dry with fetch mocked (no network). */
+async function runMocked(script: "decide" | "vision", args: [string, string], env: Record<string, string> = {}) {
+  const mockFetch = join(dir, "mock-fetch.ts");
+  writeFileSync(mockFetch, mockBody);
+  const argv = script === "decide" ? decide.buildArgs(args[0], { outputPath: args[1] }) : vision.buildArgs("x", { addDir: args[0], outputPath: args[1] });
+  argv.splice(argv.indexOf("run") + 1, 0, "--preload", mockFetch);
+  return spawn(argv, { GEMINI_API_KEY: "fake", ...env });
+}
+
 describe("bundled script validation (no network)", () => {
   test("decide rejects a YouTube URL with an actionable message", async () => {
     const req = join(dir, "yt.json");
@@ -327,8 +345,8 @@ describe("bundled script validation (no network)", () => {
 
 describe("spend budget (hermetic ledger + config)", () => {
   const request = JSON.stringify({ questions: { q: { type: "noul", instructions: "x" } }, items: [{ id: "a", input: "t" }] });
-  const line = (cost: number | null, ageMs: number, adapter = "gemini") =>
-    `${JSON.stringify({ v: 1, ts: Date.now() - ageMs, adapter, usage: cost === null ? null : { calls: 1, costUsd: cost } })}\n`;
+  const line = (cost: number | null, ageMs: number, adapter = "gemini", kind?: string) =>
+    `${JSON.stringify({ v: 1, ts: Date.now() - ageMs, adapter, ...(kind ? { kind } : {}), usage: cost === null ? null : { calls: 1, costUsd: cost } })}\n`;
   const limits = (name: string, gemini: object): string => {
     const cfg = join(dir, name);
     mkdirSync(join(cfg, "sdd"), { recursive: true });
@@ -386,11 +404,59 @@ describe("spend budget (hermetic ledger + config)", () => {
     writeFileSync(join(art, "f.png"), "x");
     writeFileSync(join(art, "manifest.json"), JSON.stringify({ frames: [{ file: "f.png", tSeconds: 0 }] }));
     const ledger = join(dir, "ledger-vision.jsonl");
-    writeFileSync(ledger, line(6, 1000));
+    writeFileSync(ledger, line(16, 1000, "gemini", "vision"));
     const r = await runScript("vision", [art, join(art, "fused.json")], { SDD_LEDGER_PATH: ledger });
     rmSync(art, { recursive: true, force: true });
     expect(r.code).toBe(1);
-    expect(r.stderr).toContain("gemini-vision: budget exceeded");
+    expect(r.stderr).toContain("gemini-vision: vision budget exceeded: $16.0000 in 24h of $15 daily");
+  });
+
+  // An artifact dir with no frames: a vision run that clears the budget gate dies here, before any network call.
+  const emptyArt = mkdtempSync(join(tmpdir(), "sdd-gemini-empty-"));
+  test("pools are independent: a vision refusal at its own limit while decision still runs, and the reverse", async () => {
+    const art = mkdtempSync(join(tmpdir(), "sdd-gemini-pool-"));
+    writeFileSync(join(art, "f.png"), "x");
+    writeFileSync(join(art, "manifest.json"), JSON.stringify({ frames: [{ file: "f.png", tSeconds: 0 }] }));
+    // $20 of vision spend blows the vision $15 limit but is invisible to the decision pool (limit $5).
+    const visionHeavy = join(dir, "ledger-pool-vision.jsonl");
+    writeFileSync(visionHeavy, line(20, 1000, "gemini", "vision"));
+    // Non-dry, so the run passes budgetRefusal/effectiveCap and makes a (mocked) paid call.
+    const d = await runMocked("decide", [JSON.stringify({ questions: { q: { type: "noul", instructions: "x" } }, items: [{ id: "a", input: "t" }] }), join(dir, "pool-d.json")], { SDD_LEDGER_PATH: visionHeavy });
+    expect(d.stderr).not.toContain("budget exceeded");
+    expect(d.code).toBe(0);
+    expect(readFileSync(join(dir, "pool-d.json"), "utf8")).toContain("noul");
+    const v = await runScript("vision", [art, join(art, "fused.json")], { SDD_LEDGER_PATH: visionHeavy });
+    expect(v.code).toBe(1);
+    expect(v.stderr).toContain("vision budget exceeded");
+    // $6 of decision spend (a missing kind, and kind "default") blows the decision $5 limit but vision (limit $15) is untouched.
+    const decisionHeavy = join(dir, "ledger-pool-decision.jsonl");
+    writeFileSync(decisionHeavy, line(3, 1000) + line(3, 2000, "gemini", "default"));
+    const d2 = await runScript("decide", [JSON.stringify({ questions: { q: { type: "noul", instructions: "x" } }, items: [{ id: "a", input: "t" }] }), join(dir, "pool-d2.json")], { SDD_LEDGER_PATH: decisionHeavy });
+    expect(d2.code).toBe(1);
+    expect(d2.stderr).toContain("decision budget exceeded: $6.0000 in 24h of $5 daily");
+    const v2 = await runMocked("vision", [art, join(art, "fused2.json")], { SDD_LEDGER_PATH: decisionHeavy });
+    expect(v2.stderr).not.toContain("budget exceeded");
+    expect(v2.code).toBe(0);
+    expect(readFileSync(join(art, "fused2.json"), "utf8")).toContain('"summary"');
+    rmSync(art, { recursive: true, force: true });
+  });
+
+  test("the vision limits come from the nested vision block, merged per field over the $15/$150 defaults", async () => {
+    const art = mkdtempSync(join(tmpdir(), "sdd-gemini-vlim-"));
+    writeFileSync(join(art, "f.png"), "x");
+    writeFileSync(join(art, "manifest.json"), JSON.stringify({ frames: [{ file: "f.png", tSeconds: 0 }] }));
+    const ledger = join(dir, "ledger-vlim.jsonl");
+    writeFileSync(ledger, line(2, 1000, "gemini", "vision"));
+    // Top-level decision limits are huge, vision.dailyUsd is $1: the $2 vision spend is refused.
+    const a = await runScript("vision", [art, join(art, "fused.json")], { SDD_LEDGER_PATH: ledger, XDG_CONFIG_HOME: limits("cfg-vlim", { dailyUsd: 999, vision: { dailyUsd: 1 } }) });
+    expect(a.stderr).toContain("vision budget exceeded: $2.0000 in 24h of $1 daily");
+    // Only the decision daily is overridden: vision keeps $15, so $2 of vision spend is fine.
+    const b = await runScript("vision", [emptyArt, join(emptyArt, "fused.json")], { SDD_LEDGER_PATH: ledger, GEMINI_API_KEY: "fake", XDG_CONFIG_HOME: limits("cfg-vlim2", { dailyUsd: 0 }) });
+    expect(b.stderr).not.toContain("budget exceeded");
+    // An invalid vision value falls back to that field's default ($15), not to the decision limit.
+    const c = await runScript("vision", [emptyArt, join(emptyArt, "fused.json")], { SDD_LEDGER_PATH: ledger, GEMINI_API_KEY: "fake", XDG_CONFIG_HOME: limits("cfg-vlim3", { dailyUsd: 0, vision: { dailyUsd: -1, monthlyUsd: "x" } }) });
+    expect(c.stderr).not.toContain("budget exceeded");
+    rmSync(art, { recursive: true, force: true });
   });
 });
 

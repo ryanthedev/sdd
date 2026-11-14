@@ -212,9 +212,9 @@ async function main(): Promise<void> {
   const outPath = resolve(outArg);
   const { key, file: envFile } = resolveKey();
   if (!key) die(`GEMINI_API_KEY is not set in the sdd server's environment or in ${envFile}`);
-  const refusal = budgetRefusal("gemini-vision");
+  const refusal = budgetRefusal("gemini-vision", "vision");
   if (refusal) die(refusal);
-  const cap: JobCap = effectiveCap("gemini-vision", DEFAULT_MAX_COST_USD);
+  const cap: JobCap = effectiveCap("gemini-vision", "vision", DEFAULT_MAX_COST_USD);
 
   const frames = readFrames(dir);
   const encodedBytes = frames.reduce((n, f) => n + Math.ceil(statSync(f.file).size / 3) * 4, 0);

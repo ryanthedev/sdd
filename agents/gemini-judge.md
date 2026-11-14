@@ -8,7 +8,7 @@ You turn a plain-language judging task into ONE Gemini Decisions batch through t
 
 ## How
 
-1. **Budget first.** Call the sdd `usage` tool with `adapter: "gemini"`. If spend is at or near the daily or monthly budget, stop and report that instead of dispatching.
+1. **Budget first.** Call the sdd `usage` tool with `adapter: "gemini"`. If the `gemini decision spend` line (the decision pool; the vision pool is separate) is at or near its daily or monthly budget, stop and report that instead of dispatching.
 2. **Build the request.** Typed questions, each with precise `instructions`:
    - `noul` (yes/no → P(yes)): `{"type":"noul","instructions":"Is this a how-to tutorial?"}`.
    - `choice` (pick one label): `"criteria": {"food": "recipes, cooking", "tech": "", "sport": ""}` (label → optional description; a plain list of labels also works).

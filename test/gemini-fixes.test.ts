@@ -285,7 +285,7 @@ describe("vision timeouts are unknown-cost calls (finding 5)", () => {
     const argv = vision.buildArgs("describe", { addDir: art, outputPath: join(art, "fused.json") });
     argv.splice(argv.indexOf("run") + 1, 0, "--preload", mock);
     // $0.20 of daily budget left < one $0.25 unknown-cost charge, so the first timeout ends the retries.
-    const r = await spawn(argv, { MOCK_MODE: "timeout", XDG_CONFIG_HOME: config("cfg-vision-cap", { dailyUsd: 0.2, monthlyUsd: 50 }) });
+    const r = await spawn(argv, { MOCK_MODE: "timeout", XDG_CONFIG_HOME: config("cfg-vision-cap", { vision: { dailyUsd: 0.2, monthlyUsd: 50 } }) });
     rmSync(art, { recursive: true, force: true });
     expect(r.code).toBe(1);
     expect(r.stderr).toContain("stopped=budget");
@@ -321,7 +321,7 @@ describe("review fixes: unreadable ledger, null body, unknown-cost flag", () => 
     writeFileSync(join(art, "manifest.json"), JSON.stringify({ frames: [{ file: "f.png", tSeconds: 0 }] }));
     const argv = vision.buildArgs("describe", { addDir: art, outputPath: join(art, "fused.json") });
     argv.splice(argv.indexOf("run") + 1, 0, "--preload", mock);
-    const r = await spawn(argv, { MOCK_MODE: "nullbody", XDG_CONFIG_HOME: config("cfg-vision-null", { dailyUsd: 0.2, monthlyUsd: 50 }) });
+    const r = await spawn(argv, { MOCK_MODE: "nullbody", XDG_CONFIG_HOME: config("cfg-vision-null", { vision: { dailyUsd: 0.2, monthlyUsd: 50 } }) });
     rmSync(art, { recursive: true, force: true });
     expect(r.code).toBe(1);
     expect(r.stderr).toContain("stopped=budget");
