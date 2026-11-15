@@ -96,13 +96,37 @@ Each harness has its own quirks: flag ordering, the marker it emits, what auth i
 
 ## Decision calls without MCP: `src/cli/decide.ts`
 
-Programs that are not MCP clients (a git hook, a script) can make Gemini decision calls through sdd and still get its budget check and spend record:
+Programs that are not MCP clients (a script, or a CLI tool such as [alsp](https://github.com/ryanthedev/agent-lsp)) can make Gemini decision calls through sdd and still get its budget check and spend record:
 
 ```
 bun run src/cli/decide.ts [--timeout-ms N] [--model M] [--] <request.json> [<results.json>]
 ```
 
 It runs the same code path as `dispatch` with `adapter: "gemini"` (the default kind): the script refuses when the budget is spent, and one line per job lands in the spend ledger. The request and results JSON are documented in `assets/gemini-decide.ts`; `"dryRun": true` estimates cost and calls nothing. On success stdout is the absolute results path and the exit code is 0. Exit 1 means the job failed (stderr has the script's reason, such as `budget exceeded`; a timeout or SIGTERM also exits 1). Exit 2 is a usage error. See `docs/usage-contract.md` section 3a.
+
+Setup and a minimal call:
+
+- **API key.** `GEMINI_API_KEY` from the environment, or a `GEMINI_API_KEY=` line in `~/.config/sdd/.env` (`$XDG_CONFIG_HOME/sdd/.env` when that is set). The job's own directory `.env` is never read.
+- **Budget limits.** Read from the budget file in the same config folder (`~/.config/sdd/`, or `$XDG_CONFIG_HOME/sdd/`); `docs/usage-contract.md` section 4 gives its name and shape. Missing means the defaults: $5/day and $50/month for decision calls. Spend is totalled from the local spend record under `~/.local/state/sdd/`. A per-job cap comes from the request's `maxCostUsd` (default $1).
+- **Request.** A JSON file (inline JSON is refused here). Questions are named; each item is answered against every question:
+
+```json
+{
+  "questions": {
+    "is_bug_fix": {"type": "noul", "instructions": "Is this change a bug fix?"}
+  },
+  "items": [
+    {"id": "a", "input": "Fix off-by-one in the page counter"},
+    {"id": "b", "input": "Add dark mode toggle"}
+  ]
+}
+```
+
+```
+bun run src/cli/decide.ts request.json results.json   # prints the absolute path of results.json
+```
+
+Add `"dryRun": true` to the request first to see the estimated cost without calling the API.
 
 ## Codex subagents
 

@@ -1,6 +1,6 @@
 /**
  * `decide` — a command-line entry to the gemini adapter's default kind, for
- * callers that are not MCP clients (alsp, running inside a git hook).
+ * callers that are not MCP clients (for example a CLI tool such as alsp, https://github.com/ryanthedev/agent-lsp).
  *
  *   bun run src/cli/decide.ts [--timeout-ms N] [--model M] [--] <request.json> [<results.json>]
  *
@@ -34,7 +34,7 @@ export const EXIT_DONE = 0;
 export const EXIT_FAILED = 1;
 export const EXIT_USAGE = 2;
 
-/** A git hook must not hang forever on a stuck script. */
+/** A caller (often an unattended program) must not hang forever on a stuck script. */
 const DEFAULT_TIMEOUT_MS = 600_000;
 
 const USAGE = "usage: bun run src/cli/decide.ts [--timeout-ms N] [--model M] [--] <request.json> [<results.json>]";

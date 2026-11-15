@@ -71,7 +71,7 @@
  *
  * HISTORY: this adapter was written against the upstream CLI source because
  * mlx-whisper was not installed at the time. As of 2026-07-21 it IS installed
- * (`/Users/r/.local/bin/mlx_whisper`) and the `Args: {...}` debug-print marker
+ * (on PATH, e.g. `~/.local/bin/mlx_whisper`) and the `Args: {...}` debug-print marker
  * this adapter parses was re-confirmed in the installed source (`cli.py:208`,
  * `if args["verbose"] is True: print(f"Args: {args}")`). The unit tests still
  * drive `parseResult` from captured output rather than a real invocation — a

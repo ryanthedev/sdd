@@ -336,5 +336,5 @@ test("test_codex_skips_the_git_repo_check_only_in_a_temp_dir", () => {
     expect(a.indexOf("--skip-git-repo-check")).toBeLessThan(a.indexOf("--sandbox"));
     expect(a.at(-1)).toBe("p");
   }
-  for (const cwd of ["/Users/r/repos/scratch", "/tmp", "/tmpfoo/x", "/tmp/../Users/r"]) expect(argv(cwd)).not.toContain("--skip-git-repo-check");
+  for (const cwd of ["/home/user/repos/scratch", "/tmp", "/tmpfoo/x", "/tmp/../home/user"]) expect(argv(cwd)).not.toContain("--skip-git-repo-check");
 });

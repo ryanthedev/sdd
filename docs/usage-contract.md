@@ -62,7 +62,7 @@ The existing `SDD_GEMINI_SUMMARY:` and `SDD_GEMINI_RESULT:` / `SDD_GEMINI_VISION
 
 ### 3a. `decide` command (second caller)
 
-For programs that are not MCP clients (alsp, in a git hook):
+For programs that are not MCP clients (for example a CLI tool such as [alsp](https://github.com/ryanthedev/agent-lsp)):
 
 ```
 bun run <sdd>/src/cli/decide.ts [--timeout-ms N] [--model M] [--] <request.json> [<results.json>]
@@ -84,7 +84,7 @@ bun run <sdd>/src/cli/decide.ts [--timeout-ms N] [--model M] [--] <request.json>
 ```jsonc
 {"v":1,"ts":1794639003485,"jobId":"…","adapter":"gemini","kind":"default","cwd":"/abs",
  "state":"done","exitCode":0,"signal":null,"durationMs":1234,
- "summary":"≤160 chars; for gemini only status tokens (counts, cost, stopped=, failed_ids=N), never answers or error text","usage":{…UsageRecord…}|null,"host":"Ryans-Mac-Studio.local"}
+ "summary":"≤160 chars; for gemini only status tokens (counts, cost, stopped=, failed_ids=N), never answers or error text","usage":{…UsageRecord…}|null,"host":"my-machine.local"}
 ```
 
 ## 4. Budget

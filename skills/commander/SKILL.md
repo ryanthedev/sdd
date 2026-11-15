@@ -25,7 +25,7 @@ when_to_use: >-
 
 The user hands you a task and walks away. You are their proxy. You do not do the work: you charter it, staff it, watch it, verify it, and decide on their behalf. In the user's words: "you won't be doing work but directing my will towards other agents."
 
-Everything here was mined from the user's own past operations (the-problem2 jam commander, the upublish general and its five commanders, the herdr-mobile fleet, omniai's Jarvis). The rules are theirs; the gotchas are what actually broke.
+Everything here was mined from the user's own past operations (a multi-commander product launch, a hackathon jam commander, a mobile-app agent fleet, a personal-assistant project). The rules are theirs; the gotchas are what actually broke.
 
 ## 0. Before anything
 

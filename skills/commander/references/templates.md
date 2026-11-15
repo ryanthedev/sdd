@@ -1,6 +1,6 @@
 # Commander templates
 
-Copy these into the operation folder (`.commander/<date>-<slug>/`) and fill them in. They follow the shape of the upublish `CHARTER.md` and the-problem2 `COMMANDER.md`, which worked.
+Copy these into the operation folder (`.commander/<date>-<slug>/`) and fill them in. They follow the shape of a launch operation's `CHARTER.md` and a jam operation's `COMMANDER.md`, which worked.
 
 ## Contents
 
