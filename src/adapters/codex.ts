@@ -22,12 +22,12 @@
  * same silent-misparse guard Phase 2 established for JobStore, applied here to
  * codex's own output contract.
  */
-import type { AdapterResult, DispatchOpts, UsageSnapshot, UsageWindow } from "../types.ts";
+import type { AdapterResult, DispatchOpts, ModelInfo, UsageSnapshot, UsageWindow } from "../types.ts";
 import { tmpdir } from "node:os";
 import { resolve, sep } from "node:path";
 import { buildCodexArgv, type CodexArgvConfig } from "./_codex-shared.ts";
 import { DEFAULT_KIND } from "./types.ts";
-import type { Capability, LimitsProbe, MultiAdapterModule } from "./types.ts";
+import type { Capability, LimitsProbe, ModelsProbe, MultiAdapterModule } from "./types.ts";
 import {
   appendSavePath,
   injectImageContract,
@@ -35,16 +35,23 @@ import {
   parseImageResult,
   resolveImageOutputPath,
 } from "../lib/image-contract.ts";
+import { resolveOptionalAddDir, resolveReadOnly } from "../lib/path-barricade.ts";
 
 export const name = "codex";
 
 /**
- * Per-call reasoning-effort allowlist. Mirrors the zod enum in
+ * Per-call reasoning-effort allowlist. Verified against codex-cli 0.171.0
+ * `model/list` (`supportedReasoningEfforts`). Mirrors the zod enum in
  * src/tools/dispatch.ts, re-checked here because JobStore.dispatch is also
- * callable programmatically (bypassing zod) and the sandbox barricade is
- * security-critical — defense-in-depth, not redundancy.
+ * callable programmatically (bypassing zod) — defense-in-depth, not redundancy.
  */
-const EFFORT_LEVELS = new Set(["low", "medium", "high"]);
+export const effortLevels = ["low", "medium", "high", "xhigh", "max", "ultra"] as const;
+const EFFORT_LEVELS: ReadonlySet<string> = new Set(effortLevels);
+
+/** Per-call service tier allowlist (`-c service_tier=<tier>`). */
+const SERVICE_TIERS: ReadonlySet<string> = new Set(["fast", "flex", "priority"]);
+
+export const supportsReadOnly = true;
 
 const CONTRACT_SUFFIX =
   '\n\nWhen you are done, end your final answer with a line starting exactly with "VERDICT:" followed by a ' +
@@ -78,7 +85,7 @@ export function injectContract(prompt: string): string {
  * surfaces the throw as a clean MCP error.
  */
 export function buildArgs(prompt: string, opts: DispatchOpts): string[] {
-  return buildCodexArgv(prompt, toArgvConfig(opts));
+  return buildCodexArgv(prompt, toArgvConfig(opts, true));
 }
 
 /**
@@ -88,22 +95,37 @@ export function buildArgs(prompt: string, opts: DispatchOpts): string[] {
  * boundary described above, and two copies means one of them eventually stops
  * rejecting `sandbox_mode=danger-full-access`.
  */
-function toArgvConfig(opts: DispatchOpts): CodexArgvConfig {
+function toArgvConfig(opts: DispatchOpts, allowReadOnly: boolean): CodexArgvConfig {
   const cfg: CodexArgvConfig = {};
   if (inTempDir(opts.cwd)) cfg.skipGitRepoCheck = true;
-  const { model, effort } = opts;
+  const readOnly = resolveReadOnly(name, opts, allowReadOnly);
+  if (readOnly) cfg.readOnly = true;
+  const addDir = resolveOptionalAddDir(name, opts);
+  if (addDir !== undefined) cfg.addDir = addDir;
+
+  const { model, effort, serviceTier } = opts;
   if (model !== undefined) {
     if (typeof model !== "string" || model.length === 0) {
       throw new TypeError(`codex: opts.model must be a non-empty string if provided, got ${typeof model}`);
     }
     cfg.model = model;
   }
+  const overrides: Record<string, string> = {};
   if (effort !== undefined) {
     if (typeof effort !== "string" || !EFFORT_LEVELS.has(effort)) {
-      throw new TypeError('codex: opts.effort must be "low" | "medium" | "high" if provided');
+      throw new TypeError(
+        `codex: opts.effort must be ${effortLevels.map((e) => `"${e}"`).join(" | ")} if provided`,
+      );
     }
-    cfg.configOverrides = { model_reasoning_effort: effort };
+    overrides.model_reasoning_effort = effort;
   }
+  if (serviceTier !== undefined) {
+    if (typeof serviceTier !== "string" || !SERVICE_TIERS.has(serviceTier)) {
+      throw new TypeError('codex: opts.serviceTier must be "fast" | "flex" | "priority" if provided');
+    }
+    overrides.service_tier = serviceTier;
+  }
+  if (Object.keys(overrides).length > 0) cfg.configOverrides = overrides;
 
   return cfg;
 }
@@ -425,11 +447,71 @@ function toResetCredits(raw: unknown): UsageSnapshot["resetCredits"] {
 const IMAGE_MARKER = "CODEX_IMAGE_SAVED";
 const IMAGE_MARKER_RE = markerFor(IMAGE_MARKER);
 
+/**
+ * Live model-catalog probe via `codex app-server` `model/list`. Pure data;
+ * executed by `src/lib/models.ts`. Verified against codex-cli 0.171.0.
+ */
+export const readModels: ModelsProbe = {
+  transport: "app-server-jsonrpc",
+  binary: "codex",
+  args: ["app-server"],
+  method: "model/list",
+  params: {},
+};
+
+/**
+ * Tolerant normalizer for codex's `model/list` JSON-RPC result. Drops hidden
+ * entries and malformed items; never throws on schema drift.
+ */
+export function parseModels(raw: unknown): ModelInfo[] {
+  const root = asRecord(raw);
+  const data = Array.isArray(root?.data) ? root.data : [];
+  const out: ModelInfo[] = [];
+  for (const entry of data) {
+    const rec = asRecord(entry);
+    if (!rec || rec.hidden === true) continue;
+    const id = asString(rec.id) ?? asString(rec.model);
+    if (!id) continue;
+    const displayName = asString(rec.displayName) ?? undefined;
+    const description = asString(rec.description) ?? undefined;
+    const isDefault = rec.isDefault === true ? true : undefined;
+    const defaultEffort = asString(rec.defaultReasoningEffort) ?? undefined;
+    const efforts = Array.isArray(rec.supportedReasoningEfforts)
+      ? rec.supportedReasoningEfforts
+          .map((e) => asString(asRecord(e)?.reasoningEffort))
+          .filter((v): v is string => v !== null)
+      : [];
+    const tiers = new Set<string>();
+    if (Array.isArray(rec.serviceTiers)) {
+      for (const t of rec.serviceTiers) {
+        const tid = asString(asRecord(t)?.id);
+        if (tid) tiers.add(tid);
+      }
+    }
+    if (Array.isArray(rec.additionalSpeedTiers)) {
+      for (const t of rec.additionalSpeedTiers) {
+        const tid = asString(t);
+        if (tid) tiers.add(tid);
+      }
+    }
+    out.push({
+      id,
+      ...(displayName ? { displayName } : {}),
+      ...(description ? { description } : {}),
+      ...(isDefault ? { isDefault } : {}),
+      ...(efforts.length > 0 ? { effortLevels: efforts } : {}),
+      ...(defaultEffort ? { defaultEffort } : {}),
+      ...(tiers.size > 0 ? { serviceTiers: [...tiers] } : {}),
+    });
+  }
+  return out;
+}
+
 function buildImageArgs(prompt: string, opts: DispatchOpts): string[] {
   const outPath = resolveImageOutputPath(name, opts);
-  // Model/effort still apply — image work is driven by the agent, so a caller
-  // can still choose which model orchestrates it.
-  return buildCodexArgv(appendSavePath(prompt, outPath), toArgvConfig(opts));
+  // Model/effort/serviceTier still apply; readOnly is rejected because image
+  // generation must write the PNG.
+  return buildCodexArgv(appendSavePath(prompt, outPath), toArgvConfig(opts, false));
 }
 
 export const capabilities: Record<string, Capability> = {
@@ -445,5 +527,15 @@ export const capabilities: Record<string, Capability> = {
 /** Review/implement is what `codex` means with no `kind`. */
 export const defaultKind = DEFAULT_KIND;
 
-const _check: MultiAdapterModule = { name, capabilities, defaultKind, readLimits, parseLimits };
+const _check: MultiAdapterModule = {
+  name,
+  capabilities,
+  defaultKind,
+  effortLevels,
+  supportsReadOnly,
+  readLimits,
+  parseLimits,
+  readModels,
+  parseModels,
+};
 void _check;

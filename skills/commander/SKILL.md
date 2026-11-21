@@ -101,7 +101,7 @@ codex commander (pick the model from its `/model` list; an unknown name silently
 
 ```sh
 hc run --bg --outlive-parent --name cmd-<track> --cwd <worktree> \
-  -- codex --no-daemon -m <model> -c model_reasoning_effort=<low|medium|high> "<launch prompt>"
+  -- codex --no-daemon -m <model> -c model_reasoning_effort=<low|medium|high|xhigh|max|ultra> "<launch prompt>"
 ```
 
 - **`--outlive-parent`** keeps commanders alive when you hand off to a successor. Without it, your children end when you end.

@@ -239,6 +239,19 @@ test("malformed_model_opt_throws_type_error", () => {
   expect(() => agyVision.buildArgs("p", validOpts(dir, { model: 7 }))).toThrow(TypeError);
 });
 
+test("vision kind honors effort (low..max) and rejects ultra/bogus and readOnly:true", () => {
+  const dir = freshDir();
+  for (const effort of ["low", "medium", "high", "xhigh", "max"]) {
+    const argv = agyVision.buildArgs("p", validOpts(dir, { effort }));
+    expect(argv).toContain("--effort");
+    expect(argv).toContain(effort);
+  }
+  expect(() => agyVision.buildArgs("p", validOpts(dir, { effort: "ultra" }))).toThrow(TypeError);
+  expect(() => agyVision.buildArgs("p", validOpts(dir, { effort: "bogus" }))).toThrow(TypeError);
+  expect(() => agyVision.buildArgs("p", validOpts(dir, { readOnly: true }))).toThrow(TypeError);
+  expect(() => agyVision.buildArgs("p", validOpts(dir, { readOnly: "yes" }))).toThrow(TypeError);
+});
+
 // ── Adapter surface + discovery ──────────────────────────────────────────────
 
 test("adapter_surface_is_agy_binary_not_probeable", () => {

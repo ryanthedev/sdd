@@ -58,8 +58,8 @@ test(
     });
 
     try {
-      const banner = await waitForStderr(proc.stderr, "8 tools", 20_000);
-      expect(banner).toContain("connected (8 tools)");
+      const banner = await waitForStderr(proc.stderr, "9 tools", 20_000);
+      expect(banner).toContain("connected (9 tools)");
 
       proc.kill("SIGINT");
       const exitCode = await proc.exited;

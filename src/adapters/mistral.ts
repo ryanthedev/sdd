@@ -16,14 +16,22 @@
  */
 import type { AdapterResult, DispatchOpts } from "../types.ts";
 import type { FlatAdapterModule } from "./types.ts";
+import { resolveOptionalAddDir, resolveReadOnly } from "../lib/path-barricade.ts";
 import { injectReviewContract, parseReviewResult } from "../lib/review-contract.ts";
 
 export const name = "mistral";
 export const binary = "vibe";
+/** Verified against vibe 2.19.0: `--agent plan` selects the builtin non-writing plan agent. */
+export const supportsReadOnly = true;
 
-export function buildArgs(prompt: string, _opts: DispatchOpts): string[] {
-  // The approval flag precedes `-p` so the prompt stays the LAST argv element.
-  return ["vibe", "--auto-approve", "-p", prompt];
+export function buildArgs(prompt: string, opts: DispatchOpts): string[] {
+  const readOnly = resolveReadOnly(name, opts, true);
+  const addDir = resolveOptionalAddDir(name, opts);
+  // All flags precede `-p` so the prompt stays the LAST argv element.
+  const argv = readOnly ? ["vibe", "--agent", "plan"] : ["vibe", "--auto-approve"];
+  if (addDir !== undefined) argv.push("--add-dir", addDir);
+  argv.push("-p", prompt);
+  return argv;
 }
 
 export const injectContract = injectReviewContract;
@@ -32,5 +40,5 @@ export function parseResult(stdout: string, _stderr: string, exitCode: number): 
   return parseReviewResult(name, stdout, exitCode);
 }
 
-const _check: FlatAdapterModule = { name, binary, buildArgs, injectContract, parseResult };
+const _check: FlatAdapterModule = { name, binary, supportsReadOnly, buildArgs, injectContract, parseResult };
 void _check;

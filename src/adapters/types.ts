@@ -10,7 +10,7 @@
  * Dependency direction (Clean Architecture): this boundary imports the core
  * domain types inward. Nothing in the core imports this port.
  */
-import type { AdapterResult, DispatchOpts, UsageRecord, UsageSnapshot } from "../types.ts";
+import type { AdapterResult, DispatchOpts, ModelInfo, UsageRecord, UsageSnapshot } from "../types.ts";
 
 /**
  * Pure DATA describing how to read a harness's account limits. The adapter
@@ -36,6 +36,28 @@ export interface LimitsProbe {
   /** JSON-RPC method to call after initialize, e.g. "account/rateLimits/read". */
   method: string;
 }
+
+/**
+ * Pure DATA describing how to list the models a harness supports. Executed by
+ * `src/lib/models.ts` — never by the adapter itself — so adapters stay I/O-free
+ * and `parseModels` stays fixture-testable.
+ *
+ * SECURITY: author-written literal only, never caller input; spawned with
+ * `shell:false`.
+ */
+export type ModelsProbe =
+  | {
+      transport: "app-server-jsonrpc";
+      binary: string;
+      args: string[];
+      method: string;
+      params?: unknown;
+    }
+  | {
+      transport: "cli-stdout";
+      binary: string;
+      args: string[];
+    };
 
 /**
  * ONE thing a harness can be asked to do — the triple that turns a prompt into
@@ -166,6 +188,24 @@ export interface Adapter {
    * `adapter` and `fetchedAt` are stamped by limits.ts, not by this function.
    */
   parseLimits?(raw: unknown): Omit<UsageSnapshot, "adapter" | "fetchedAt">;
+
+  /** Exact `opts.effort` values this adapter accepts, surfaced by `list_adapters`. */
+  effortLevels?: readonly string[];
+
+  /** Whether this adapter enforces `opts.readOnly: true` natively (plan / read-only sandbox). */
+  supportsReadOnly?: boolean;
+
+  /** Optional static model list for harnesses whose CLI has no `models` probe (e.g. claude aliases). */
+  models?: readonly ModelInfo[];
+
+  /**
+   * Optional live model-discovery probe, paired with `parseModels` (all-or-nothing,
+   * mirroring `readLimits`/`parseLimits`). Executed by `src/lib/models.ts`.
+   */
+  readModels?: ModelsProbe;
+
+  /** Pure normalizer for the raw output of `readModels` into `ModelInfo[]`. */
+  parseModels?(raw: unknown): ModelInfo[];
 }
 
 /**
@@ -188,6 +228,11 @@ export interface FlatAdapterModule extends Capability {
   probeable?: boolean;
   readLimits?: LimitsProbe;
   parseLimits?(raw: unknown): Omit<UsageSnapshot, "adapter" | "fetchedAt">;
+  effortLevels?: readonly string[];
+  supportsReadOnly?: boolean;
+  models?: readonly ModelInfo[];
+  readModels?: ModelsProbe;
+  parseModels?(raw: unknown): ModelInfo[];
 }
 
 export interface MultiAdapterModule {
@@ -198,6 +243,11 @@ export interface MultiAdapterModule {
   probeable?: boolean;
   readLimits?: LimitsProbe;
   parseLimits?(raw: unknown): Omit<UsageSnapshot, "adapter" | "fetchedAt">;
+  effortLevels?: readonly string[];
+  supportsReadOnly?: boolean;
+  models?: readonly ModelInfo[];
+  readModels?: ModelsProbe;
+  parseModels?(raw: unknown): ModelInfo[];
 }
 
 export type AdapterModule = FlatAdapterModule | MultiAdapterModule;

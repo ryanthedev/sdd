@@ -20,7 +20,8 @@ import { createRequire } from "node:module";
 import { isAbsolute, join, resolve } from "node:path";
 import { log } from "../lib/log.ts";
 import { DEFAULT_KIND } from "./types.ts";
-import type { Adapter, Capability, LimitsProbe } from "./types.ts";
+import type { Adapter, Capability, LimitsProbe, ModelsProbe } from "./types.ts";
+import type { ModelInfo } from "../types.ts";
 
 const require = createRequire(import.meta.url);
 
@@ -104,6 +105,32 @@ function toAdapter(mod: Record<string, unknown>): Adapter | { missing: string[] 
     if (typeof parseLimits !== "function") missing.push("parseLimits");
   }
 
+  const effortLevels = mod.effortLevels;
+  if (
+    effortLevels !== undefined &&
+    (!Array.isArray(effortLevels) || !effortLevels.every((e) => typeof e === "string" && e.length > 0))
+  ) {
+    missing.push("effortLevels");
+  }
+
+  const supportsReadOnly = mod.supportsReadOnly;
+  if (supportsReadOnly !== undefined && typeof supportsReadOnly !== "boolean") {
+    missing.push("supportsReadOnly");
+  }
+
+  const models = mod.models;
+  if (models !== undefined && !isModelInfoList(models)) {
+    missing.push("models");
+  }
+
+  // Live model discovery is all-or-nothing, mirroring readLimits/parseLimits.
+  const readModels = mod.readModels;
+  const parseModels = mod.parseModels;
+  if (readModels !== undefined || parseModels !== undefined) {
+    if (!isModelsProbe(readModels)) missing.push("readModels");
+    if (typeof parseModels !== "function") missing.push("parseModels");
+  }
+
   if (missing.length > 0) return { missing };
 
   // Assemble a cohesive Adapter object rather than leaking the raw module
@@ -123,6 +150,11 @@ function toAdapter(mod: Record<string, unknown>): Adapter | { missing: string[] 
     defaultKind: typeof defaultKind === "string" ? defaultKind : undefined,
     readLimits: isLimitsProbe(readLimits) ? readLimits : undefined,
     parseLimits: typeof parseLimits === "function" ? (parseLimits as Adapter["parseLimits"]) : undefined,
+    effortLevels: Array.isArray(effortLevels) ? (effortLevels as readonly string[]) : undefined,
+    supportsReadOnly: typeof supportsReadOnly === "boolean" ? supportsReadOnly : undefined,
+    models: isModelInfoList(models) ? models : undefined,
+    readModels: isModelsProbe(readModels) ? readModels : undefined,
+    parseModels: typeof parseModels === "function" ? (parseModels as Adapter["parseModels"]) : undefined,
   };
 }
 
@@ -169,6 +201,41 @@ function isLimitsProbe(value: unknown): value is LimitsProbe {
   if (typeof probe.binary !== "string" || probe.binary.length === 0) return false;
   if (typeof probe.method !== "string" || probe.method.length === 0) return false;
   return Array.isArray(probe.args) && probe.args.every((a) => typeof a === "string");
+}
+
+function isModelsProbe(value: unknown): value is ModelsProbe {
+  if (typeof value !== "object" || value === null) return false;
+  const probe = value as Record<string, unknown>;
+  if (typeof probe.binary !== "string" || probe.binary.length === 0) return false;
+  if (!Array.isArray(probe.args) || !probe.args.every((a) => typeof a === "string")) return false;
+  if (probe.transport === "app-server-jsonrpc") {
+    return typeof probe.method === "string" && probe.method.length > 0;
+  }
+  return probe.transport === "cli-stdout";
+}
+
+function isModelInfoList(value: unknown): value is readonly ModelInfo[] {
+  return (
+    Array.isArray(value) &&
+    value.every((item) => {
+      if (typeof item !== "object" || item === null) return false;
+      const rec = item as Record<string, unknown>;
+      if (typeof rec.id !== "string" || rec.id.length === 0) return false;
+      if (
+        rec.effortLevels !== undefined &&
+        (!Array.isArray(rec.effortLevels) || !rec.effortLevels.every((e) => typeof e === "string"))
+      ) {
+        return false;
+      }
+      if (
+        rec.serviceTiers !== undefined &&
+        (!Array.isArray(rec.serviceTiers) || !rec.serviceTiers.every((t) => typeof t === "string"))
+      ) {
+        return false;
+      }
+      return true;
+    })
+  );
 }
 
 /**

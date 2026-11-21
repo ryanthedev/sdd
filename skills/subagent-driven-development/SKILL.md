@@ -27,7 +27,7 @@ when_to_use: >-
 
 # Subagent-driven development
 
-The `sdd` MCP server delegates a scoped, fresh-context work unit (review, second opinion, implementation, image generation) to a CLI harness — `codex`, `agy`, or one of their siblings — that runs as a child process in the current working tree. Eight tools: `dispatch`, `status`, `result`, `wait`, `list_adapters`, `cancel`, `check_adapter`, `usage`. Claude stays the brain and owns the diff; the harness does one bounded task and reports back.
+The `sdd` MCP server delegates a scoped, fresh-context work unit (review, second opinion, implementation, image generation) to a CLI harness — `claude`, `codex`, `agy`, or one of their siblings — that runs as a child process in the current working tree. Nine tools: `dispatch`, `status`, `result`, `wait`, `list_adapters`, `list_models`, `cancel`, `check_adapter`, `usage`. Claude stays the brain and owns the diff; the harness does one bounded task and reports back.
 
 ## The honest value proposition
 
@@ -42,7 +42,7 @@ Don't oversell it as "async that Bash can't do" — that claim doesn't survive s
 
 `dispatch` returns a `jobId` immediately; it never blocks, and it **never refuses a job for concurrency reasons**. Every dispatch runs, right now, in parallel with everything else already running. There is no write-write guard, no read-during-write interlock, no mode: the server does not model which jobs read the tree and which write it. **You do.**
 
-Assume every agent harness can edit the tree you hand it. They all run unconditionally permissive — codex under `--sandbox workspace-write`, agy under `--dangerously-skip-permissions`, grok `--always-approve`, qwen `--yolo`, mistral `--auto-approve`, and kimi's `-p` mode forcing its own `auto` permission. sdd exposes no review-only, read-only, or sandboxed-from-the-tree dispatch. A prompt that says "just review, don't change anything" is a request, not a constraint.
+By default every agent harness runs permissively (so it can edit the tree you hand it). For reviews and read-only analysis, pass `readOnly: true` on `dispatch` — `claude` (`--permission-mode plan`), `codex` (`--sandbox read-only`), `agy` (`--sandbox --mode plan`), `grok` (`--permission-mode plan`), and `mistral` (`--agent plan`) enforce read-only natively; `kimi` and `qwen` reject `readOnly: true` loudly rather than silently running permissively.
 
 What follows is orchestration discipline you must apply yourself — advice, not a guarantee:
 
@@ -67,15 +67,15 @@ What follows is orchestration discipline you must apply yourself — advice, not
 
 | Want | Call |
 |---|---|
-| Balanced review / second opinion | `dispatch(adapter:"codex", prompt, cwd)` — default model, `medium` effort |
-| Deep analysis, subtle correctness, security-sensitive code | add `effort:"high"` |
-| Fast/cheap spot-check | add `effort:"low"` |
-| Hard coding on the flagship tier | add `model:"gpt-5.6-sol", effort:"high"` |
+| Balanced review / second opinion | `dispatch(adapter:"codex", readOnly:true, prompt, cwd)` — default model (`gpt-6.2-sol`), `medium` effort |
+| Deep analysis, subtle correctness, security-sensitive code | add `effort:"high"` or `effort:"xhigh"` (up to `"max"` / `"ultra"`) |
+| Fast/cheap spot-check | add `effort:"low"` (optionally `serviceTier:"priority"` or `"fast"`) |
+| Hard coding on the flagship tier | add `model:"gpt-6.2-astra", effort:"xhigh"` (call `list_models("codex")` for the live catalog) |
 
-**Per-call model and effort selection:**
-- Use the base `codex` adapter with `dispatch(adapter:"codex", model:"<name>", effort:"low|medium|high", ...)` to select model and effort at call time.
-- Example: `dispatch(adapter:"codex", model:"o3", effort:"high", prompt, cwd)` runs o3 with high reasoning effort.
-- Per-call `model` and `effort` are **allowlisted** — NOT arbitrary `-c key=value` config. codex always runs `--sandbox workspace-write` (it may edit the tree it is given); arbitrary config could escalate that to `-c sandbox_mode=danger-full-access` and let it out of the workspace entirely. The allowlist is the backstop.
+**Per-call model, effort, readOnly, and serviceTier selection:**
+- Call `list_models` to inspect live model IDs, default efforts, supported effort levels, and service tiers without guessing.
+- Use `dispatch(adapter:"codex", model:"<name>", effort:"low|medium|high|xhigh|max|ultra", serviceTier?:"fast|flex|priority", readOnly?:true, ...)`.
+- Per-call `model`, `effort`, and `serviceTier` are **allowlisted** — NOT arbitrary `-c key=value` config. `readOnly:true` switches codex to `--sandbox read-only`; otherwise it runs `--sandbox workspace-write`. `danger-full-access` is structurally unreachable.
 
 **Checking quota before you spend it:**
 - `usage(adapter:"codex")` reports the plan tier, each metered window's percent used, when it resets, and credit state. It reads codex's own account endpoint over the app-server protocol — **no model call, no tokens, no work unit** — so it is cheap to call before a fan-out.
@@ -87,11 +87,16 @@ What follows is orchestration discipline you must apply yourself — advice, not
 - Output contract: a `VERDICT:` line plus a `## Findings` section. Missing either, or a non-zero exit, is `failed` regardless of what else is in stdout.
 - codex does its own web verification when a review needs it — no extra step required from the caller.
 
+### claude — review / implement
+- Invokes `claude -p <prompt>` with `--no-session-persistence` (never clutters `/resume`).
+- Supports `model` (aliases `opus`, `sonnet`, `fable`, `haiku`, or any full model ID), `effort` (`low|medium|high|xhigh|max`, validated in the adapter because the CLI silently ignores unknown values), `addDir`, and `readOnly:true` (`--permission-mode plan` instead of `--dangerously-skip-permissions`).
+- Shares the `VERDICT:` + `## Findings` output contract, so it plugs straight into ensemble reviews alongside `codex`, `grok`, `kimi`, `qwen`, and `mistral`.
+
 ### agy — review / implement
-- **Flag order:** all flags go before `--print`; the prompt is the single argv element immediately after it. The adapter enforces this structurally, and you should keep the order if you ever construct an agy call outside this MCP. (Correction, verified against agy 1.1.5: this entry used to claim a trailing flag is "silently absorbed into the prompt text" and that "agy still exits 0". Both are false — agy rejects an unknown trailing flag with `flags provided but not defined` and exit 2, and an invalid value with exit 1, both before any model call. Keep the ordering as house style, not as a workaround.)
-- `opts.effort` reaches agy as `--effort low|medium|high`. It was silently ignored until 2026-07-21 — if you dispatched agy with an effort setting before then, it ran at the default.
+- **Flag order:** all flags go before `--print`; the prompt is the single argv element immediately after it. The adapter enforces this structurally, and you should keep the order if you ever construct an agy call outside this MCP.
+- `opts.effort` reaches agy as `--effort low|medium|high|xhigh|max` (verified against agy 1.5.14; `ultra` is rejected loudly). Call `list_models("agy")` for the live model roster.
+- `opts.readOnly: true` runs agy with `--sandbox --mode plan` (no `--dangerously-skip-permissions`), structurally preventing writes. Without `readOnly: true`, agy runs with `--dangerously-skip-permissions` and may edit the tree.
 - Output contract: the last line of output must be exactly `AGY_RESULT: DONE` or `AGY_RESULT: FAILED`. Parsing takes the **last** matching line, not the first — a harness that echoes the instruction back before its real verdict would otherwise fool a first-match parse.
-- agy runs with `--dangerously-skip-permissions` on **every** dispatch, including one you prompt as review-only. It will edit the tree if it decides to. Never dispatch it alongside another tree-writing job in the same `cwd`, and don't rely on a "just review" prompt to keep the tree clean.
 
 ### image generation — `kind: "image"` on agy or codex
 - Always pass an absolute `outputPath` (or one that resolves inside the job cwd) ending in `.png`. A bare relative filename risks the harness searching broadly for a match instead of writing where you meant.
@@ -109,12 +114,13 @@ For the common cases there are two plugin subagents that run the codex procedure
 
 | Job | Adapter |
 |---|---|
-| Code review, second opinion | `codex` or the review roster (`grok`, `kimi`, `qwen`, `mistral`) |
-| Deep review — subtle correctness, security-sensitive code | `codex` with `effort:"high"` (add `model:"gpt-5.6-sol"` for the flagship tier) |
-| Fast/cheap spot-check | `codex` with `effort:"low"` |
+| Code review, second opinion | `claude`, `codex`, or the review roster (`grok`, `kimi`, `qwen`, `mistral`); pass `readOnly:true` on harnesses that support it |
+| Deep review — subtle correctness, security-sensitive code | `codex` with `effort:"high"`/`"xhigh"`/`"max"` (add `model:"gpt-6.2-astra"` for flagship) or `claude` with `model:"opus", effort:"high"` |
+| Fast/cheap spot-check | `codex` with `effort:"low"` (optionally `serviceTier:"priority"`) |
+| What models & effort levels exist right now? | `list_models` — live catalog, no tokens, no work unit |
 | Am I about to hit a quota wall? | `usage` — no tokens, no work unit |
-| Ensemble review (multi-model, parallel) | fan out `codex` + `grok`/`kimi`/`qwen`/`mistral`, then rank with [recipe 3](references/recipes.md#3-ensemble-review-ranked) |
-| Implement a change in the working tree | `agy` or `codex` |
+| Ensemble review (multi-model, parallel) | fan out `claude` + `codex` + `grok`/`kimi`/`qwen`/`mistral`, then rank with [recipe 3](references/recipes.md#3-ensemble-review-ranked) |
+| Implement a change in the working tree | `claude`, `agy`, or `codex` |
 | Generate an image | `agy`, `codex`, or `grok` with `kind: "image"` + `outputPath` |
 | Fuse a transcript + keyframes into one understanding JSON | `agy` with `kind: "vision"`; `gemini` with `kind: "vision"` (same opts) when agy is out of quota or down |
 | Ingest a video from a URL | the `video-ingest` skill (`yt-dlp` → `whisper` ∥ `ffmpeg-frames` → agy `kind:"vision"`) |
@@ -140,7 +146,7 @@ Full per-harness capability + auth table: [`references/harnesses.md`](references
 
 ## 5. Tool surface
 
-`dispatch(adapter, prompt, cwd?, timeoutMs?) → jobId`, `status(jobId)`, `result(jobId)`, `wait(jobIds, timeoutMs?)`, `list_adapters()`, `cancel(jobId)`, `check_adapter(adapter, timeoutMs?, cwd?)`, `usage(adapter?, refresh?)`. Eight tools total. Full parameter and return-shape reference: the project [README](../../README.md).
+`dispatch(adapter, prompt, cwd?, timeoutMs?, model?, effort?, readOnly?, serviceTier?, addDir?, ...) → jobId`, `status(jobId)`, `result(jobId)`, `wait(jobIds, timeoutMs?)`, `list_adapters()`, `list_models(adapter?, refresh?)`, `cancel(jobId)`, `check_adapter(adapter, timeoutMs?, cwd?)`, `usage(adapter?, refresh?)`. Nine tools total. Full parameter and return-shape reference: the project [README](../../README.md).
 
 ## 6. Recipes: running it at full strength
 

@@ -1,6 +1,6 @@
 /**
- * MCP server construction. Builds an McpServer, registers the eight tools
- * (dispatch/status/result/wait/cancel/list_adapters/check_adapter/usage) over one shared Runtime
+ * MCP server construction. Builds an McpServer, registers the nine tools
+ * (dispatch/status/result/wait/cancel/list_adapters/list_models/check_adapter/usage) over one shared Runtime
  * (JobStore + adapters dir), and connects the stdio transport. Imported
  * dynamically by server.ts so a missing node_modules yields a clear startup
  * error instead of a cryptic module-resolution stack.
@@ -19,6 +19,7 @@ import { createCancelTool } from "./tools/cancel.ts";
 import { createCheckTool } from "./tools/check.ts";
 import { createDispatchTool } from "./tools/dispatch.ts";
 import { createListAdaptersTool } from "./tools/list-adapters.ts";
+import { createListModelsTool } from "./tools/list-models.ts";
 import { createResultTool } from "./tools/result.ts";
 import { governorDir } from "./lib/governor.ts";
 import { createRuntime, type Runtime } from "./tools/runtime.ts";
@@ -82,7 +83,7 @@ function defineTool<Shape extends z.ZodRawShape>(mod: ToolModule<Shape>): Regist
   };
 }
 
-/** Build the eight registration records over one shared Runtime. */
+/** Build the nine registration records over one shared Runtime. */
 function buildTools(rt: Runtime): RegisteredTool[] {
   return [
     defineTool(createDispatchTool(rt)),
@@ -91,13 +92,14 @@ function buildTools(rt: Runtime): RegisteredTool[] {
     defineTool(createWaitTool(rt)),
     defineTool(createCancelTool(rt)),
     defineTool(createListAdaptersTool(rt)),
+    defineTool(createListModelsTool(rt)),
     defineTool(createCheckTool(rt)),
     defineTool(createUsageTool(rt)),
   ];
 }
 
 /**
- * Build the server, register the eight tools over a fresh Runtime, connect
+ * Build the server, register the nine tools over a fresh Runtime, connect
  * stdio, and install clean-shutdown handlers. Resolves once the transport is
  * connected.
  */
