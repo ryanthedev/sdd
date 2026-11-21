@@ -31,8 +31,42 @@
  * a malformed `opts.model` before it ever reaches here) — this function only
  * guarantees ordering, it does not itself validate untrusted input.
  */
+import type { DispatchOpts } from "../types.ts";
+
+/** Verified against agy 1.5.14 (`agy --help`: low|medium|high|xhigh|max). */
+export const AGY_EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"] as const;
+const AGY_EFFORT_SET: ReadonlySet<string> = new Set(AGY_EFFORT_LEVELS);
+
 export function buildAgyArgv(subcommandFlags: string[], prompt: string): string[] {
   return ["agy", ...subcommandFlags, "--print", prompt];
+}
+
+/** Validate and append `--effort <level>` for any agy capability. */
+export function pushAgyEffortFlag(flags: string[], opts: DispatchOpts, label = "agy"): void {
+  const effort = opts.effort;
+  if (effort === undefined) return;
+  if (typeof effort !== "string" || !AGY_EFFORT_SET.has(effort)) {
+    throw new TypeError(
+      `${label}: opts.effort must be ${AGY_EFFORT_LEVELS.map((e) => `"${e}"`).join(" | ")} if provided, got: ${JSON.stringify(effort)}`,
+    );
+  }
+  flags.push("--effort", effort);
+}
+
+/** Validate and append `<flag> <value>` when `opts[key]` is present. */
+export function pushAgyOptionalStringFlag(
+  flags: string[],
+  opts: DispatchOpts,
+  key: string,
+  flag: string,
+  label = "agy",
+): void {
+  const value = opts[key];
+  if (value === undefined) return;
+  if (typeof value !== "string" || value.length === 0) {
+    throw new TypeError(`${label}: opts.${key} must be a non-empty string if provided, got: ${JSON.stringify(value)}`);
+  }
+  flags.push(flag, value);
 }
 
 /**

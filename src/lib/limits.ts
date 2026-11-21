@@ -198,7 +198,7 @@ function remember(key: string, result: LimitsResult): LimitsResult {
   return result;
 }
 
-type RpcResult = { ok: true; result: unknown } | { ok: false; error: string };
+export type RpcResult = { ok: true; result: unknown } | { ok: false; error: string };
 
 /**
  * The stdout reader type, derived from the runtime rather than spelled out:
@@ -243,7 +243,13 @@ type StdoutReader = ReturnType<typeof getStdoutReader>;
  * Subprocess object is collected — `Bun.gc(true)` drops them back to baseline.
  * That is GC latency, not a leak; there is no unbounded growth to fix here.
  */
-async function requestJsonRpc(binary: string, args: string[], method: string, timeoutMs: number): Promise<RpcResult> {
+export async function requestJsonRpc(
+  binary: string,
+  args: string[],
+  method: string,
+  timeoutMs: number,
+  params: unknown = null,
+): Promise<RpcResult> {
   let child: Bun.Subprocess<"pipe", "pipe", "pipe">;
   try {
     // `detached: true` puts the child in its own process GROUP so `reap` can
@@ -271,7 +277,7 @@ async function requestJsonRpc(binary: string, args: string[], method: string, ti
   // It is abandoned deliberately — but it must carry a catch handler, or a late
   // rejection from an abandoned promise surfaces as an unhandled rejection and
   // can take the process down.
-  const exchange = runExchange(child, reader, abort, binary, method);
+  const exchange = runExchange(child, reader, abort, binary, method, params);
   exchange.catch(() => {});
 
   try {
@@ -375,6 +381,7 @@ async function runExchange(
   abort: { aborted: boolean },
   binary: string,
   method: string,
+  params: unknown,
 ): Promise<RpcResult> {
   try {
     const write = (msg: unknown): void => {
@@ -397,7 +404,7 @@ async function runExchange(
         if (msg.error) return { ok: false, error: `initialize rejected: ${JSON.stringify(msg.error).slice(0, 300)}` };
         sawInit = true;
         write({ jsonrpc: "2.0", method: "initialized", params: null });
-        write({ jsonrpc: "2.0", id: CALL_ID, method, params: null });
+        write({ jsonrpc: "2.0", id: CALL_ID, method, params });
         continue;
       }
       if (msg.id === CALL_ID) {

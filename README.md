@@ -31,11 +31,11 @@ Three moves, and the first one never blocks:
 2. Check in with `status`, or block on `wait` until it's done.
 3. Collect the structured result with `result`.
 
-Eight MCP tools drive the whole thing: `dispatch`, `status`, `result`, `wait`, `cancel`, `list_adapters`, `check_adapter`, and `usage`. Job state lives in memory for the session, so a server restart clears it; what persists is one line per finished job in the spend ledger (`~/.local/state/sdd/ledger.jsonl`), which `usage` reads.
+Nine MCP tools drive the whole thing: `dispatch`, `status`, `result`, `wait`, `cancel`, `list_adapters`, `list_models`, `check_adapter`, and `usage`. Job state lives in memory for the session, so a server restart clears it; what persists is one line per finished job in the spend ledger (`~/.local/state/sdd/ledger.jsonl`), which `usage` reads.
 
 You could background a process from Bash and grep its stdout. What you'd be missing is the backstop: every adapter validates an output-contract marker before it calls a job `done`, so a harness that exits 0 without doing the work gets reported as `failed` instead of quietly passing. A misparsed flag, a swallowed prompt, a model that answered the wrong question. Those show up as failures here. In a shell one-liner they show up as a green checkmark.
 
-One thing that's on you, not the server: every agent harness runs wide open (it can edit the tree you hand it), and every dispatch runs in parallel. So if two jobs would write the same directory, keeping them apart is the caller's job. sdd serializes nothing.
+One thing that's on you, not the server: writable agent dispatches run in parallel with no server-side locking. Pass `readOnly: true` for reviews (enforced natively on `claude`, `codex`, `agy`, `grok`, and `mistral`), and if two writable jobs would touch the same directory, keeping them apart is the caller's job. sdd serializes nothing.
 
 ## Install
 
@@ -65,13 +65,14 @@ bun run src/lib/preflight.ts    # tells you what's present, what's missing
 
 ## The adapters
 
-Eleven ship today, and the ones that do more than one thing expose the extras as *kinds* on the same name (`agy` has `default`/`image`/`vision`; `codex` and `grok` have `default`/`image`; `gemini` has `default`/`vision`). `list_adapters` shows you which ones are installed, `check_adapter` tells you whether one is actually logged in and usable (installed isn't the same as usable), and `usage` tells you how much quota is left.
+Twelve ship today, and the ones that do more than one thing expose the extras as *kinds* on the same name (`agy` has `default`/`image`/`vision`; `codex` and `grok` have `default`/`image`; `gemini` has `default`/`vision`). `list_adapters` shows you which ones are installed (plus supported effort levels and `readOnly`), `list_models` queries live model catalogs and effort tiers (`codex`, `agy`, `grok`, `claude`), `check_adapter` tells you whether one is actually logged in and usable, and `usage` tells you how much quota is left.
 
 | Group | Adapters | For |
 |---|---|---|
-| Agent harnesses | `codex` | Review, second opinions, implementation. Pick the tier per call with `model` + `effort`; there are no pinned variants to remember |
-| | `agy` | Review / implement |
-| | `grok`, `kimi`, `qwen`, `mistral` | Second opinions from xAI, Moonshot, Alibaba, and Mistral |
+| Agent harnesses | `claude` | Review, second opinions, implementation via `claude -p --no-session-persistence`. Supports `model`, `effort` (`low..max`), `readOnly`, and `addDir` |
+| | `codex` | Review, second opinions, implementation. Pick the tier per call with `model` + `effort` (`low..ultra`) + `serviceTier`; supports `readOnly` and `addDir` |
+| | `agy` | Review / implement. Supports `model`, `effort` (`low..max`), `readOnly`, and `addDir` |
+| | `grok`, `kimi`, `qwen`, `mistral` | Second opinions from xAI, Moonshot, Alibaba, and Mistral (`readOnly` supported on `grok`/`mistral`; `model` on `grok`/`kimi`) |
 | Image + vision | `agy` / `codex` / `grok` + `kind: "image"` | Text to a PNG (agy: Nano Banana; codex: imagegen skill; grok: imagine skill) |
 | | `agy` + `kind: "vision"` | Fuse a transcript + keyframes into one understanding JSON |
 | | `gemini` + `kind: "vision"` | The same fusion over the Gemini API on Flash-Lite, for when agy is out of quota: same opts, same JSON, about $0.007 for a 2-minute reel |
@@ -81,10 +82,11 @@ Eleven ship today, and the ones that do more than one thing expose the extras as
 
 ### What's paying for what
 
-Two of the harnesses ride an account you already log into. Five want an API key. Four are free. Worth knowing which is which before you fan out, because "spend the surplus I already bought" and "meter myself a few cents per review" are different decisions:
+Three of the harnesses ride an account you already log into. Five want an API key. Four are free. Worth knowing which is which before you fan out, because "spend the surplus I already bought" and "meter myself a few cents per review" are different decisions:
 
 | Harness | Auth | What a job costs |
 |---|---|---|
+| `claude` | Claude Code login flow or `ANTHROPIC_API_KEY` | Plan quota (or API key). |
 | `codex` | OpenAI/ChatGPT login flow | Plan quota you've already paid for. `usage` shows what's left and when it resets. |
 | `agy` | its own login flow | Account-backed, same shape as codex. No per-token key to fund. |
 | `grok`, `kimi`, `qwen`, `mistral` | one env var each (`XAI_API_KEY`, `MOONSHOT_API_KEY`, `DASHSCOPE_API_KEY`, `MISTRAL_API_KEY`) | Metered per token. Cheap for a review, but it's real spend, so fan these out deliberately. |

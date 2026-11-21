@@ -40,12 +40,17 @@
  */
 import * as agyImage from "./_agy-image.ts";
 import * as agyVision from "./_agy-vision.ts";
-import { buildAgyArgv, lastMarkerMatch } from "./_agy-shared.ts";
+import { AGY_EFFORT_LEVELS, buildAgyArgv, lastMarkerMatch, pushAgyEffortFlag, pushAgyOptionalStringFlag } from "./_agy-shared.ts";
 import { DEFAULT_KIND } from "./types.ts";
-import type { Capability, MultiAdapterModule } from "./types.ts";
-import type { AdapterResult, DispatchOpts } from "../types.ts";
+import type { Capability, ModelsProbe, MultiAdapterModule } from "./types.ts";
+import type { AdapterResult, DispatchOpts, ModelInfo } from "../types.ts";
+import { resolveOptionalAddDir, resolveReadOnly } from "../lib/path-barricade.ts";
 
 export const name = "agy";
+
+/** Verified against agy 1.5.14 (`agy --help`). */
+export const effortLevels = AGY_EFFORT_LEVELS;
+export const supportsReadOnly = true;
 
 /**
  * Marker line the harness must echo verbatim to confirm a real outcome.
@@ -56,33 +61,22 @@ export const name = "agy";
 const RESULT_MARKER_RE = /^AGY_RESULT:\s*(DONE|FAILED)\s*$/gm;
 
 export function buildArgs(prompt: string, opts: DispatchOpts): string[] {
+  const readOnly = resolveReadOnly(name, opts, true);
+  const addDir = resolveOptionalAddDir(name, opts);
   const flags: string[] = [];
-  pushOptionalStringFlag(flags, opts, "model", "--model");
-  pushEffortFlag(flags, opts);
-  // SECURITY / headless posture (mirrors agy-image, see that file's header):
-  // agy's `--print` is non-interactive, so an implement (write) job cannot be
-  // asked to confirm its edits at a TTY — without auto-approval it hangs until
-  // the print timeout. agy 1.1.5 has no per-tool allowlist, so we use the blunt
-  // knobs as defense-in-depth: `--sandbox` restricts the terminal (an agent
-  // steered by an injected task cannot spawn a shell or reach the network) and
-  // `--dangerously-skip-permissions` auto-approves the edits INSIDE that
-  // sandbox. `--sandbox` is a BOOLEAN flag (takes no value) and is always on
-  // here. Unlike agy-image, the prompt is NOT fenced as untrusted data — for a
-  // review/implement harness the prompt legitimately IS the task the agent must
-  // follow; the injection risk is inherent to delegating a task and is the
-  // accepted v1 posture (same-cwd, real env).
-  //
-  // NOT "only two permission knobs" (a claim this file used to make): agy 1.1.5
-  // also exposes `--mode {accept-edits,plan}` and `--agent`. `--mode plan` is a
-  // genuine non-writing mode and is the obvious way to offer a read-only
-  // dispatch — deliberately NOT emitted here, because this adapter's contract
-  // is "may edit the tree" and silently making it read-only would break callers
-  // who dispatch agy to implement. Adding a read-only mode is a product
-  // decision, not something to smuggle in via a flag.
-  //
+  pushAgyOptionalStringFlag(flags, opts, "model", "--model");
+  pushAgyEffortFlag(flags, opts);
+  if (addDir !== undefined) flags.push("--add-dir", addDir);
+
+  // SECURITY / headless posture:
+  //   - Default (writable): `--sandbox --dangerously-skip-permissions`
+  //   - `readOnly: true`: `--sandbox --mode plan` (structurally non-writing;
+  //     verified against agy 1.5.14: exits 0 cleanly in --print mode without
+  //     needing --dangerously-skip-permissions).
   // Structural flag order: `buildAgyArgv` always pushes `--print` and the
   // prompt last, in that order — nothing lands after the prompt.
-  return buildAgyArgv(["--sandbox", "--dangerously-skip-permissions", ...flags], prompt);
+  const modeFlags = readOnly ? ["--sandbox", "--mode", "plan"] : ["--sandbox", "--dangerously-skip-permissions"];
+  return buildAgyArgv([...modeFlags, ...flags], prompt);
 }
 
 export function injectContract(prompt: string): string {
@@ -116,36 +110,34 @@ export function parseResult(stdout: string, stderr: string, exitCode: number): A
 }
 
 /**
- * Append `--effort <level>` when `opts.effort` is present. agy 1.1.5 accepts
- * `--effort low|medium|high`; this adapter previously ignored `opts.effort`
- * entirely, so a caller asking for high effort silently got the default. An
- * out-of-range value throws rather than being dropped — a job that quietly ran
- * at the wrong effort is worse than one that refuses to start.
+ * Live model-catalog probe via `agy models`. Pure data; executed by
+ * `src/lib/models.ts`. Verified against agy 1.5.14.
  */
-function pushEffortFlag(flags: string[], opts: DispatchOpts): void {
-  const effort = opts.effort;
-  if (effort === undefined) return;
-  if (typeof effort !== "string" || !AGY_EFFORT_LEVELS.has(effort)) {
-    throw new TypeError(`agy: opts.effort must be "low" | "medium" | "high" if provided, got: ${JSON.stringify(effort)}`);
-  }
-  flags.push("--effort", effort);
-}
-
-/** Mirrors agy 1.1.5's `--effort` allowlist (low|medium|high), verified via `agy --help`. */
-const AGY_EFFORT_LEVELS: ReadonlySet<string> = new Set(["low", "medium", "high"]);
+export const readModels: ModelsProbe = {
+  transport: "cli-stdout",
+  binary: "agy",
+  args: ["models"],
+};
 
 /**
- * Append `flag <value>` to `flags` when `opts[key]` is present. Present but
- * malformed (non-string / empty) throws — this is untrusted external input
- * (an MCP client's opts), validated at entry rather than silently ignored.
+ * Parse `agy models` stdout (`<id>   <Display Name>` per line, stripping any
+ * leading `\r`-delimited spinner frames). Tolerant: skips non-matching lines.
  */
-function pushOptionalStringFlag(flags: string[], opts: DispatchOpts, key: string, flag: string): void {
-  const value = opts[key];
-  if (value === undefined) return;
-  if (typeof value !== "string" || value.length === 0) {
-    throw new TypeError(`agy: opts.${key} must be a non-empty string if provided, got: ${JSON.stringify(value)}`);
+export function parseModels(raw: unknown): ModelInfo[] {
+  if (typeof raw !== "string") return [];
+  const out: ModelInfo[] = [];
+  for (const rawLine of raw.split("\n")) {
+    // Strip trailing \r (CRLF) before splitting on spinner \r frames so the
+    // final segment is never empty on CRLF input.
+    const segment = rawLine.replace(/\r+$/, "").split("\r").at(-1)?.trim() ?? "";
+    if (!segment) continue;
+    const match = /^([a-z0-9][a-z0-9._-]+)(?:\t|\s{2,})(.+)$/.exec(segment);
+    if (!match) continue;
+    const id = match[1]!;
+    const displayName = match[2]!.trim();
+    out.push({ id, displayName, effortLevels: [...effortLevels] });
   }
-  flags.push(flag, value);
+  return out;
 }
 
 /**
@@ -179,5 +171,13 @@ export const defaultKind = DEFAULT_KIND;
 // Compile-time-only proof that this module's exports satisfy the multi-
 // capability port shape — discoverAdapters duck-types at runtime, so this is
 // the only place a signature drift would be caught by tsc.
-const _check: MultiAdapterModule = { name, capabilities, defaultKind };
+const _check: MultiAdapterModule = {
+  name,
+  capabilities,
+  defaultKind,
+  effortLevels,
+  supportsReadOnly,
+  readModels,
+  parseModels,
+};
 void _check;

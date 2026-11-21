@@ -58,6 +58,53 @@ test("buildArgs rejects a non-string opts.model rather than silently dropping it
   expect(() => agy.buildArgs("p", { model: 42 as unknown as string })).toThrow(TypeError);
 });
 
+test("agy supports low..max effort, rejects ultra/bogus, supports readOnly and addDir", () => {
+  for (const effort of ["low", "medium", "high", "xhigh", "max"]) {
+    expect(agy.buildArgs("p", { effort })).toContain(effort);
+  }
+  expect(() => agy.buildArgs("p", { effort: "ultra" })).toThrow(TypeError);
+  expect(() => agy.buildArgs("p", { effort: "bogus" })).toThrow(TypeError);
+
+  const ro = agy.buildArgs("review", { readOnly: true, addDir: "/abs/extra", effort: "xhigh" });
+  expect(ro).toEqual(["agy", "--sandbox", "--mode", "plan", "--effort", "xhigh", "--add-dir", "/abs/extra", "--print", "review"]);
+  expect(ro).not.toContain("--dangerously-skip-permissions");
+
+  expect(() => agy.buildArgs("p", { addDir: "../escape", cwd: "/tmp/work" })).toThrow(TypeError);
+});
+
+test("agy.parseModels parses `agy models` stdout in both piped (tab), TTY (padded), and CRLF forms", () => {
+  const sample =
+    "\r⠋ Fetching available models...\rgemini-4-neon-xhigh            Gemini 4 Neon (XHigh)\r\n" +
+    "claude-opus-5-5-high\tClaude Opus 5.5 (High)\r\n" +
+    "\r\n";
+  expect(agy.parseModels(sample)).toEqual([
+    {
+      id: "gemini-4-neon-xhigh",
+      displayName: "Gemini 4 Neon (XHigh)",
+      effortLevels: ["low", "medium", "high", "xhigh", "max"],
+    },
+    {
+      id: "claude-opus-5-5-high",
+      displayName: "Claude Opus 5.5 (High)",
+      effortLevels: ["low", "medium", "high", "xhigh", "max"],
+    },
+  ]);
+  expect(agy.parseModels(123)).toEqual([]);
+});
+
+test("agy image kind honors model/effort and rejects readOnly", () => {
+  const argv = agy.capabilities.image!.buildArgs("draw a cat", {
+    outputPath: "/abs/cat.png",
+    model: "gemini-4-neon-high",
+    effort: "xhigh",
+  });
+  expect(argv).toContain("--model");
+  expect(argv).toContain("gemini-4-neon-high");
+  expect(argv).toContain("--effort");
+  expect(argv).toContain("xhigh");
+  expect(() => agy.capabilities.image!.buildArgs("draw", { outputPath: "/abs/cat.png", readOnly: true })).toThrow(TypeError);
+});
+
 // ── DW-4.2: exit-0 silent-misparse backstop — missing marker -> failed. ────
 
 test("test_DW_4_2_missing_marker_on_exit_0_is_failed_misparse_backstop", () => {

@@ -29,14 +29,32 @@
  */
 import type { AdapterResult, DispatchOpts } from "../types.ts";
 import type { FlatAdapterModule } from "./types.ts";
+import { resolveOptionalAddDir, resolveReadOnly } from "../lib/path-barricade.ts";
 import { injectReviewContract, parseReviewResult } from "../lib/review-contract.ts";
 
 export const name = "kimi";
+/** Verified against kimi-code 0.22.3: `kimi --plan -p` exits 1 ("Cannot combine --prompt with --plan."). */
+export const supportsReadOnly = false;
 
-export function buildArgs(prompt: string, _opts: DispatchOpts): string[] {
+export function buildArgs(prompt: string, opts: DispatchOpts): string[] {
+  // Reject readOnly loudly: kimi refuses `--plan` alongside `-p`, so silently
+  // dropping it would run permissively when the caller asked for read-only.
+  resolveReadOnly(name, opts, false);
+  const addDir = resolveOptionalAddDir(name, opts);
+
   // No approval flag: kimi refuses `--yolo`/`--auto` alongside `-p` (see header).
   // `-p` stays second-to-last so the prompt is the LAST argv element.
-  return ["kimi", "-p", prompt];
+  const argv = ["kimi"];
+  const { model } = opts;
+  if (model !== undefined) {
+    if (typeof model !== "string" || model.length === 0) {
+      throw new TypeError(`kimi: opts.model must be a non-empty string if provided, got ${typeof model}`);
+    }
+    argv.push("-m", model);
+  }
+  if (addDir !== undefined) argv.push("--add-dir", addDir);
+  argv.push("-p", prompt);
+  return argv;
 }
 
 export const injectContract = injectReviewContract;
@@ -45,5 +63,5 @@ export function parseResult(stdout: string, _stderr: string, exitCode: number): 
   return parseReviewResult(name, stdout, exitCode);
 }
 
-const _check: FlatAdapterModule = { name, buildArgs, injectContract, parseResult };
+const _check: FlatAdapterModule = { name, supportsReadOnly, buildArgs, injectContract, parseResult };
 void _check;

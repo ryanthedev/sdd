@@ -243,16 +243,24 @@ test("test_DW_1_5_out_of_enum_effort_rejected_at_tool_boundary", () => {
   // the handler runs — exercise that exact schema.
   const schema = z.object(dispatchInputShape);
 
-  const bad = schema.safeParse({ adapter: "codex", prompt: "p", effort: "max" });
+  const bad = schema.safeParse({ adapter: "codex", prompt: "p", effort: "ludicrous" });
   expect(bad.success).toBe(false);
 
-  for (const effort of ["low", "medium", "high"]) {
+  for (const effort of ["low", "medium", "high", "xhigh", "max", "ultra"]) {
     expect(schema.safeParse({ adapter: "codex", prompt: "p", effort }).success).toBe(true);
   }
-  // model is a free (non-empty) string — the codex adapter's allowlist, not
+  // model is a free (non-empty) string — the adapter's allowlist, not
   // the schema, is what constrains its use.
   expect(schema.safeParse({ adapter: "codex", prompt: "p", model: "" }).success).toBe(false);
-  expect(schema.safeParse({ adapter: "codex", prompt: "p", model: "o3" }).success).toBe(true);
+  expect(schema.safeParse({ adapter: "codex", prompt: "p", model: "gpt-6.2-sol" }).success).toBe(true);
+
+  // readOnly and serviceTier schema validation
+  expect(schema.safeParse({ adapter: "codex", prompt: "p", readOnly: true }).success).toBe(true);
+  expect(schema.safeParse({ adapter: "codex", prompt: "p", readOnly: "yes" }).success).toBe(false);
+  for (const serviceTier of ["fast", "flex", "priority"]) {
+    expect(schema.safeParse({ adapter: "codex", prompt: "p", serviceTier }).success).toBe(true);
+  }
+  expect(schema.safeParse({ adapter: "codex", prompt: "p", serviceTier: "turbo" }).success).toBe(false);
 });
 
 test("test_DW_1_5_forwarded_keys_inert_for_adapters_that_do_not_read_them", () => {
@@ -431,10 +439,15 @@ test("test_DW_3_3_list_adapters_reports_codex_from_real_adapters_dir", async () 
   const res = await listAdapters.handler({});
   const adapters = structured(res).adapters as { name: string; binaryPresent: boolean }[];
 
-  const codexEntry = adapters.find((a) => a.name === "codex");
+  const codexEntry = adapters.find((a) => a.name === "codex") as
+    | { name: string; binaryPresent: boolean; effortLevels?: string[]; supportsReadOnly?: boolean; supportsModels?: boolean }
+    | undefined;
   expect(codexEntry).toBeDefined();
   expect(typeof codexEntry!.binaryPresent).toBe("boolean");
-  // The rendered line carries the name + PATH verdict, and nothing else.
+  expect(codexEntry!.effortLevels).toEqual(["low", "medium", "high", "xhigh", "max", "ultra"]);
+  expect(codexEntry!.supportsReadOnly).toBe(true);
+  expect(codexEntry!.supportsModels).toBe(true);
+  // The rendered line carries the name + PATH verdict prefix.
   expect(res.content[0]!.text).toContain(`codex — binary ${codexEntry!.binaryPresent ? "present" : "MISSING"} on PATH`);
 });
 

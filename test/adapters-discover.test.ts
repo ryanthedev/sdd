@@ -255,3 +255,48 @@ test("a readLimits with a non-string arg is rejected — argv must be all string
   const logs = captureStderr(() => discoverAdapters(dir));
   expect(logs.find((l) => l.includes("bad-args.ts"))).toContain("readLimits");
 });
+
+test("readModels + parseModels load together and reject half-declared or malformed probes", () => {
+  const dir = freshDir();
+  writeAdapterFile(
+    dir,
+    "good-models.ts",
+    `${VALID_ADAPTER.replace('"fixture"', '"good-models"')}
+     export const effortLevels = ["low", "high"];
+     export const supportsReadOnly = true;
+     export const models = [{ id: "m1", effortLevels: ["low"] }];
+     export const readModels = { transport: "cli-stdout", binary: "echo", args: ["m1"] };
+     export function parseModels() { return []; }`,
+  );
+  writeAdapterFile(
+    dir,
+    "half-models.ts",
+    `${VALID_ADAPTER.replace('"fixture"', '"half-models"')}
+     export const readModels = { transport: "cli-stdout", binary: "echo", args: ["m1"] };`,
+  );
+  writeAdapterFile(
+    dir,
+    "bad-effort.ts",
+    `${VALID_ADAPTER.replace('"fixture"', '"bad-effort"')}
+     export const effortLevels = ["low", 42];`,
+  );
+  writeAdapterFile(
+    dir,
+    "bad-models-list.ts",
+    `${VALID_ADAPTER.replace('"fixture"', '"bad-models-list"')}
+     export const models = [{ id: "m1", effortLevels: "not-an-array" }];`,
+  );
+
+  let adapters: Adapter[] = [];
+  const logs = captureStderr(() => {
+    adapters = discoverAdapters(dir);
+  });
+
+  expect(adapters.map((a) => a.name)).toEqual(["good-models"]);
+  expect(adapters[0]!.effortLevels).toEqual(["low", "high"]);
+  expect(adapters[0]!.supportsReadOnly).toBe(true);
+  expect(adapters[0]!.readModels?.transport).toBe("cli-stdout");
+  expect(logs.some((l) => l.includes("half-models.ts") && l.includes("parseModels"))).toBe(true);
+  expect(logs.some((l) => l.includes("bad-effort.ts") && l.includes("effortLevels"))).toBe(true);
+  expect(logs.some((l) => l.includes("bad-models-list.ts") && l.includes("models"))).toBe(true);
+});

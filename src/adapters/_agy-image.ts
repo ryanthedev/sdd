@@ -53,7 +53,7 @@
  * (shared with `agy.ts`) so the flag-order and marker-collision fixes exist
  * exactly once.
  */
-import { buildAgyArgv } from "./_agy-shared.ts";
+import { buildAgyArgv, pushAgyEffortFlag, pushAgyOptionalStringFlag } from "./_agy-shared.ts";
 import {
   appendSavePath,
   injectImageContract,
@@ -61,6 +61,7 @@ import {
   parseImageResult,
   resolveImageOutputPath,
 } from "../lib/image-contract.ts";
+import { resolveReadOnly } from "../lib/path-barricade.ts";
 import type { Capability } from "./types.ts";
 import type { AdapterResult, DispatchOpts } from "../types.ts";
 
@@ -81,24 +82,13 @@ const HARNESS_LABEL = "agy-image";
 const SAVED_MARKER_RE = markerFor("AGY_IMAGE_SAVED");
 
 export function buildArgs(prompt: string, opts: DispatchOpts): string[] {
+  resolveReadOnly(HARNESS_LABEL, opts, false);
   const outPath = resolveImageOutputPath(HARNESS_LABEL, opts);
-  // agy 1.1.5 has no --image/--out flags — image gen is a built-in agent
-  // capability driven through the prompt. injectContract ran first (before opts
-  // was available) and referenced "the absolute path given below"; we append
-  // that concrete path here, as the tail of the prompt. Flag-order: --print
-  // immediately precedes the prompt, and the prompt is always the last argv
-  // element (see agy.ts).
-  //
-  // SECURITY (see header): --print is non-interactive, so the agent cannot be
-  // asked to confirm the PNG write at a TTY — it would block until timeout.
-  // agy 1.1.5 exposes no scoped tool allowlist, only two blunt knobs, so we
-  // use BOTH as defense-in-depth: --sandbox enables terminal restrictions
-  // (a prompt-injected agent cannot spawn a shell or reach the network), and
-  // --dangerously-skip-permissions auto-approves the one thing left — the file
-  // write — inside that sandbox. Verified: this combination still generates and
-  // writes the PNG (incl. to a path outside cwd).
+  const flags = ["--sandbox", "--dangerously-skip-permissions"];
+  pushAgyOptionalStringFlag(flags, opts, "model", "--model", HARNESS_LABEL);
+  pushAgyEffortFlag(flags, opts, HARNESS_LABEL);
   const withPath = appendSavePath(prompt, outPath);
-  return buildAgyArgv(["--sandbox", "--dangerously-skip-permissions"], withPath);
+  return buildAgyArgv(flags, withPath);
 }
 
 export function injectContract(prompt: string): string {

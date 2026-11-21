@@ -151,3 +151,57 @@ test("grok still ignores effort — it does not validate the value, so a passthr
     grok.capabilities.image!.buildArgs("p", { outputPath: "/a/b.png" }),
   );
 });
+
+test("grok supports readOnly, addDir, and parseModels; image kind rejects readOnly", () => {
+  expect(grok.buildArgs("review", { readOnly: true, addDir: "/abs/d" })).toEqual([
+    "grok",
+    "--permission-mode",
+    "plan",
+    "--add-dir",
+    "/abs/d",
+    "-p",
+    "review",
+  ]);
+  expect(() => grok.capabilities.image!.buildArgs("x", { outputPath: "/abs/o.png", readOnly: true })).toThrow(TypeError);
+
+  const sample = [
+    "You are using XAI_API_KEY.",
+    "",
+    "Default model: grok-4.20-0309-non-reasoning",
+    "",
+    "Available models:",
+    "  * grok-4.20-0309-non-reasoning (default)",
+    "  - grok-4.7",
+  ].join("\n");
+  expect(grok.parseModels(sample)).toEqual([
+    { id: "grok-4.20-0309-non-reasoning", isDefault: true },
+    { id: "grok-4.7" },
+  ]);
+});
+
+test("kimi honors model and addDir, and rejects readOnly loudly", () => {
+  expect(kimi.buildArgs("p", { model: "kimi-k2", addDir: "/abs/d" })).toEqual([
+    "kimi",
+    "-m",
+    "kimi-k2",
+    "--add-dir",
+    "/abs/d",
+    "-p",
+    "p",
+  ]);
+  expect(() => kimi.buildArgs("p", { model: "" })).toThrow(TypeError);
+  expect(() => kimi.buildArgs("p", { readOnly: true })).toThrow(TypeError);
+});
+
+test("mistral supports readOnly (--agent plan) and addDir; qwen rejects readOnly loudly", () => {
+  expect(mistral.buildArgs("review", { readOnly: true, addDir: "/abs/d" })).toEqual([
+    "vibe",
+    "--agent",
+    "plan",
+    "--add-dir",
+    "/abs/d",
+    "-p",
+    "review",
+  ]);
+  expect(() => qwen.buildArgs("review", { readOnly: true })).toThrow(TypeError);
+});

@@ -166,9 +166,82 @@ test("codex.buildArgs with effort only emits -c but no -m", () => {
 
 // Defense-in-depth: JobStore.dispatch is callable programmatically (bypassing
 // the dispatch tool's zod enum), so the adapter re-validates and fails LOUD.
-test("codex.buildArgs throws TypeError on an out-of-enum effort (programmatic path)", () => {
-  expect(() => codex.buildArgs("p", { effort: "max" })).toThrow(TypeError);
+test("codex.buildArgs accepts all six effort tiers and throws TypeError on invalid values", () => {
+  for (const effort of ["low", "medium", "high", "xhigh", "max", "ultra"]) {
+    expect(codex.buildArgs("p", { effort })).toEqual([
+      "codex",
+      "exec",
+      "-c",
+      `model_reasoning_effort=${effort}`,
+      "--sandbox",
+      "workspace-write",
+      "p",
+    ]);
+  }
+  expect(() => codex.buildArgs("p", { effort: "bogus" })).toThrow(TypeError);
   expect(() => codex.buildArgs("p", { effort: 3 })).toThrow(TypeError);
+});
+
+test("codex.buildArgs supports readOnly, serviceTier, and addDir while keeping sandbox barricade", () => {
+  const argv = codex.buildArgs("review", {
+    model: "gpt-6.2-astra",
+    effort: "xhigh",
+    serviceTier: "priority",
+    addDir: "/abs/extra",
+    readOnly: true,
+  });
+  expect(argv).toEqual([
+    "codex",
+    "exec",
+    "-m",
+    "gpt-6.2-astra",
+    "-c",
+    "model_reasoning_effort=xhigh",
+    "-c",
+    "service_tier=priority",
+    "--add-dir",
+    "/abs/extra",
+    "--sandbox",
+    "read-only",
+    "review",
+  ]);
+  expect(() => codex.buildArgs("p", { serviceTier: "turbo" })).toThrow(TypeError);
+  expect(() => codex.buildArgs("p", { addDir: "../escape", cwd: "/tmp/work" })).toThrow(TypeError);
+});
+
+test("codex.parseModels normalizes model/list payload and drops hidden models", () => {
+  const raw = {
+    data: [
+      {
+        id: "gpt-6.2-sol",
+        displayName: "GPT-6.2-Sol",
+        description: "Fast coding model",
+        isDefault: true,
+        hidden: false,
+        defaultReasoningEffort: "low",
+        supportedReasoningEfforts: [
+          { reasoningEffort: "low", description: "fast" },
+          { reasoningEffort: "ultra", description: "max delegation" },
+        ],
+        serviceTiers: [{ id: "priority", name: "Fast", description: "2x" }],
+        additionalSpeedTiers: ["fast"],
+      },
+      { id: "hidden-internal", hidden: true },
+    ],
+  };
+  const parsed = codex.parseModels(raw);
+  expect(parsed).toEqual([
+    {
+      id: "gpt-6.2-sol",
+      displayName: "GPT-6.2-Sol",
+      description: "Fast coding model",
+      isDefault: true,
+      effortLevels: ["low", "ultra"],
+      defaultEffort: "low",
+      serviceTiers: ["priority", "fast"],
+    },
+  ]);
+  expect(codex.parseModels(null)).toEqual([]);
 });
 
 test("codex.buildArgs throws TypeError on a non-string or empty model (programmatic path)", () => {
@@ -305,12 +378,14 @@ test("the image kind puts the save path in the prompt and keeps it last in argv"
   expect(argv).toContain("workspace-write");
 });
 
-test("the image kind still honors the model/effort allowlist, and still rejects bad values", () => {
-  const argv = codex.capabilities.image!.buildArgs("x", { outputPath: "/abs/o.png", model: "gpt-5.6-sol" });
+test("the image kind still honors the model/effort allowlist, and still rejects bad values and readOnly", () => {
+  const argv = codex.capabilities.image!.buildArgs("x", { outputPath: "/abs/o.png", model: "gpt-6.2-sol", effort: "xhigh" });
   expect(argv).toContain("-m");
-  expect(argv).toContain("gpt-5.6-sol");
+  expect(argv).toContain("gpt-6.2-sol");
+  expect(argv).toContain("model_reasoning_effort=xhigh");
   // Same trust boundary as the default kind — one shared allowlist, not a copy.
-  expect(() => codex.capabilities.image!.buildArgs("x", { outputPath: "/abs/o.png", effort: "max" })).toThrow(TypeError);
+  expect(() => codex.capabilities.image!.buildArgs("x", { outputPath: "/abs/o.png", effort: "bogus" })).toThrow(TypeError);
+  expect(() => codex.capabilities.image!.buildArgs("x", { outputPath: "/abs/o.png", readOnly: true })).toThrow(TypeError);
 });
 
 test("the image kind requires an outputPath rather than inventing one", () => {

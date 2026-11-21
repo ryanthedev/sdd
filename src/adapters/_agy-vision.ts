@@ -51,7 +51,8 @@
  */
 import { existsSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
-import { buildAgyArgv, lastMarkerMatch } from "./_agy-shared.ts";
+import { buildAgyArgv, lastMarkerMatch, pushAgyEffortFlag } from "./_agy-shared.ts";
+import { resolveReadOnly } from "../lib/path-barricade.ts";
 import type { Capability } from "./types.ts";
 import type { AdapterResult, DispatchOpts } from "../types.ts";
 
@@ -69,6 +70,7 @@ const DEFAULT_VISION_MODEL = "Gemini 4 Argon (High)";
 const SAVED_MARKER_RE = /^AGY_VISION_SAVED:\s*(.+)$/gm;
 
 export function buildArgs(prompt: string, opts: DispatchOpts): string[] {
+  resolveReadOnly(name, opts, false);
   const addDir = resolveRequiredContainedPath(opts, "addDir");
   const outPath = resolveOutputPath(opts);
   const model = validateOptionalModel(opts) ?? DEFAULT_VISION_MODEL;
@@ -78,10 +80,9 @@ export function buildArgs(prompt: string, opts: DispatchOpts): string[] {
   const withPath = `${prompt}\n\nAbsolute save path (use exactly this, save nowhere else): ${outPath}`;
   // --sandbox is a literal here — no branch can drop it (split-privilege
   // barricade, see header). buildAgyArgv keeps --print + prompt last.
-  return buildAgyArgv(
-    ["--sandbox", "--dangerously-skip-permissions", "--add-dir", addDir, "--model", model],
-    withPath,
-  );
+  const flags = ["--sandbox", "--dangerously-skip-permissions", "--add-dir", addDir, "--model", model];
+  pushAgyEffortFlag(flags, opts, name);
+  return buildAgyArgv(flags, withPath);
 }
 
 export function injectContract(prompt: string): string {

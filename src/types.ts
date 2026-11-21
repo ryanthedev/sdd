@@ -38,7 +38,35 @@ export interface AdapterResult {
 export interface DispatchOpts {
   cwd?: string;
   timeoutMs?: number;
+  readOnly?: boolean;
+  serviceTier?: string;
   [k: string]: unknown;
+}
+
+/**
+ * One model advertised by a harness — either discovered live (`codex app-server`
+ * `model/list`, `agy models`, `grok models`) or declared statically (`claude`
+ * CLI aliases). Only `id` is required; richer metadata is optional so every
+ * harness maps cleanly into one shape.
+ */
+export interface ModelInfo {
+  id: string;
+  displayName?: string;
+  description?: string;
+  isDefault?: boolean;
+  effortLevels?: string[];
+  defaultEffort?: string;
+  serviceTiers?: string[];
+}
+
+/**
+ * Point-in-time list of models reported by one adapter.
+ */
+export interface ModelsSnapshot {
+  adapter: string;
+  models: ModelInfo[];
+  source: "live" | "static";
+  fetchedAt: number;
 }
 
 /**

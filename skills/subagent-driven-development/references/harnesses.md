@@ -6,18 +6,19 @@ The load-bearing distinction: **a harness that shows up in `list_adapters` with 
 
 ## Capability table
 
-Every agent harness here runs **unconditionally permissive** — the adapter always emits the harness's own act-headlessly flag (codex `--sandbox workspace-write`, agy `--dangerously-skip-permissions`, grok `--always-approve`, qwen `--yolo`, mistral `--auto-approve`). kimi is the lone exception, and not a safer one: kimi-code *rejects* an approval flag alongside `-p` ("Cannot combine --prompt with --yolo") precisely because `-p` already forces one — its prompt-mode runner sets permission mode to `auto` for the run, which kimi defines as "tool actions are approved automatically, and agent questions are skipped". In kimi that is *more* autonomous than `yolo`, which can still stop to ask. So kimi emits no flag and is permissive anyway. sdd offers no read-only or review-only dispatch: **any agent harness you dispatch may edit the tree you hand it**, whatever the prompt asks of it. Note this is a property of sdd, not of the harnesses — agy 1.1.5 does expose `--mode plan`, a genuine non-writing mode, which no adapter emits today. "The harness can't be made read-only" would be false; "sdd doesn't make it read-only" is the true statement. Whether two jobs can safely share a `cwd` is the caller's call — the server serializes nothing.
+By default every agent harness runs permissively (so it can act headlessly without blocking on TTY prompts). Pass `readOnly: true` on `dispatch` to run in native non-writing mode where supported: `claude` (`--permission-mode plan`), `codex` (`--sandbox read-only`), `agy` (`--sandbox --mode plan`), `grok` (`--permission-mode plan`), and `mistral` (`--agent plan`). `kimi` (whose CLI refuses `--plan` alongside `-p`) and `qwen` reject `readOnly: true` loudly rather than silently running permissively. Whether two writable jobs can safely share a `cwd` is still the caller's call — the server serializes nothing.
 
 ### Agent harnesses
 
 | Adapter | Provider / CLI | PATH binary | What it's for | Auth requirement |
 |---|---|---|---|---|
-| `codex` | OpenAI Codex, `codex exec` | `codex` | Review / second opinion / implement; runs `--sandbox workspace-write`; does its own web verification when a review needs it. Tier is chosen PER CALL via `model` + `effort` — there are no pinned variants | codex's own login flow (a ChatGPT/OpenAI account or key) — not documented in the adapter source; verify with `check_adapter`, don't assert specifics |
-| `grok` | xAI Grok Build CLI 0.2.93, `grok -p` | `grok` | Review / second opinion | `XAI_API_KEY` (or `GROK_API_KEY` / `GROK_DEPLOYMENT_KEY`) env var |
-| `kimi` | Moonshot Kimi (kimi-code 0.22.3), `kimi -p` | `kimi` | Review / second opinion | `MOONSHOT_API_KEY` env var |
-| `qwen` | Alibaba Qwen Code (gemini-cli lineage), `qwen -p` | `qwen` | Review / second opinion | `DASHSCOPE_API_KEY` env var |
-| `mistral` | Mistral Vibe, `vibe -p` | `vibe` (name ≠ binary) | Review / second opinion | `MISTRAL_API_KEY` env var |
-| `agy` | General review/implement harness, `agy --print` | `agy` | Review AND implement — edits the working tree | agy's own login flow — not documented in the adapter source; verify with `check_adapter` |
+| `claude` | Anthropic Claude Code (`claude -p`, `--no-session-persistence`) | `claude` | Review / second opinion / implement; supports `model` (`opus`/`sonnet`/`fable`/`haiku` or full ID), `effort` (`low\|medium\|high\|xhigh\|max`), `readOnly:true` (`--permission-mode plan`), and `addDir` | Claude Code's own login flow or `ANTHROPIC_API_KEY`; verify with `check_adapter` |
+| `codex` | OpenAI Codex (`codex exec`) | `codex` | Review / second opinion / implement; runs `--sandbox workspace-write` (or `--sandbox read-only` with `readOnly:true`); supports `model` (live via `list_models`), `effort` (`low\|medium\|high\|xhigh\|max\|ultra`), `serviceTier` (`fast\|flex\|priority`), and `addDir` | codex's own login flow (ChatGPT/OpenAI account or key); verify with `check_adapter` |
+| `grok` | xAI Grok Build CLI (`grok -p`) | `grok` | Review / second opinion; supports `model` (live via `list_models`), `readOnly:true` (`--permission-mode plan`), and `addDir` | `XAI_API_KEY` (or `GROK_API_KEY` / `GROK_DEPLOYMENT_KEY`) env var |
+| `kimi` | Moonshot Kimi (`kimi-code`, `kimi -p`) | `kimi` | Review / second opinion; supports `model` (`-m`) and `addDir`; rejects `readOnly:true` (CLI refuses `--plan` with `-p`) | `MOONSHOT_API_KEY` env var |
+| `qwen` | Alibaba Qwen Code (gemini-cli lineage), `qwen -p` | `qwen` | Review / second opinion; rejects `readOnly:true` | `DASHSCOPE_API_KEY` env var |
+| `mistral` | Mistral Vibe, `vibe -p` | `vibe` (name ≠ binary) | Review / second opinion; supports `readOnly:true` (`--agent plan`) and `addDir` | `MISTRAL_API_KEY` env var |
+| `agy` | General review/implement harness, `agy --print` | `agy` | Review AND implement; supports `model` (live via `list_models`), `effort` (`low\|medium\|high\|xhigh\|max`), `readOnly:true` (`--sandbox --mode plan`), and `addDir` | agy's own login flow; verify with `check_adapter` |
 
 ### Artifact producers
 

@@ -38,13 +38,29 @@ export const inputShape = {
     .min(1)
     .optional()
     .describe(
-      'Adapter-specific: model to run for adapters that support model selection (codex, agy), e.g. "o3". ' +
-        "Ignored by adapters that don't read it.",
+      'Adapter-specific: model to run for adapters that support model selection (claude, codex, agy, grok, kimi, gemini), e.g. "gpt-6.2-sol", "opus", "gemini-4-neon-high". ' +
+        "Call list_models to see live model ids. Ignored by adapters that don't read it.",
     ),
   effort: z
-    .enum(["low", "medium", "high"])
+    .enum(["low", "medium", "high", "xhigh", "max", "ultra"])
     .optional()
-    .describe("Adapter-specific: codex reasoning-effort level. Ignored by adapters that don't read it."),
+    .describe(
+      "Adapter-specific: reasoning-effort level. Accepted values vary by harness (codex: low..ultra; agy and claude: low..max) — " +
+        "each adapter enforces its own allowlist and rejects unsupported values loudly. Ignored by adapters that don't read it.",
+    ),
+  readOnly: z
+    .boolean()
+    .optional()
+    .describe(
+      "Run in native read-only / plan mode where supported (claude --permission-mode plan, codex --sandbox read-only, " +
+        "agy --mode plan, grok --permission-mode plan, mistral --agent plan). Adapters that cannot enforce read-only reject it loudly.",
+    ),
+  serviceTier: z
+    .enum(["fast", "flex", "priority"])
+    .optional()
+    .describe(
+      'Adapter-specific: codex service tier override (-c service_tier=<tier>), e.g. "priority" or "fast". Ignored by adapters that don\'t read it.',
+    ),
   outputPath: z
     .string()
     .min(1)
@@ -132,6 +148,8 @@ export function createDispatchTool(rt: Runtime): ToolModule<typeof inputShape> {
         ...(args.timeoutMs !== undefined ? { timeoutMs: args.timeoutMs } : {}),
         ...(args.model !== undefined ? { model: args.model } : {}),
         ...(args.effort !== undefined ? { effort: args.effort } : {}),
+        ...(args.readOnly !== undefined ? { readOnly: args.readOnly } : {}),
+        ...(args.serviceTier !== undefined ? { serviceTier: args.serviceTier } : {}),
         ...(args.outputPath !== undefined ? { outputPath: args.outputPath } : {}),
         ...(args.outputDir !== undefined ? { outputDir: args.outputDir } : {}),
         ...(args.cookies !== undefined ? { cookies: args.cookies } : {}),

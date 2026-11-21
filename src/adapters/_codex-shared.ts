@@ -31,35 +31,37 @@
 
 /** Trusted, pre-validated codex flag configuration (see header). */
 export interface CodexArgvConfig {
-  /** Model to run (`-m <model>`), e.g. "o3". Empty string = omit the flag. */
+  /** Model to run (`-m <model>`), e.g. "gpt-6.2-sol". Empty string = omit the flag. */
   model?: string;
   /** Config profile (`-p <profile>`). Empty string = omit the flag. */
   profile?: string;
   /** Raw `-c key=value` overrides, emitted in insertion order. */
   configOverrides?: Record<string, string>;
+  /** Additional directory granted to the sandbox (`--add-dir <dir>`). */
+  addDir?: string;
+  /** Run under `--sandbox read-only` instead of `--sandbox workspace-write`. */
+  readOnly?: boolean;
   /** Emit `--skip-git-repo-check`. Set only by the caller that has decided the cwd is disposable. */
   skipGitRepoCheck?: boolean;
 }
 
 /**
- * The only sandbox codex is ever launched under: it may edit the tree it runs
- * in, and nothing outside it. Whether letting a harness edit THIS tree right
- * now is safe is the caller's call, not the adapter's.
- */
-const SANDBOX = "workspace-write";
-
-/**
  * Assemble `codex exec` argv: `["codex","exec", ...flags, "--sandbox",
- * <sandbox>, prompt]`. Flag order is fixed (`-m`, `-p`, `-c`...) and the
- * prompt is always the LAST element — a flag placed after the prompt would be
- * silently absorbed as prompt text (codex still exits 0), so the ordering is
- * encoded structurally here rather than left to callers.
+ * <sandbox>, prompt]`. Flag order is fixed (`-m`, `-p`, `-c`..., `--add-dir`)
+ * and the prompt is always the LAST element — a flag placed after the prompt
+ * would be silently absorbed as prompt text (codex still exits 0), so the
+ * ordering is encoded structurally here rather than left to callers.
+ *
+ * SECURITY: the sandbox is ONLY ever `"read-only"` or `"workspace-write"`;
+ * `danger-full-access` is structurally unreachable.
  */
 export function buildCodexArgv(prompt: string, cfg: CodexArgvConfig = {}): string[] {
   const flags: string[] = [];
   if (cfg.model) flags.push("-m", cfg.model);
   if (cfg.profile) flags.push("-p", cfg.profile);
   for (const [key, value] of Object.entries(cfg.configOverrides ?? {})) flags.push("-c", `${key}=${value}`);
+  if (cfg.addDir) flags.push("--add-dir", cfg.addDir);
   if (cfg.skipGitRepoCheck) flags.push("--skip-git-repo-check");
-  return ["codex", "exec", ...flags, "--sandbox", SANDBOX, prompt];
+  const sandbox = cfg.readOnly ? "read-only" : "workspace-write";
+  return ["codex", "exec", ...flags, "--sandbox", sandbox, prompt];
 }

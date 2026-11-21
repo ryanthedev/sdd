@@ -14,10 +14,11 @@
  * `-m <model>`. Omitting it keeps the CLI's default model
  * (grok-4.20-*-non-reasoning today). Available ids come from `grok models`.
  */
-import type { AdapterResult, DispatchOpts } from "../types.ts";
+import type { AdapterResult, DispatchOpts, ModelInfo } from "../types.ts";
 import { DEFAULT_KIND } from "./types.ts";
-import type { Capability, MultiAdapterModule } from "./types.ts";
+import type { Capability, ModelsProbe, MultiAdapterModule } from "./types.ts";
 import { injectReviewContract, parseReviewResult } from "../lib/review-contract.ts";
+import { resolveOptionalAddDir, resolveReadOnly } from "../lib/path-barricade.ts";
 import {
   appendSavePath,
   injectImageContract,
@@ -27,11 +28,14 @@ import {
 } from "../lib/image-contract.ts";
 
 export const name = "grok";
+export const supportsReadOnly = true;
 
-export function buildArgs(prompt: string, opts: DispatchOpts): string[] {
+function buildGrokArgv(prompt: string, opts: DispatchOpts, allowReadOnly: boolean): string[] {
+  const readOnly = resolveReadOnly(name, opts, allowReadOnly);
+  const addDir = resolveOptionalAddDir(name, opts);
   // All flags precede `-p` so the prompt stays the LAST argv element (a flag
   // placed after the prompt is absorbed as prompt text).
-  const argv = ["grok", "--always-approve"];
+  const argv = readOnly ? ["grok", "--permission-mode", "plan"] : ["grok", "--always-approve"];
   const { model } = opts;
   if (model !== undefined) {
     if (typeof model !== "string" || model.length === 0) {
@@ -39,8 +43,13 @@ export function buildArgs(prompt: string, opts: DispatchOpts): string[] {
     }
     argv.push("-m", model);
   }
+  if (addDir !== undefined) argv.push("--add-dir", addDir);
   argv.push("-p", prompt);
   return argv;
+}
+
+export function buildArgs(prompt: string, opts: DispatchOpts): string[] {
+  return buildGrokArgv(prompt, opts, true);
 }
 
 /**
@@ -80,11 +89,36 @@ export function parseResult(stdout: string, _stderr: string, exitCode: number): 
 const IMAGE_MARKER = "GROK_IMAGE_SAVED";
 const IMAGE_MARKER_RE = markerFor(IMAGE_MARKER);
 
+/**
+ * Live model-catalog probe via `grok models`. Verified against grok 1.0.77.
+ */
+export const readModels: ModelsProbe = {
+  transport: "cli-stdout",
+  binary: "grok",
+  args: ["models"],
+};
+
+/**
+ * Parse `grok models` stdout (`* <id> (default)` and `- <id>` lines).
+ * Tolerant: skips headers and blank lines.
+ */
+export function parseModels(raw: unknown): ModelInfo[] {
+  if (typeof raw !== "string") return [];
+  const out: ModelInfo[] = [];
+  for (const line of raw.split("\n")) {
+    const match = /^\s*([*-])\s+([a-z0-9][a-z0-9._/-]*)(?:\s+\(([^)]+)\))?\s*$/i.exec(line);
+    if (!match) continue;
+    const isDefault = match[1] === "*" || match[3]?.toLowerCase() === "default";
+    out.push({ id: match[2]!, ...(isDefault ? { isDefault: true } : {}) });
+  }
+  return out;
+}
+
 function buildImageArgs(prompt: string, opts: DispatchOpts): string[] {
   const outPath = resolveImageOutputPath(name, opts);
-  // Reuse the default kind's argv assembly (approval flag, optional -m, prompt
-  // last) so the flag-order guarantee and model validation exist once.
-  return buildArgs(appendSavePath(prompt, outPath), opts);
+  // Reuse the shared argv assembly; readOnly is rejected because image
+  // generation must write the PNG.
+  return buildGrokArgv(appendSavePath(prompt, outPath), opts, false);
 }
 
 export const capabilities: Record<string, Capability> = {
@@ -100,5 +134,12 @@ export const capabilities: Record<string, Capability> = {
 /** Review / second opinion is what `grok` means with no `kind`. */
 export const defaultKind = DEFAULT_KIND;
 
-const _check: MultiAdapterModule = { name, capabilities, defaultKind };
+const _check: MultiAdapterModule = {
+  name,
+  capabilities,
+  defaultKind,
+  supportsReadOnly,
+  readModels,
+  parseModels,
+};
 void _check;

@@ -12,11 +12,14 @@
  */
 import type { AdapterResult, DispatchOpts } from "../types.ts";
 import type { FlatAdapterModule } from "./types.ts";
+import { resolveReadOnly } from "../lib/path-barricade.ts";
 import { injectReviewContract, parseReviewResult } from "../lib/review-contract.ts";
 
 export const name = "qwen";
+export const supportsReadOnly = false;
 
-export function buildArgs(prompt: string, _opts: DispatchOpts): string[] {
+export function buildArgs(prompt: string, opts: DispatchOpts): string[] {
+  resolveReadOnly(name, opts, false);
   // The approval flag precedes `-p` so the prompt stays the LAST argv element.
   return ["qwen", "--yolo", "-p", prompt];
 }
@@ -27,5 +30,5 @@ export function parseResult(stdout: string, _stderr: string, exitCode: number): 
   return parseReviewResult(name, stdout, exitCode);
 }
 
-const _check: FlatAdapterModule = { name, buildArgs, injectContract, parseResult };
+const _check: FlatAdapterModule = { name, supportsReadOnly, buildArgs, injectContract, parseResult };
 void _check;
