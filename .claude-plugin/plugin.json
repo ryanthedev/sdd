@@ -1,6 +1,6 @@
 {
   "name": "sdd",
-  "version": "0.10.0",
+  "version": "0.11.0",
   "description": "Subagent-Driven Development — delegate scoped work units to CLI agent harnesses (claude, codex, agy, grok, kimi, qwen, mistral) as fresh-context subagents, fan out, inspect live model catalogs and effort tiers (list_models), enforce native read-only mode for reviews, collect structured results, and check account quota before you spend it; plus a video pipeline (yt-dlp, whisper, ffmpeg-frames, shazam) that turns a video URL into one transcript + visual-understanding JSON; plus the Gemini Decisions API (multimodal: text, images, video, audio) as the decision model for ranking, routing, and classifying at volume, with a Gemini API fallback for video fusion when agy is out of quota; a spend ledger and budget so you can see and cap what every job costs; helper agents for loops (gemini-judge, video-digest, spend-watch, codex-builder, codex-reviewer); plus a commander skill that runs a whole task as a multi-agent operation with interactive agents in herdr-core",
   "author": {
     "name": "r"

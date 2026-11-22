@@ -119,6 +119,7 @@ For the common cases there are two plugin subagents that run the codex procedure
 | Fast/cheap spot-check | `codex` with `effort:"low"` (optionally `serviceTier:"priority"`) |
 | What models & effort levels exist right now? | `list_models` — live catalog, no tokens, no work unit |
 | Am I about to hit a quota wall? | `usage` — no tokens, no work unit |
+| How much is the decision model being used, and by which project? | `usage({breakdown:true, days:N})` — per-day and per-project jobs, items, tokens, dollars |
 | Ensemble review (multi-model, parallel) | fan out `claude` + `codex` + `grok`/`kimi`/`qwen`/`mistral`, then rank with [recipe 3](references/recipes.md#3-ensemble-review-ranked) |
 | Implement a change in the working tree | `claude`, `agy`, or `codex` |
 | Generate an image | `agy`, `codex`, or `grok` with `kind: "image"` + `outputPath` |

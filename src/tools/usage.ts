@@ -15,11 +15,17 @@
  * are different answers. An UNKNOWN cost is never rendered or summed as $0.
  *
  * `recent: N` returns job history instead: the last N ledger rows.
+ * `breakdown: true` returns per-day and per-project usage instead (pure
+ * aggregation of the same ledger, same fail-closed cost rule as the budget).
  */
 import { z } from "zod";
 import type { Adapter } from "../adapters/types.ts";
 import {
   type AdapterBudget,
+  BREAKDOWN_MAX_DAYS,
+  breakdownSpend,
+  type UsageBreakdown,
+  type UsageWindow,
   type LedgerEntry,
   type Pool,
   ledgerSummary,
@@ -49,7 +55,10 @@ export const description =
   "harness that can answer; the rest are listed as unsupported, and, when the user's Claude usage governor is " +
   "installed, the output also leads with a governor block (Claude weekly %, 24h use, RUN/STOP, stale flag) so " +
   "Claude, Gemini and codex usage come from this one tool. Pass `recent` (1-50) to instead get job " +
-  "history: the last N ledger rows (ts, adapter, kind, state, durationMs, costUsd, summary), optionally for one adapter.";
+  "history: the last N ledger rows (ts, adapter, kind, state, durationMs, costUsd, summary), optionally for one adapter. " +
+  "Pass `breakdown: true` (with optional `days`, 1-90, default 7) to instead see how much the per-call-billed harnesses " +
+  "(the gemini decision model) are being used: per local day and per project (cwd folded to a repo, temp dirs grouped), " +
+  "with jobs, failures, items, calls, input tokens and dollars, gemini's decision and vision pools reported separately.";
 
 export const inputShape = {
   adapter: z
@@ -68,6 +77,17 @@ export const inputShape = {
     .max(50)
     .optional()
     .describe("Return the last N ledger rows (job history) instead of quota/spend reports. 1..50."),
+  breakdown: z
+    .boolean()
+    .optional()
+    .describe("Return per-day and per-project usage (jobs, items, calls, tokens, dollars) from the spend ledger instead of quota/spend reports."),
+  days: z
+    .number()
+    .int()
+    .min(1)
+    .max(BREAKDOWN_MAX_DAYS)
+    .optional()
+    .describe("With `breakdown`: how many local calendar days to cover, today included. Default 7."),
 };
 
 type Input = z.output<z.ZodObject<typeof inputShape>>;
@@ -98,7 +118,12 @@ export function createUsageTool(rt: Runtime): ToolModule<typeof inputShape> {
     description,
     inputShape,
     handler: async (args: Input) => {
+      if (args.recent !== undefined && args.breakdown === true) {
+        return err("pass either `recent` or `breakdown`, not both.", { code: "conflicting_args" });
+      }
       if (args.recent !== undefined) return recentRows(rt, args.adapter, args.recent);
+      if (args.breakdown === true) return breakdownReport(rt, args.adapter, args.days ?? 7);
+      if (args.days !== undefined) return err("`days` only applies with `breakdown: true`.", { code: "conflicting_args" });
 
       const refresh = args.refresh === true;
       const now = Date.now();
@@ -273,4 +298,59 @@ function recentRows(rt: Runtime, adapter: string | undefined, n: number) {
     return `${new Date(r.ts).toISOString()} ${r.adapter}/${r.kind} ${r.state} ${r.durationMs}ms ${cost} — ${summary}`;
   });
   return ok(lines.join("\n"), { rows });
+}
+
+function breakdownReport(rt: Runtime, adapterName: string | undefined, days: number) {
+  let targets: Adapter[];
+  if (adapterName !== undefined) {
+    const a = findAdapter(rt, adapterName);
+    if (!a) {
+      return err(`unknown adapter "${adapterName}" — call list_adapters to see available adapters.`, { code: "unknown_adapter" });
+    }
+    targets = [a];
+  } else targets = [];
+  const { entries, error } = readLedgerChecked({ path: rt.ledgerPath });
+  if (error !== null) {
+    return err(`usage breakdown unavailable: the ledger could not be read (${error}); spend is unknown, not $0`, { code: "ledger_unreadable" });
+  }
+  const budget = loadBudget(rt.budgetPath);
+  if (adapterName === undefined) targets = listAdapters(rt).filter((a) => hasSpend(a, budget, entries));
+  if (targets.length === 0) return ok("no discovered adapter records per-call usage.", { breakdowns: [] });
+
+  const now = Date.now();
+  const breakdowns: UsageBreakdown[] = [];
+  for (const a of targets) {
+    if (budget[a.name]?.vision !== undefined) {
+      breakdowns.push(breakdownSpend(entries, { now, adapter: a.name, days, pool: "decision" }));
+      const v = breakdownSpend(entries, { now, adapter: a.name, days, pool: "vision" });
+      if (v.total.jobs > 0) breakdowns.push(v); // an unused vision pool is noise in a usage view
+    } else breakdowns.push(breakdownSpend(entries, { now, adapter: a.name, days }));
+  }
+  return ok(breakdowns.map(renderBreakdown).join("\n\n"), { breakdowns });
+}
+
+function tokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+  return String(n);
+}
+
+function usageCells(w: UsageWindow): string {
+  const failed = w.failedJobs > 0 ? ` (${w.failedJobs} failed)` : "";
+  const unknown = w.unknownCostJobs > 0 ? ` · ${w.unknownCostJobs} unknown-cost` : "";
+  return `${w.jobs} jobs${failed} · ${w.items} items · ${w.calls} calls · ${tokens(w.inputTokens)} in-tok · ${usd(w.costUsd)}${unknown}`;
+}
+
+function renderBreakdown(b: UsageBreakdown): string {
+  const label = b.pool ? `${b.adapter} ${b.pool}` : b.adapter;
+  const lines = [`${label} usage, last ${b.days} day${b.days === 1 ? "" : "s"} (local dates): ${usageCells(b.total)}`];
+  if (b.total.unknownCostJobs > 0) lines.push("  (each unknown-cost job is charged $0.25, as the budget does)");
+  lines.push("  by day:");
+  for (const d of b.byDay) lines.push(`    ${d.date}  ${d.jobs === 0 ? "-" : usageCells(d)}`);
+  if (b.byProject.length > 0) {
+    lines.push("  by project (cwd folded to a repo; worktrees outside their repo and temp dirs are approximate):");
+    const w = Math.max(...b.byProject.map((p) => p.project.length));
+    for (const p of b.byProject) lines.push(`    ${p.project.padEnd(w)}  ${usageCells(p)}`);
+  }
+  return lines.join("\n");
 }
