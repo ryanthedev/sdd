@@ -118,6 +118,11 @@ function toAdapter(mod: Record<string, unknown>): Adapter | { missing: string[] 
     missing.push("supportsReadOnly");
   }
 
+  const readOnlyNote = mod.readOnlyNote;
+  if (readOnlyNote !== undefined && typeof readOnlyNote !== "string") {
+    missing.push("readOnlyNote");
+  }
+
   const models = mod.models;
   if (models !== undefined && !isModelInfoList(models)) {
     missing.push("models");
@@ -152,6 +157,7 @@ function toAdapter(mod: Record<string, unknown>): Adapter | { missing: string[] 
     parseLimits: typeof parseLimits === "function" ? (parseLimits as Adapter["parseLimits"]) : undefined,
     effortLevels: Array.isArray(effortLevels) ? (effortLevels as readonly string[]) : undefined,
     supportsReadOnly: typeof supportsReadOnly === "boolean" ? supportsReadOnly : undefined,
+    readOnlyNote: typeof readOnlyNote === "string" ? readOnlyNote : undefined,
     models: isModelInfoList(models) ? models : undefined,
     readModels: isModelsProbe(readModels) ? readModels : undefined,
     parseModels: typeof parseModels === "function" ? (parseModels as Adapter["parseModels"]) : undefined,

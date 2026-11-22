@@ -35,7 +35,7 @@ Nine MCP tools drive the whole thing: `dispatch`, `status`, `result`, `wait`, `c
 
 You could background a process from Bash and grep its stdout. What you'd be missing is the backstop: every adapter validates an output-contract marker before it calls a job `done`, so a harness that exits 0 without doing the work gets reported as `failed` instead of quietly passing. A misparsed flag, a swallowed prompt, a model that answered the wrong question. Those show up as failures here. In a shell one-liner they show up as a green checkmark.
 
-One thing that's on you, not the server: writable agent dispatches run in parallel with no server-side locking. Pass `readOnly: true` for reviews (enforced natively on `claude`, `codex`, `agy`, `grok`, and `mistral`), and if two writable jobs would touch the same directory, keeping them apart is the caller's job. sdd serializes nothing.
+One thing that's on you, not the server: writable agent dispatches run in parallel with no server-side locking. Pass `readOnly: true` for reviews (enforced natively on `claude`, `codex`, `agy`, `grok`, and `mistral`; agy readOnly reads files by exact path only (agy reports no listing or search tool), so name the files or paste the diff), and if two writable jobs would touch the same directory, keeping them apart is the caller's job. sdd serializes nothing.
 
 ## Install
 
@@ -71,7 +71,7 @@ Twelve ship today, and the ones that do more than one thing expose the extras as
 |---|---|---|
 | Agent harnesses | `claude` | Review, second opinions, implementation via `claude -p --no-session-persistence`. Supports `model`, `effort` (`low..max`), `readOnly`, and `addDir` |
 | | `codex` | Review, second opinions, implementation. Pick the tier per call with `model` + `effort` (`low..ultra`) + `serviceTier`; supports `readOnly` and `addDir` |
-| | `agy` | Review / implement. Supports `model`, `effort` (`low..max`), `readOnly`, and `addDir` |
+| | `agy` | Review / implement. Supports `model`, `effort` (`low..max`), `readOnly` (reads files by exact path only (agy reports no listing or search tool); no shell, writes, MCP or URL fetches; plan files may still land under `~/.gemini/antigravity-cli/brain/`, unverified under the deny list), and `addDir` |
 | | `grok`, `kimi`, `qwen`, `mistral` | Second opinions from xAI, Moonshot, Alibaba, and Mistral (`readOnly` supported on `grok`/`mistral`; `model` on `grok`/`kimi`) |
 | Image + vision | `agy` / `codex` / `grok` + `kind: "image"` | Text to a PNG (agy: Nano Banana; codex: imagegen skill; grok: imagine skill) |
 | | `agy` + `kind: "vision"` | Fuse a transcript + keyframes into one understanding JSON |

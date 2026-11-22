@@ -7,6 +7,7 @@
  * (exit-0 misparse backstop), and DW-4.4 (directory-scan discovery).
  */
 import { expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { DEFAULT_KIND } from "../src/adapters/types.ts";
 import { discoverAdapters } from "../src/adapters/discover.ts";
@@ -66,7 +67,20 @@ test("agy supports low..max effort, rejects ultra/bogus, supports readOnly and a
   expect(() => agy.buildArgs("p", { effort: "bogus" })).toThrow(TypeError);
 
   const ro = agy.buildArgs("review", { readOnly: true, addDir: "/abs/extra", effort: "xhigh" });
-  expect(ro).toEqual(["agy", "--sandbox", "--mode", "plan", "--effort", "xhigh", "--add-dir", "/abs/extra", "--print", "review"]);
+  expect(ro).toEqual([
+    "agy",
+    "--sandbox",
+    "--mode",
+    "plan",
+    "--settings",
+    agy.AGY_READ_ONLY_SETTINGS,
+    "--effort",
+    "xhigh",
+    "--add-dir",
+    "/abs/extra",
+    "--print",
+    agy.AGY_READ_ONLY_NOTICE + "review",
+  ]);
   expect(ro).not.toContain("--dangerously-skip-permissions");
 
   expect(() => agy.buildArgs("p", { addDir: "../escape", cwd: "/tmp/work" })).toThrow(TypeError);
@@ -194,4 +208,204 @@ test("test_DW_4_4_agy_discovered_via_directory_scan", () => {
   // separate adapter name.
   expect(Object.keys(found!.capabilities).sort()).toEqual([DEFAULT_KIND, "image", "vision"].sort());
   expect(found!.defaultKind).toBe(DEFAULT_KIND);
+});
+
+// ── readOnly deny list, notice, and failure summaries (agy 1.5.14) ─────────
+
+const fixture = (f: string): string => readFileSync(join(import.meta.dir, "fixtures", "agy", f), "utf8");
+/** What `wait` renders of a summary. */
+const waitView = (summary: string): string => summary.replace(/\s+/g, " ").slice(0, 300);
+const JETSKI = (perm: string): string =>
+  `jetski: no output produced — a tool required the "${perm}" permission that headless mode cannot prompt for, so it was auto-denied.\n`;
+
+test("test_DW_1_1_readOnly_argv_carries_settings_deny_list_and_notice", () => {
+  const argv = agy.buildArgs("review", { readOnly: true, effort: "xhigh", addDir: "/abs/extra" });
+  expect(argv).toEqual([
+    "agy", "--sandbox", "--mode", "plan", "--settings", agy.AGY_READ_ONLY_SETTINGS,
+    "--effort", "xhigh", "--add-dir", "/abs/extra", "--print", agy.AGY_READ_ONLY_NOTICE + "review",
+  ]);
+  const parsed = JSON.parse(agy.AGY_READ_ONLY_SETTINGS);
+  expect(parsed).toEqual({
+    permissions: {
+      deny: ["command(*)", "write_file(*)", "mcp(*)", "read_url(*)", "execute_url(*)", "download_url(*)", "unsandboxed(*)"],
+    },
+  });
+  expect("allow" in parsed.permissions).toBe(false);
+  expect(argv).not.toContain("--dangerously-skip-permissions");
+  // Writable argv carries no settings.
+  expect(agy.buildArgs("p", {})).not.toContain("--settings");
+});
+
+test("test_DW_1_2_notice_is_byte_exact_first_and_contract_last", () => {
+  expect(agy.AGY_READ_ONLY_NOTICE).toBe(fixture("agy-read-only-notice.txt"));
+  const last = agy.buildArgs(agy.injectContract("p"), { readOnly: true }).at(-1)!;
+  expect(last.startsWith(agy.AGY_READ_ONLY_NOTICE)).toBe(true);
+  expect(last.endsWith("Do not include this line unless it reflects the true outcome.")).toBe(true);
+});
+
+test("test_DW_1_3_auto_deny_command_log_names_permission_and_workaround", () => {
+  const r = agy.parseResult("", fixture("agy-auto-deny-command.log"), 0);
+  expect(r.status).toBe("failed");
+  const view = waitView(r.summary);
+  expect(view).toContain('"command" permission');
+  expect(view).toContain("If this job ran readOnly");
+  expect(view).toContain("exact files");
+  expect(r.summary).not.toContain("flag-order");
+  expect(r.summary.length).toBeLessThanOrEqual(300);
+});
+
+test("test_DW_1_4_auto_deny_write_file", () => {
+  const r = agy.parseResult("", fixture("agy-auto-deny-write_file.stderr"), 0);
+  expect(r.summary).toContain('"write_file" permission');
+  expect(r.summary).toContain("file writes are blocked");
+});
+
+test("test_DW_1_5_jetski_sentence_quoted_at_end_of_stdout_is_not_an_auto_deny", () => {
+  // The quote ENDS stdout, so it lands in the 70-char stdout tail unless redacted.
+  const quoted = `The tool said: "${JETSKI("command").trim()}" so I stopped.`;
+  const bare = `The tool said: ${JETSKI("command").trim()}`;
+  const sent = JETSKI("command").trim();
+  const variants = [
+    `The tool said: ${sent.replace("auto-denied", "_auto-denied_")}`,
+    '> jetski: no output produced — a tool required the\n> "command" permission that headless mode cannot prompt for.',
+    'Agy said a tool required the\n"command" permission and stopped.',
+    'Agy said a tool required the  "command" permission and stopped.',
+    'Agy said a tool required the\u00a0"command"\u00a0permission and stopped.',
+    'Agy said a tool required the\t"command"\tpermission and stopped.',
+    `The tool said: ${sent.replace("auto-denied", "auto\u2011denied")}`,
+    `The tool said: ${sent.replace("auto-denied", "AUTO-DENIED")}`,
+  ];
+  for (const stdout of [...variants, quoted, bare, quoted + " and then I kept going for a long while, never finishing the task at all."]) {
+    const r = agy.parseResult(stdout, "", 0);
+    expect(r.status).toBe("failed");
+    expect(r.summary).not.toContain("auto-denied");
+    expect(r.summary).not.toContain('"command" permission');
+    expect(r.summary).not.toContain("stopped with no verdict");
+    expect(r.summary).toContain("missing AGY_RESULT marker (exit 0)");
+    expect(r.summary.length).toBeLessThanOrEqual(390);
+  }
+});
+
+test("last auto-deny line decides: an overlong or non-[a-z_] name there gives unknown, not an earlier permission", () => {
+  expect(agy.parseResult("", JETSKI("command") + JETSKI("a".repeat(21)), 0).summary).toContain('"unknown" permission');
+  expect(agy.parseResult("", JETSKI("command") + JETSKI("Read-URL"), 0).summary).toContain('"unknown" permission');
+  expect(agy.parseResult("", JETSKI("Read-URL"), 0).summary).toContain('"unknown" permission');
+  expect(agy.parseResult("", JETSKI("Read-URL") + JETSKI("command"), 0).summary).toContain('"command" permission');
+});
+
+test("excerpt and tails never split a surrogate pair", () => {
+  const lone = /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/;
+  for (let pad = 0; pad < 4; pad++) {
+    const emoji = "😀".repeat(200);
+    const failed = agy.parseResult("x".repeat(pad) + emoji + "\nAGY_RESULT: FAILED\n", "", 0);
+    expect(lone.test(failed.summary)).toBe(false);
+    const generic = agy.parseResult("x".repeat(pad) + emoji, emoji, 0);
+    expect(lone.test(generic.summary)).toBe(false);
+  }
+});
+
+test("test_DW_1_5b_other_permission_clause_and_overlong_name_fallback", () => {
+  const url = agy.parseResult("", JETSKI("read_url"), 0);
+  expect(url.summary).toContain('"read_url" permission');
+  expect(url.summary).toContain("that tool is blocked there");
+  const long = agy.parseResult("", JETSKI("a".repeat(21)), 0);
+  expect(long.summary).toContain('"unknown" permission');
+  const longest = agy.parseResult("", JETSKI("a".repeat(20)), 0);
+  for (const r of [url, long, longest]) expect(r.summary.length).toBeLessThanOrEqual(300);
+  // Bare "auto-denied" with no recognizable permission also falls back to unknown.
+  expect(agy.parseResult("", "tool was auto-denied", 0).summary).toContain('"unknown" permission');
+});
+
+test("test_DW_1_6_last_auto_deny_line_wins", () => {
+  const r = agy.parseResult("", JETSKI("command") + JETSKI("write_file"), 0);
+  expect(r.summary).toContain('"write_file" permission');
+  expect(r.summary).not.toContain('"command" permission');
+});
+
+test("test_DW_1_7_narration_only_no_marker_is_generic_failure_with_stdout_tail", () => {
+  const r = agy.parseResult("I will now look at the files and think about it.", "", 0);
+  expect(r.status).toBe("failed");
+  expect(r.summary).toContain("missing AGY_RESULT marker (exit 0)");
+  expect(r.summary).toContain("If this job ran readOnly");
+  expect(r.summary).toContain("stdout: I will now look at the files and think about it.");
+  expect(r.summary).not.toContain("flag-order");
+});
+
+test("test_DW_1_8_writable_failure_keeps_exit_code_and_stderr_cause_in_300_chars", () => {
+  const r = agy.parseResult("", "Error: not logged in", 1);
+  const view = waitView(r.summary);
+  expect(view).toContain("exit 1");
+  expect(view).toContain("not logged in");
+});
+
+test("test_DW_1_9_generic_summary_stays_within_caps_on_huge_streams", () => {
+  const big = "x".repeat(10_000);
+  const r = agy.parseResult(big, big, 0);
+  expect(r.summary.length).toBeLessThanOrEqual(390);
+  const logTail800 = "L".repeat(800);
+  expect((r.summary + " — " + logTail800).slice(0, 1200).endsWith(logTail800)).toBe(true);
+});
+
+test("test_DW_1_10_reported_FAILED_excerpt_keeps_refusal_and_request", () => {
+  const todo = agy.parseResult(fixture("agy-readonly-failed-todo-list.stdout"), "", 0);
+  const commit = agy.parseResult(fixture("agy-readonly-failed-commit-review.stdout"), "", 0);
+  for (const r of [todo, commit]) {
+    expect(r.status).toBe("failed");
+    expect(r.summary.startsWith("agy: reported FAILED: ")).toBe(true);
+    expect(r.summary.length).toBeLessThanOrEqual(300);
+  }
+  expect(todo.summary).toContain("cannot be completed");
+  expect(commit.summary).toContain("cannot review");
+  expect(todo.summary).toMatch(/rg -n|git grep/);
+  expect(commit.summary).toContain("git show HEAD");
+});
+
+test("reported FAILED: short cause is used whole; no text before the marker gives the bare summary", () => {
+  expect(agy.parseResult("File not found.\nAGY_RESULT: FAILED\n", "", 0).summary).toBe("agy: reported FAILED: File not found.");
+  expect(agy.parseResult("AGY_RESULT: FAILED\n", "", 0).summary).toBe("agy: reported FAILED");
+});
+
+test("generic summary has no double space when the stderr tail cut lands on a space", () => {
+  const r = agy.parseResult("", "z " + "y".repeat(129), 3);
+  expect(r.summary).toContain("(exit 3): y");
+  expect(r.summary).not.toMatch(/ {2}/);
+});
+
+test("reported FAILED: a single huge unbroken token still fits the 300-char cap", () => {
+  const r = agy.parseResult("y".repeat(5000) + "\nAGY_RESULT: FAILED\n", "", 0);
+  expect(r.summary.length).toBeLessThanOrEqual(300);
+});
+
+test("test_DW_1_11_echoed_notice_without_marker_line_is_failed", () => {
+  const r = agy.parseResult(agy.AGY_READ_ONLY_NOTICE + "Okay, understood.", "", 0);
+  expect(r.status).toBe("failed");
+  expect(r.summary).toContain("missing AGY_RESULT marker");
+});
+
+test("test_DW_1_12_real_final_marker_beats_jetski_line", () => {
+  const r = agy.parseResult("All good.\nAGY_RESULT: DONE\n", JETSKI("command"), 0);
+  expect(r.status).toBe("done");
+});
+
+test("test_DW_1_13_readOnlyNote_is_exposed_by_discovery", () => {
+  const found = discoverAdapters(join(import.meta.dir, "..", "src", "adapters")).find((a) => a.name === "agy");
+  expect(found!.readOnlyNote).toBe(agy.readOnlyNote);
+  expect(agy.readOnlyNote).toContain("exact path");
+});
+
+test("test_DW_1_14_comment_block_has_no_stale_claims", () => {
+  const src = readFileSync(join(import.meta.dir, "..", "src", "adapters", "agy.ts"), "utf8");
+  expect(src).not.toContain("structurally non-writing");
+  expect(src).not.toContain("exits 0 cleanly");
+  expect(src).not.toContain("flag-order misparse");
+  expect(src).toContain("agy 1.5.14, 2026-11-22");
+});
+
+test("auto-deny summary says shell commands are blocked for the command permission", () => {
+  expect(agy.parseResult("", JETSKI("command"), 0).summary).toContain("shell commands are blocked there");
+});
+
+test("narration stdout without permission wording keeps its tail; a quoting tail is replaced by a placeholder", () => {
+  expect(agy.parseResult("just thinking aloud", "", 0).summary).toContain("stdout: just thinking aloud");
+  expect(agy.parseResult("it needs permission to go on", "", 0).summary).toContain("stdout tail omitted");
 });

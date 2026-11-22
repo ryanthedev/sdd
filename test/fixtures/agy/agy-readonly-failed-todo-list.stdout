@@ -1,0 +1,11 @@
+This task cannot be completed in this session because of the following missing information and tool constraints:
+
+- **No repository file list or file contents were provided in the prompt.** Only the repository root path (`/tmp/scratch/repo`) is known.
+- **No directory-listing, file-search, or shell/grep capabilities are available.** Because only reading files by exact path is permitted, I cannot discover which files exist in the repository or search across them to find every `TODO` comment.
+
+To complete this task, please provide either:
+1. The complete list of exact file paths in the repository (so each file can be read directly), or
+2. The file contents / search results (e.g., output of `rg -n "TODO"` or `git grep -n "TODO"`), or
+3. A session with directory-listing and content-search (or shell) access enabled.
+
+AGY_RESULT: FAILED

@@ -35,7 +35,7 @@
  * this reason.
  *
  * The argv-order guarantee and `lastMarkerMatch` live in `_agy-shared.ts`
- * (shared with `agy-image.ts`) so the flag-order and marker-collision fixes
+ * (shared with `_agy-image.ts` and `_agy-vision.ts`) so the flag-order and marker-collision fixes
  * exist exactly once.
  */
 import * as agyImage from "./_agy-image.ts";
@@ -51,6 +51,45 @@ export const name = "agy";
 /** Verified against agy 1.5.14 (`agy --help`). */
 export const effortLevels = AGY_EFFORT_LEVELS;
 export const supportsReadOnly = true;
+/** Shown by `list_adapters` beside `readOnly`, so a caller knows what readOnly agy can still do. */
+export const readOnlyNote = "reads files by exact path only; no shell, writes, MCP or URL fetches";
+
+/**
+ * Permission rules denied under `readOnly` (agy 1.5.14, verified 2026-11-22).
+ * Each is a `<namespace>(*)` rule in agy's permission syntax. Verified refused
+ * (S7-S9): `command`, `write_file` (edit_file is checked as write_file), `mcp`,
+ * and `unsandboxed` (run_workflow); subagents inherit the list. `read_url`,
+ * `execute_url` and `download_url` are denied by rule but were not exercised.
+ */
+export const AGY_READ_ONLY_DENY = [
+  "command(*)",
+  "write_file(*)",
+  "mcp(*)",
+  "read_url(*)",
+  "execute_url(*)",
+  "download_url(*)",
+  "unsandboxed(*)",
+] as const;
+
+/**
+ * Constant `--settings` payload for readOnly runs. Deliberately carries no
+ * `allow` key and is built from a fixed list: no caller input reaches it.
+ */
+export const AGY_READ_ONLY_SETTINGS = JSON.stringify({ permissions: { deny: [...AGY_READ_ONLY_DENY] } });
+
+/**
+ * Prepended to the prompt under readOnly so the model knows up front which
+ * tools are refused and what to do instead. Ends with a blank line so the
+ * original prompt (and its trailing marker contract) follows untouched.
+ */
+export const AGY_READ_ONLY_NOTICE =
+  "READ-ONLY SESSION: this run cannot execute shell or terminal commands, write or edit files, " +
+  "call MCP tools, or fetch URLs; any such call is refused with a permission error, so do not " +
+  "attempt one. The only workspace tool that works is reading a file by its exact path; you cannot " +
+  "list directories or search file contents. Work only from the file paths and content given in " +
+  "this prompt. Answer directly in your response. If the task asks for a plan, write the plan in " +
+  "your response; do not write plan files and do not wait for approval, because nobody can reply. " +
+  "If the task cannot be done this way, say what is missing and end with AGY_RESULT: FAILED.\n\n";
 
 /**
  * Marker line the harness must echo verbatim to confirm a real outcome.
@@ -68,15 +107,25 @@ export function buildArgs(prompt: string, opts: DispatchOpts): string[] {
   pushAgyEffortFlag(flags, opts);
   if (addDir !== undefined) flags.push("--add-dir", addDir);
 
-  // SECURITY / headless posture:
-  //   - Default (writable): `--sandbox --dangerously-skip-permissions`
-  //   - `readOnly: true`: `--sandbox --mode plan` (structurally non-writing;
-  //     verified against agy 1.5.14: exits 0 cleanly in --print mode without
-  //     needing --dangerously-skip-permissions).
+  // SECURITY / headless posture (verified against agy 1.5.14, 2026-11-22):
+  //   - Default (writable): `--sandbox --dangerously-skip-permissions`.
+  //   - `readOnly: true`: `--sandbox --mode plan --settings <deny list>`.
+  // Plan mode alone is NOT read-only. Headless plan mode honours the user's
+  // global agy allow list (`command(*)`, `mcp(*)` ran shell and MCP calls), and
+  // the OS sandbox still allows writes into temp directories. agy evaluates
+  // rules Deny > Ask > Allow, so the deny list in AGY_READ_ONLY_SETTINGS beats
+  // every allow rule; a refused call comes back to the model as a tool error
+  // and the turn goes on. Verified refused: command, write_file (incl.
+  // edit_file), mcp and unsandboxed (run_workflow), inherited by subagents.
+  // We never add allow rules (they cannot keep a shell read-only) and never
+  // pass `allow: []` (a refused call then ends the turn with no verdict).
+  // Under readOnly the notice goes first so the marker contract stays the tail.
   // Structural flag order: `buildAgyArgv` always pushes `--print` and the
   // prompt last, in that order — nothing lands after the prompt.
-  const modeFlags = readOnly ? ["--sandbox", "--mode", "plan"] : ["--sandbox", "--dangerously-skip-permissions"];
-  return buildAgyArgv([...modeFlags, ...flags], prompt);
+  const modeFlags = readOnly
+    ? ["--sandbox", "--mode", "plan", "--settings", AGY_READ_ONLY_SETTINGS]
+    : ["--sandbox", "--dangerously-skip-permissions"];
+  return buildAgyArgv([...modeFlags, ...flags], readOnly ? AGY_READ_ONLY_NOTICE + prompt : prompt);
 }
 
 export function injectContract(prompt: string): string {
@@ -90,21 +139,108 @@ export function injectContract(prompt: string): string {
   );
 }
 
+/** Collapse whitespace runs so a summary renders on one line (as `wait` does). */
+const collapse = (text: string): string => text.replace(/\s+/g, " ").trim();
+/** Last `n` chars of the whitespace-collapsed text. */
+const tail = (text: string, n: number): string => dropLoneLow(collapse(text).slice(-n)).trimStart();
+
+/** agy's headless auto-deny diagnostic, e.g. `... required the "command" permission that headless mode cannot prompt for ...`. */
+const AUTO_DENY_RE = /required the "([a-z_]{1,20})" permission that headless mode cannot prompt for/;
+/**
+ * Matches any stderr line containing "auto-denied": the loose test that a line is
+ * an auto-deny diagnostic at all, even when AUTO_DENY_RE cannot read a permission
+ * name from it (then the permission is reported as `unknown`).
+ */
+const AUTO_DENY_FALLBACK_RE = /\bauto-denied\b/;
+
+/** Why a permission is refused under readOnly, for the auto-deny summary. */
+function blockedClause(permission: string): string {
+  if (permission === "command") return "shell commands are blocked there";
+  if (permission === "write_file") return "file writes are blocked there";
+  return "that tool is blocked there";
+}
+
+/**
+ * Permission named by the LAST auto-deny line on stderr. That line alone
+ * decides: if its name is overlong or outside [a-z_] the answer is `unknown`,
+ * never an earlier line's permission. Undefined when stderr has no auto-deny line.
+ */
+function autoDeniedPermission(stderr: string): string | undefined {
+  const lastLine = stderr.split("\n").findLast((line) => AUTO_DENY_FALLBACK_RE.test(line));
+  if (lastLine === undefined) return undefined;
+  return AUTO_DENY_RE.exec(lastLine)?.[1] ?? "unknown";
+}
+
+/** Drop a UTF-16 surrogate half left dangling at a cut edge, so a pair is never split. */
+const dropLoneHigh = (t: string): string => (/[\ud800-\udbff]$/.test(t) ? t.slice(0, -1) : t);
+const dropLoneLow = (t: string): string => (/^[\udc00-\udfff]/.test(t) ? t.slice(1) : t);
+
+/**
+ * Head + tail of the model's stated cause, whole when it fits in `max` chars.
+ * The refusal usually opens the text and the request closes it, so a pure tail
+ * would lose the reason. Each cut backs off to the nearest space when there is
+ * one (otherwise it cuts mid-token) and never splits a surrogate pair.
+ */
+function excerpt(text: string, max = 270, head = 130, tailLen = 135): string {
+  if (text.length <= max) return text;
+  const headCut = dropLoneHigh(text.slice(0, head));
+  const headPart = text[head] === " " ? headCut : headCut.replace(/\s*\S*$/, "") || headCut;
+  const tailCut = dropLoneLow(text.slice(-tailLen));
+  const tailPart = text[text.length - tailLen - 1] === " " ? tailCut : tailCut.replace(/^\S*\s*/, "") || tailCut;
+  return `${headPart.trimEnd()} … ${tailPart.trimStart()}`;
+}
+
+/**
+ * Stdout tail for the generic summary. Model-authored stdout may quote agy's
+ * auto-deny message, and a summary must never read as an auto-deny diagnosis
+ * when it is not one. So the check runs on the exact text that would be
+ * emitted (the collapsed tail): a copy lowercased with every non a-z character
+ * removed is searched for `autodenied` or `permission`, which is immune to
+ * spacing, line wraps, markdown, casing and hyphen variants. On a hit the whole
+ * tail is replaced by a fixed placeholder (the full text stays in `raw`). This
+ * is a heuristic on the 70 emitted chars only; it can also omit an innocent
+ * tail that mentions "permission".
+ */
+function safeStdoutTail(stdout: string, n: number): string {
+  const out = tail(stdout, n);
+  const letters = out.toLowerCase().replace(/[^a-z]/g, "");
+  return letters.includes("autodenied") || letters.includes("permission")
+    ? "(stdout tail omitted: it quotes agy's permission message; see raw)"
+    : out;
+}
+
+/**
+ * Failure summaries keep their cause inside the first 300 chars, which is all
+ * `wait` renders. Two no-marker shapes: auto-deny and generic. With a marker:
+ * non-zero exit is `failed`, a FAILED marker is `failed` with the model's
+ * excerpt (the third cause-bearing shape), and DONE on exit 0 is `done`.
+ */
 export function parseResult(stdout: string, stderr: string, exitCode: number): AdapterResult {
   const match = lastMarkerMatch(RESULT_MARKER_RE, stdout);
+  const failed = (summary: string): AdapterResult => ({ status: "failed", summary, artifacts: [], raw: stdout });
   if (!match) {
-    return {
-      status: "failed",
-      summary: "agy: missing AGY_RESULT marker in output (silent-misparse backstop — likely a --print flag-order misparse)",
-      artifacts: [],
-      raw: stdout,
-    };
+    // stderr only: a model may quote the auto-deny sentence in stdout.
+    const permission = autoDeniedPermission(stderr);
+    if (permission !== undefined) {
+      return failed(
+        `agy: stopped with no verdict: it auto-denied a tool needing the "${permission}" permission (headless mode cannot prompt). ` +
+          `If this job ran readOnly, ${blockedClause(permission)}. ` +
+          "Name the exact files to read, or paste the diff or command output, into the prompt. (missing AGY_RESULT marker)",
+      );
+    }
+    const err = tail(stderr, 130);
+    const out = safeStdoutTail(stdout, 70);
+    return failed(
+      `agy: missing AGY_RESULT marker (exit ${exitCode})` +
+        (err ? `: ${err}` : "") +
+        ". If this job ran readOnly, name the exact files, or paste the diff or command output, into the prompt." +
+        (out ? ` stdout: ${out}` : ""),
+    );
   }
-  if (exitCode !== 0) {
-    return { status: "failed", summary: `agy: exited with code ${exitCode}`, artifacts: [], raw: stdout };
-  }
+  if (exitCode !== 0) return failed(`agy: exited with code ${exitCode}`);
   if (match[1] === "FAILED") {
-    return { status: "failed", summary: "agy: reported FAILED", artifacts: [], raw: stdout };
+    const cause = excerpt(collapse(stdout.slice(0, match.index)));
+    return failed(cause ? `agy: reported FAILED: ${cause}` : "agy: reported FAILED");
   }
   return { status: "done", summary: stdout.trim(), artifacts: [], raw: stdout };
 }
@@ -177,6 +313,7 @@ const _check: MultiAdapterModule = {
   defaultKind,
   effortLevels,
   supportsReadOnly,
+  readOnlyNote,
   readModels,
   parseModels,
 };

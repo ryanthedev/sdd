@@ -1,0 +1,15 @@
+I cannot review and summarize what the most recent commit changed under the current read-only constraints.
+
+### What could be determined
+From the plain-text Git metadata files:
+- [.git/HEAD](file:///tmp/scratch/repo/.git/HEAD) points to `refs/heads/main`.
+- [.git/logs/HEAD](file:///tmp/scratch/repo/.git/logs/HEAD) records a single initial commit `51bff1ceafe7dd688981d924b76c5ded004e96c3` (`commit (initial): init`, author `t <t@t>`).
+- [.git/COMMIT_EDITMSG](file:///tmp/scratch/repo/.git/COMMIT_EDITMSG) contains `init`.
+
+### What is missing
+- **Commit diff / file list**: This session cannot execute shell commands (such as `git show`, `git diff`, or `git log`), list directories, or search files, and no changed file paths or patch were included in the prompt.
+- **Readable commit contents**: Git objects (such as the commit, tree, and blob objects under `.git/objects/`) are zlib-compressed binary files and cannot be inspected with plain file reads alone.
+
+To complete this review in a read-only session, please provide the output of `git show HEAD` (or the commit diff and the exact paths of the files modified).
+
+AGY_RESULT: FAILED

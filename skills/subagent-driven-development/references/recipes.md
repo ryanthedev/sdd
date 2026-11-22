@@ -22,7 +22,7 @@ codex and agy run on accounts you already pay for, and their quota windows reset
 |---|---|
 | Headroom, and the window resets soon | Put codex on everything it can do (review, implement, image). That quota is gone at reset anyway |
 | Window nearly used up | Keep codex for the job that most needs it (the hard implementation, the `effort:"high"` review) and send breadth to the metered roster |
-| `limitReached` set | Don't dispatch codex. Route to agy or the metered roster |
+| `limitReached` set | Don't dispatch codex. Route to agy or the metered roster. readOnly agy cannot run `git diff`, so paste the diff into the prompt |
 
 3. **Only codex reports quota.** agy is account-backed too but exports no limits reading, so `usage` can't see it; confirm it with `check_adapter("agy")` instead. Never read a missing agy reading as "plenty left".
 4. **Metered harnesses are cheap, not free.** A review costs cents. Fan them out on purpose, for the vendor diversity, not as a default.
