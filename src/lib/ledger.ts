@@ -333,3 +333,112 @@ export function summarizeSpend(
   const budget = opts.pool === "vision" ? (ab?.vision ?? null) : opts.pool === "decision" && ab ? { dailyUsd: ab.dailyUsd, monthlyUsd: ab.monthlyUsd } : ab;
   return { adapter: opts.adapter, ...(opts.pool ? { pool: opts.pool } : {}), last24h, month, budget };
 }
+
+// ── Usage breakdown (pure) ──────────────────────────────────────────────────
+
+/** A SpendWindow plus the decide batch size (`usage.items`, null for vision) summed. */
+export interface UsageWindow extends SpendWindow {
+  items: number;
+}
+
+export interface UsageBreakdown {
+  adapter: string;
+  pool?: Pool;
+  /** Local calendar days covered, oldest first: today and the `days - 1` before it. */
+  days: number;
+  /** Local midnight that starts the window (ms). */
+  since: number;
+  total: UsageWindow;
+  /** One row per local date in the window, oldest first, including days with no jobs. */
+  byDay: Array<{ date: string } & UsageWindow>;
+  /** One row per project (see `projectOf`), most expensive first. */
+  byProject: Array<{ project: string } & UsageWindow>;
+}
+
+export const BREAKDOWN_MAX_DAYS = 90;
+
+function emptyUsage(): UsageWindow {
+  return { ...emptyWindow(), items: 0 };
+}
+
+function addUsage(w: UsageWindow, e: LedgerEntry): void {
+  addTo(w, e); // same counting and fail-closed $0.25 rule as the budget
+  if (e.usage?.items != null) w.items += e.usage.items;
+}
+
+function localDate(ts: number): string {
+  const d = new Date(ts);
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+const TEMP_ROOTS = ["/tmp", "/private/tmp", "/var/folders", "/private/var/folders"];
+
+/**
+ * A HEURISTIC project label for a job's cwd, for grouping only. The ledger
+ * records cwd, not who asked, and most callers run in git worktrees or temp
+ * scratch dirs, so this is approximate by design:
+ *   - anything under a temp root (/tmp, /private/tmp, /var/folders) is "(temp)";
+ *   - under `home`, the first two path segments ("~/repos/omni"), which folds a
+ *     repo's in-tree worktrees (repos/omni/build/wt/x) into the repo;
+ *   - elsewhere, the first two segments ("/opt/work").
+ * Worktrees kept outside the repo they belong to are NOT folded back into it.
+ */
+export function projectOf(cwd: string, home: string = homedir()): string {
+  if (cwd === "") return "(unknown)";
+  if (TEMP_ROOTS.some((r) => cwd === r || cwd.startsWith(`${r}/`))) return "(temp)";
+  const h = home.replace(/\/+$/, "");
+  if (h !== "" && (cwd === h || cwd.startsWith(`${h}/`))) {
+    const rest = cwd.slice(h.length).split("/").filter(Boolean).slice(0, 2);
+    return rest.length === 0 ? "~" : `~/${rest.join("/")}`;
+  }
+  const segs = cwd.split("/").filter(Boolean).slice(0, 2);
+  return segs.length === 0 ? "/" : `/${segs.join("/")}`;
+}
+
+/**
+ * Per-day and per-project usage for one adapter over the last `days` LOCAL
+ * calendar days (today included; clamped to 1..BREAKDOWN_MAX_DAYS). Pure, apart
+ * from `projectOf`'s default home dir (pass `home` to pin it). Costs follow the
+ * budget's rules exactly (an unknown cost is charged $0.25), so a breakdown
+ * always adds up to what the budget enforces.
+ */
+export function breakdownSpend(
+  entries: LedgerEntry[],
+  opts: { now: number; adapter: string; days: number; pool?: Pool; home?: string },
+): UsageBreakdown {
+  const days = Math.min(BREAKDOWN_MAX_DAYS, Math.max(1, Math.floor(opts.days)));
+  const today = new Date(opts.now);
+  const since = new Date(today.getFullYear(), today.getMonth(), today.getDate() - (days - 1), 0, 0, 0, 0).getTime();
+
+  const byDay = new Map<string, UsageWindow>();
+  for (let i = 0; i < days; i++) {
+    byDay.set(localDate(new Date(today.getFullYear(), today.getMonth(), today.getDate() - (days - 1) + i, 12).getTime()), emptyUsage());
+  }
+  const byProject = new Map<string, UsageWindow>();
+  const total = emptyUsage();
+
+  for (const e of entries) {
+    if (e.adapter !== opts.adapter || e.ts < since || e.ts > opts.now) continue;
+    if (opts.pool !== undefined && !inPool(e, opts.pool)) continue;
+    addUsage(total, e);
+    const day = byDay.get(localDate(e.ts));
+    if (day) addUsage(day, e);
+    const key = projectOf(e.cwd, opts.home);
+    let p = byProject.get(key);
+    if (!p) byProject.set(key, (p = emptyUsage()));
+    addUsage(p, e);
+  }
+
+  return {
+    adapter: opts.adapter,
+    ...(opts.pool ? { pool: opts.pool } : {}),
+    days,
+    since,
+    total,
+    byDay: [...byDay].map(([date, w]) => ({ date, ...w })),
+    byProject: [...byProject]
+      .map(([project, w]) => ({ project, ...w }))
+      .sort((a, b) => b.costUsd - a.costUsd || b.jobs - a.jobs || a.project.localeCompare(b.project)),
+  };
+}
