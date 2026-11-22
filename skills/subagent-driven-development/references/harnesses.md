@@ -6,7 +6,7 @@ The load-bearing distinction: **a harness that shows up in `list_adapters` with 
 
 ## Capability table
 
-By default every agent harness runs permissively (so it can act headlessly without blocking on TTY prompts). Pass `readOnly: true` on `dispatch` to run in native non-writing mode where supported: `claude` (`--permission-mode plan`), `codex` (`--sandbox read-only`), `agy` (`--sandbox --mode plan`), `grok` (`--permission-mode plan`), and `mistral` (`--agent plan`). `kimi` (whose CLI refuses `--plan` alongside `-p`) and `qwen` reject `readOnly: true` loudly rather than silently running permissively. Whether two writable jobs can safely share a `cwd` is still the caller's call — the server serializes nothing.
+By default every agent harness runs permissively (so it can act headlessly without blocking on TTY prompts). Pass `readOnly: true` on `dispatch` to run in native non-writing mode where supported: `claude` (`--permission-mode plan`), `codex` (`--sandbox read-only`), `agy` (`--sandbox --mode plan` plus a deny list; reads files by exact path only, so name the files or paste the diff or command output into the prompt; see the agy gotcha in SKILL.md), `grok` (`--permission-mode plan`), and `mistral` (`--agent plan`). `kimi` (whose CLI refuses `--plan` alongside `-p`) and `qwen` reject `readOnly: true` loudly rather than silently running permissively. Whether two writable jobs can safely share a `cwd` is still the caller's call — the server serializes nothing.
 
 ### Agent harnesses
 
@@ -18,7 +18,7 @@ By default every agent harness runs permissively (so it can act headlessly witho
 | `kimi` | Moonshot Kimi (`kimi-code`, `kimi -p`) | `kimi` | Review / second opinion; supports `model` (`-m`) and `addDir`; rejects `readOnly:true` (CLI refuses `--plan` with `-p`) | `MOONSHOT_API_KEY` env var |
 | `qwen` | Alibaba Qwen Code (gemini-cli lineage), `qwen -p` | `qwen` | Review / second opinion; rejects `readOnly:true` | `DASHSCOPE_API_KEY` env var |
 | `mistral` | Mistral Vibe, `vibe -p` | `vibe` (name ≠ binary) | Review / second opinion; supports `readOnly:true` (`--agent plan`) and `addDir` | `MISTRAL_API_KEY` env var |
-| `agy` | General review/implement harness, `agy --print` | `agy` | Review AND implement; supports `model` (live via `list_models`), `effort` (`low\|medium\|high\|xhigh\|max`), `readOnly:true` (`--sandbox --mode plan`), and `addDir` | agy's own login flow; verify with `check_adapter` |
+| `agy` | General review/implement harness, `agy --print` | `agy` | Review AND implement; supports `model` (live via `list_models`), `effort` (`low\|medium\|high\|xhigh\|max`), `readOnly:true` (`--sandbox --mode plan` plus a deny list; reads files by exact path only (agy reports no listing or search tool), so name the files or paste the diff; no shell, writes, MCP or URL fetches; plan files may land under `~/.gemini/antigravity-cli/brain/`, unverified under the deny list), and `addDir` | agy's own login flow; verify with `check_adapter` |
 
 ### Artifact producers
 
@@ -105,7 +105,7 @@ A job's terminal state is decided by exit code **and** the adapter's `parseResul
 | Harness(es) | Required output contract |
 |---|---|
 | `codex`, `grok`, `kimi`, `qwen`, `mistral` | A `VERDICT:` line **plus** a `## Findings` section. Missing either → `failed`. |
-| `agy` | Last line of output exactly `AGY_RESULT: DONE` or `AGY_RESULT: FAILED`. Parsed by **last** match (the harness may echo the injected instruction first). |
+| `agy` | Last line of output exactly `AGY_RESULT: DONE` or `AGY_RESULT: FAILED`. Parsed by **last** match (the harness may echo the injected instruction first). Failure summaries put the cause in the first 300 chars: `agy: stopped with no verdict: it auto-denied a tool needing the "<permission>" permission`, `agy: missing AGY_RESULT marker (exit N)` (stderr/stdout tails), and `agy: reported FAILED: <the model's stated cause>` (bare `agy: reported FAILED` when it said nothing before the marker), and `agy: exited with code N` (marker present, non-zero exit). |
 | `agy` `kind:"image"` | `AGY_IMAGE_SAVED: <absolute path>` **and** the file must exist on disk. A marker with no file on disk → `failed`. |
 | `codex` `kind:"image"` | `CODEX_IMAGE_SAVED: <absolute path>` **and** the file must exist on disk. Same shared contract (`src/lib/image-contract.ts`), same on-disk proof. |
 | `agy` `kind:"vision"` | `AGY_VISION_SAVED: <absolute path>` **and** the JSON must exist on disk. Same last-match rule; a marker with no file → `failed`. |

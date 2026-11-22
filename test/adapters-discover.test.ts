@@ -300,3 +300,27 @@ test("readModels + parseModels load together and reject half-declared or malform
   expect(logs.some((l) => l.includes("bad-effort.ts") && l.includes("effortLevels"))).toBe(true);
   expect(logs.some((l) => l.includes("bad-models-list.ts") && l.includes("models"))).toBe(true);
 });
+
+test("test_DW_1_13_readOnlyNote_string_is_exposed_and_non_string_is_skipped_as_malformed", () => {
+  const dir = freshDir();
+  writeAdapterFile(
+    dir,
+    "good-note.ts",
+    `${VALID_ADAPTER.replace('"fixture"', '"good-note"')}
+     export const supportsReadOnly = true;
+     export const readOnlyNote = "reads named files only";`,
+  );
+  writeAdapterFile(
+    dir,
+    "bad-note.ts",
+    `${VALID_ADAPTER.replace('"fixture"', '"bad-note"')}
+     export const readOnlyNote = 42;`,
+  );
+  let adapters: Adapter[] = [];
+  const logs = captureStderr(() => {
+    adapters = discoverAdapters(dir);
+  });
+  expect(adapters.map((a) => a.name)).toEqual(["good-note"]);
+  expect(adapters[0]!.readOnlyNote).toBe("reads named files only");
+  expect(logs.some((l) => l.includes("bad-note.ts") && l.includes("readOnlyNote"))).toBe(true);
+});

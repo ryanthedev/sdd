@@ -35,6 +35,7 @@ export function createListAdaptersTool(rt: Runtime): ToolModule<typeof inputShap
         kinds: Object.keys(a.capabilities),
         ...(a.effortLevels !== undefined ? { effortLevels: [...a.effortLevels] } : {}),
         ...(a.supportsReadOnly !== undefined ? { supportsReadOnly: a.supportsReadOnly } : {}),
+        ...(a.readOnlyNote !== undefined ? { readOnlyNote: a.readOnlyNote } : {}),
         supportsModels: hasModelDiscovery(a),
       }));
       // Only mention extras that are non-trivial so single-purpose adapters stay
@@ -43,7 +44,7 @@ export function createListAdaptersTool(rt: Runtime): ToolModule<typeof inputShap
         const extras: string[] = [];
         if (a.kinds.length > 1) extras.push(`kinds: ${a.kinds.join(", ")}`);
         if (a.effortLevels && a.effortLevels.length > 0) extras.push(`effort: ${a.effortLevels.join("|")}`);
-        if (a.supportsReadOnly === true) extras.push("readOnly");
+        if (a.supportsReadOnly === true) extras.push(a.readOnlyNote ? `readOnly (${a.readOnlyNote})` : "readOnly");
         if (a.supportsModels) extras.push("models");
         const suffix = extras.length > 0 ? ` — ${extras.join(" · ")}` : "";
         return `${a.name} — binary ${a.binaryPresent ? "present" : "MISSING"} on PATH${suffix}`;

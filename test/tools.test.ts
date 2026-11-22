@@ -498,3 +498,18 @@ test("status and result return a clean error for an unknown job id", async () =>
   const resultRes = await result.handler({ jobId: "job-does-not-exist" });
   expect(resultRes.isError).toBe(true);
 });
+
+test("test_DW_1_13_list_adapters_renders_readOnly_note_for_agy_and_plain_readOnly_for_others", async () => {
+  const rt = createRuntime({ jobStoreOptions: { logDir: freshDir("sdd-tools-logs-") } });
+  runtimes.push(rt);
+  const res = await createListAdaptersTool(rt).handler({});
+  const text = res.content[0]!.text;
+  const lineFor = (n: string) => text.split("\n").find((l) => l.startsWith(`${n} — `))!;
+  expect(lineFor("agy")).toContain("readOnly (reads files by exact path only; no shell, writes, MCP or URL fetches)");
+  for (const n of ["claude", "codex"]) {
+    expect(lineFor(n)).toMatch(/readOnly(?! \()/);
+    expect(lineFor(n)).not.toContain("readOnly (");
+  }
+  const agyEntry = (structured(res).adapters as { name: string; readOnlyNote?: string }[]).find((a) => a.name === "agy");
+  expect(agyEntry!.readOnlyNote).toContain("exact path");
+});

@@ -195,6 +195,9 @@ export interface Adapter {
   /** Whether this adapter enforces `opts.readOnly: true` natively (plan / read-only sandbox). */
   supportsReadOnly?: boolean;
 
+  /** What readOnly still allows, surfaced by `list_adapters` as `readOnly (<note>)`. */
+  readOnlyNote?: string;
+
   /** Optional static model list for harnesses whose CLI has no `models` probe (e.g. claude aliases). */
   models?: readonly ModelInfo[];
 
@@ -230,6 +233,7 @@ export interface FlatAdapterModule extends Capability {
   parseLimits?(raw: unknown): Omit<UsageSnapshot, "adapter" | "fetchedAt">;
   effortLevels?: readonly string[];
   supportsReadOnly?: boolean;
+  readOnlyNote?: string;
   models?: readonly ModelInfo[];
   readModels?: ModelsProbe;
   parseModels?(raw: unknown): ModelInfo[];
@@ -245,6 +249,7 @@ export interface MultiAdapterModule {
   parseLimits?(raw: unknown): Omit<UsageSnapshot, "adapter" | "fetchedAt">;
   effortLevels?: readonly string[];
   supportsReadOnly?: boolean;
+  readOnlyNote?: string;
   models?: readonly ModelInfo[];
   readModels?: ModelsProbe;
   parseModels?(raw: unknown): ModelInfo[];

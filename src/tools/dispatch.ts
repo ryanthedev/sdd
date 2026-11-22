@@ -53,7 +53,8 @@ export const inputShape = {
     .optional()
     .describe(
       "Run in native read-only / plan mode where supported (claude --permission-mode plan, codex --sandbox read-only, " +
-        "agy --mode plan, grok --permission-mode plan, mistral --agent plan). Adapters that cannot enforce read-only reject it loudly.",
+        "agy --mode plan plus a deny list, grok --permission-mode plan, mistral --agent plan). Adapters that cannot enforce read-only reject it loudly. " +
+        "agy readOnly reads files by exact path only; shell, writes, MCP and URL fetches are denied, so name the files or paste the diff into the prompt.",
     ),
   serviceTier: z
     .enum(["fast", "flex", "priority"])

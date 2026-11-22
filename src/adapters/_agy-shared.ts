@@ -1,9 +1,9 @@
 /**
  * Shared agy helpers — the single place that owns the agy argv-order
  * guarantee and the last-occurrence marker-match scan. `agy.ts` and
- * `agy-image.ts` both delegate here so the flag-order landmine fix and the
- * marker-collision fix exist exactly once (Phase 6's `agy-vision` adapter
- * will consume this too).
+ * `_agy-image.ts` both delegate here so the flag-order landmine fix and the
+ * marker-collision fix exist exactly once (`_agy-vision.ts` consumes this
+ * too).
  *
  * Leading `_` in the filename: adapter discovery (`discover.ts`'s
  * `isCandidate`) skips underscore-prefixed files, so this helper is never
