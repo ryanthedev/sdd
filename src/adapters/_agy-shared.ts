@@ -141,7 +141,7 @@ export function agyQuotaSummary(label: string, q: AgyQuotaError): string {
   const reset = q.resetsIn ? ` resets_in=${q.resetsIn}` : "";
   const next =
     q.scope === "third-party"
-      ? "Claude/GPT-OSS models on agy are out; Gemini models on agy still run. For a Claude model, re-dispatch on the claude adapter."
+      ? "Non-Google models (Claude) on agy are out; Gemini models on agy still run. For a Claude model, re-dispatch on the claude adapter."
       : q.scope === "individual"
         ? "Every agy model is out until the reset. Re-dispatch on another harness (claude, codex, or gemini for vision)."
         : "Re-dispatch on another harness.";

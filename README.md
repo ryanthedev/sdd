@@ -88,7 +88,7 @@ Three of the harnesses ride an account you already log into. Five want an API ke
 |---|---|---|
 | `claude` | Claude Code login flow or `ANTHROPIC_API_KEY` | Plan quota (or API key). |
 | `codex` | OpenAI/ChatGPT login flow | Plan quota you've already paid for. `usage` shows what's left and when it resets. |
-| `agy` | its own login flow | Account-backed, same shape as codex. No per-token key to fund. Has no quota meter; when it runs out a job fails fast with `agy: QUOTA_EXHAUSTED scope=third-party` (Claude/GPT-OSS models on agy are out, Gemini still runs) or `scope=individual` (all agy models), plus `resets_in`. Re-dispatch Claude-model work on `claude`. |
+| `agy` | its own login flow | Account-backed, same shape as codex. No per-token key to fund. Has no quota meter; when it runs out a job fails fast with `agy: QUOTA_EXHAUSTED scope=third-party` (non-Google models on agy, such as Claude, are out; Gemini still runs) or `scope=individual` (all agy models), plus `resets_in`. Re-dispatch Claude-model work on `claude`. |
 | `grok`, `kimi`, `qwen`, `mistral` | one env var each (`XAI_API_KEY`, `MOONSHOT_API_KEY`, `DASHSCOPE_API_KEY`, `MISTRAL_API_KEY`) | Metered per token. Cheap for a review, but it's real spend, so fan these out deliberately. |
 | `yt-dlp`, `whisper`, `ffmpeg-frames` | none | Free. whisper and ffmpeg run locally on your own silicon. |
 | `shazam` | none | Free. Needs `uv` on PATH; it provisions the recognizer on first run and caches it. |
