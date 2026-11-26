@@ -85,3 +85,65 @@ export function lastMarkerMatch(re: RegExp, text: string): RegExpExecArray | und
   for (const m of text.matchAll(re)) last = m;
   return last;
 }
+
+/**
+ * agy's account quota wall, recognised from its own error line. Observed
+ * 2026-11-26 in real sdd job logs (agy 1.5.x), exit 3, no result marker:
+ *
+ *   AGY_ERROR: {"short_error":"RESOURCE_EXHAUSTED (code 429): Third-party quota reached. Please switch to Gemini models ... Resets in 3h8m40s.","status":"RESOURCE_EXHAUSTED","error_code":429,...}
+ *   AGY_ERROR: {"short_error":"RESOURCE_EXHAUSTED (code 429): Individual quota reached. Please upgrade ... Resets in 1h24m41s.",...}
+ *
+ * "Third-party" is the pool for non-Google models on agy (Claude, GPT-OSS):
+ * Gemini models still run. "Individual" is the whole account. Only a line that
+ * STARTS with `AGY_ERROR: ` and parses as JSON counts, and only on a non-zero
+ * exit with no success marker, so a model quoting the text mid-answer can't
+ * trip it. Both streams are scanned (stderr first, last occurrence wins)
+ * because which stream agy uses for this line has not been pinned down.
+ */
+export interface AgyQuotaError {
+  scope: "third-party" | "individual" | "unknown";
+  resetsIn?: string;
+  message: string;
+}
+
+const AGY_ERROR_LINE_RE = /^AGY_ERROR: (\{.*\})\s*$/gm;
+
+function lastAgyError(text: string): Record<string, unknown> | undefined {
+  let found: Record<string, unknown> | undefined;
+  for (const m of text.matchAll(AGY_ERROR_LINE_RE)) {
+    try {
+      const parsed: unknown = JSON.parse(m[1] ?? "");
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) found = parsed as Record<string, unknown>;
+    } catch {
+      // not JSON: not agy's structured error line
+    }
+  }
+  return found;
+}
+
+export function agyQuotaError(stdout: string, stderr: string, exitCode: number): AgyQuotaError | undefined {
+  if (exitCode === 0) return undefined;
+  const err = lastAgyError(stderr) ?? lastAgyError(stdout);
+  if (!err) return undefined;
+  const message = typeof err.short_error === "string" ? err.short_error : "";
+  if (err.status !== "RESOURCE_EXHAUSTED" && err.error_code !== 429) return undefined;
+  const scope = /third-party quota/i.test(message) ? "third-party" : /individual quota/i.test(message) ? "individual" : "unknown";
+  const resetsIn = /resets in ([0-9hms]+)/i.exec(message)?.[1];
+  return { scope, ...(resetsIn ? { resetsIn } : {}), message };
+}
+
+/**
+ * The failure summary for a quota wall. It starts with the stable token
+ * `QUOTA_EXHAUSTED` so callers (the subagent-driven-development skill's
+ * fallback recipe) can branch on it, and names what still works.
+ */
+export function agyQuotaSummary(label: string, q: AgyQuotaError): string {
+  const reset = q.resetsIn ? ` resets_in=${q.resetsIn}` : "";
+  const next =
+    q.scope === "third-party"
+      ? "Claude/GPT-OSS models on agy are out; Gemini models on agy still run. For a Claude model, re-dispatch on the claude adapter."
+      : q.scope === "individual"
+        ? "Every agy model is out until the reset. Re-dispatch on another harness (claude, codex, or gemini for vision)."
+        : "Re-dispatch on another harness.";
+  return `${label}: QUOTA_EXHAUSTED scope=${q.scope}${reset}. ${next}`;
+}

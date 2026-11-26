@@ -167,7 +167,7 @@ Full per-harness capability + auth table: [`references/harnesses.md`](references
 
 | Recipe | One line |
 |---|---|
-| **Quota-first routing** | Call `usage("codex")` before a fan-out; spend prepaid quota that resets anyway before metered keys |
+| **Quota-first routing** | Call `usage("codex")` before a fan-out; spend prepaid quota that resets anyway before metered keys. On `agy: QUOTA_EXHAUSTED`, move Claude-model work to the `claude` adapter until the reset |
 | **Parallel writers in worktrees** | One `git worktree` per writer, so implementations run in parallel or race each other; Claude reviews and merges |
 | **Ensemble review, ranked** | Five vendors, one fixed finding format, findings clustered and ranked by agreement, then reviewer severity, then (as an experiment) the decision model |
 | **Repo-scale targeting** | `gemini` ranks every routine by likely defect (unmeasured); reviewers read the top 20–30%. Never for pruning a PR review |

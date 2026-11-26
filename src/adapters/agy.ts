@@ -40,7 +40,7 @@
  */
 import * as agyImage from "./_agy-image.ts";
 import * as agyVision from "./_agy-vision.ts";
-import { AGY_EFFORT_LEVELS, buildAgyArgv, lastMarkerMatch, pushAgyEffortFlag, pushAgyOptionalStringFlag } from "./_agy-shared.ts";
+import { AGY_EFFORT_LEVELS, agyQuotaError, agyQuotaSummary, buildAgyArgv, lastMarkerMatch, pushAgyEffortFlag, pushAgyOptionalStringFlag } from "./_agy-shared.ts";
 import { DEFAULT_KIND } from "./types.ts";
 import type { Capability, ModelsProbe, MultiAdapterModule } from "./types.ts";
 import type { AdapterResult, DispatchOpts, ModelInfo } from "../types.ts";
@@ -219,6 +219,8 @@ export function parseResult(stdout: string, stderr: string, exitCode: number): A
   const match = lastMarkerMatch(RESULT_MARKER_RE, stdout);
   const failed = (summary: string): AdapterResult => ({ status: "failed", summary, artifacts: [], raw: stdout });
   if (!match) {
+    const quota = agyQuotaError(stdout, stderr, exitCode);
+    if (quota) return failed(agyQuotaSummary("agy", quota));
     // stderr only: a model may quote the auto-deny sentence in stdout.
     const permission = autoDeniedPermission(stderr);
     if (permission !== undefined) {

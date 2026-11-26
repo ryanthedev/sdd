@@ -34,9 +34,9 @@ for (const [file, name] of [
   });
 }
 
-test("plugin.json version is 0.11.1", () => {
+test("plugin.json version is 0.11.2", () => {
   const v = JSON.parse(readFileSync(join(root, ".claude-plugin/plugin.json"), "utf8")).version;
-  expect(v).toBe("0.11.1");
+  expect(v).toBe("0.11.2");
 });
 
 for (const file of ["codex-builder.md", "codex-reviewer.md"]) {
