@@ -53,7 +53,7 @@
  * (shared with `agy.ts`) so the flag-order and marker-collision fixes exist
  * exactly once.
  */
-import { buildAgyArgv, pushAgyEffortFlag, pushAgyOptionalStringFlag } from "./_agy-shared.ts";
+import { agyQuotaError, agyQuotaSummary, buildAgyArgv, lastMarkerMatch, pushAgyEffortFlag, pushAgyOptionalStringFlag } from "./_agy-shared.ts";
 import {
   appendSavePath,
   injectImageContract,
@@ -99,7 +99,9 @@ export function injectContract(prompt: string): string {
   return injectImageContract(prompt, "AGY_IMAGE_SAVED");
 }
 
-export function parseResult(stdout: string, _stderr: string, exitCode: number): AdapterResult {
+export function parseResult(stdout: string, stderr: string, exitCode: number): AdapterResult {
+  const quota = lastMarkerMatch(SAVED_MARKER_RE, stdout) ? undefined : agyQuotaError(stdout, stderr, exitCode);
+  if (quota) return { status: "failed", summary: agyQuotaSummary("agy-image", quota), artifacts: [], raw: stdout };
   // Shared with codex (src/lib/image-contract.ts): marker-last, then exit code,
   // then an on-disk existence check. The historical `AGY_IMAGE_SAVED` spelling
   // and the `agy-image` label in messages are preserved so existing transcripts

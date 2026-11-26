@@ -24,7 +24,16 @@ codex and agy run on accounts you already pay for, and their quota windows reset
 | Window nearly used up | Keep codex for the job that most needs it (the hard implementation, the `effort:"high"` review) and send breadth to the metered roster |
 | `limitReached` set | Don't dispatch codex. Route to agy or the metered roster. readOnly agy cannot run `git diff`, so paste the diff into the prompt |
 
-3. **Only codex reports quota.** agy is account-backed too but exports no limits reading, so `usage` can't see it; confirm it with `check_adapter("agy")` instead. Never read a missing agy reading as "plenty left".
+3. **agy has no meter, but its wall is legible.** agy exports no limits reading, so `usage` can't see it ahead of time; never read a missing agy reading as "plenty left". When agy is out, the job fails within a few seconds with a summary that starts `agy: QUOTA_EXHAUSTED scope=<third-party|individual> resets_in=<time>` (same token for `agy-image` and `agy-vision`). Then:
+
+| `scope` | What's out | Re-dispatch the same prompt on |
+|---|---|---|
+| `third-party` | Non-Google models on agy: Claude, and probably GPT-OSS (inferred from the message, unverified). Gemini models on agy still run | `claude`, mapping the agy model id: `claude-opus-5-5-high` becomes `model:"claude-opus-5-5", effort:"high"` (same for `sonnet`). Keep `readOnly`, `cwd`, `addDir`. Or stay on agy with a Gemini model if the user doesn't need Claude |
+| `individual` | Every agy model | `claude` for a Claude model; `gemini` with `kind:"vision"` for video fusion (video-ingest §11); `codex` for an image |
+
+   - **Stop dispatching agy until `resets_in` passes.** Don't let every job in a fan-out fail first: after the first `QUOTA_EXHAUSTED`, route the rest of the batch directly. `individual` walls have been seen with resets several days out (151 h on 2026-11-22).
+   - **The fallback is not free.** agy runs on the subscription; `claude` runs on the user's Claude plan. A one-line Fable job measured $0.38 equivalent (2026-11-26), probably mostly Claude Code's startup context (unverified), so prefer fewer, larger jobs on `claude`, and say so when a fan-out moves there.
+   - **Only on `QUOTA_EXHAUSTED`.** Any other agy failure (a missing file, a refused tool under readOnly) fails the same way on `claude`; fix the input instead.
 4. **Metered harnesses are cheap, not free.** A review costs cents. Fan them out on purpose, for the vendor diversity, not as a default.
 
 ## 2. Parallel writers in worktrees

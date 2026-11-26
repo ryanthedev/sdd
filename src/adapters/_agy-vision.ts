@@ -51,7 +51,7 @@
  */
 import { existsSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
-import { buildAgyArgv, lastMarkerMatch, pushAgyEffortFlag } from "./_agy-shared.ts";
+import { agyQuotaError, agyQuotaSummary, buildAgyArgv, lastMarkerMatch, pushAgyEffortFlag } from "./_agy-shared.ts";
 import { resolveReadOnly } from "../lib/path-barricade.ts";
 import type { Capability } from "./types.ts";
 import type { AdapterResult, DispatchOpts } from "../types.ts";
@@ -120,6 +120,8 @@ export function injectContract(prompt: string): string {
 
 export function parseResult(stdout: string, stderr: string, exitCode: number): AdapterResult {
   const match = lastMarkerMatch(SAVED_MARKER_RE, stdout);
+  const quota = match ? undefined : agyQuotaError(stdout, stderr, exitCode);
+  if (quota) return { status: "failed", summary: agyQuotaSummary("agy-vision", quota), artifacts: [], raw: stdout };
   if (!match && exitCode !== 0) {
     // agy rejects bad startup input (e.g. a model name missing from its
     // roster) on STDERR with a non-zero exit and an empty stdout. Reporting
